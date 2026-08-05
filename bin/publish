@@ -103,6 +103,11 @@ while IFS= read -r repository; do
 done < <(jq -r '.release_tags[]' "${repositories_config}")
 
 while IFS= read -r repository; do
+  if [[ $(gh api "repos/${organization}/${repository}" --jq '.archived') == true ]]; then
+    echo "SKIP ${organization}/${repository} is already archived"
+    continue
+  fi
+
   archive_payload=$(mktemp)
   temporary_files+=("${archive_payload}")
   jq -n '{archived: true}' >"${archive_payload}"
