@@ -1,5 +1,7 @@
 {
+  "members_can_delete_or_transfer_repositories": false,
+  "members_can_change_repository_visibility": false,
   "require_two_factor_authentication": true,
   "require_secure_two_factor_methods": true,
-  "reason": "The public GitHub REST API does not expose these organization authentication controls."
+  "reason": "The public GitHub API reports these settings but does not expose supported update parameters for them."
 }
