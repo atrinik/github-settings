@@ -1,0 +1,34 @@
+{
+  "pull_request_gate": [
+    "atrinik",
+    "atrinik-sound",
+    "resources",
+    "devcontainer",
+    "metaserver-worker",
+    "github-settings"
+  ],
+  "required_ci": {
+    "atrinik": [
+      "GCC build and CTest",
+      "Clang ASan/UBSan",
+      "Windows client (MinGW)",
+      "Windows server (MinGW)"
+    ],
+    "metaserver-worker": [
+      "verify"
+    ],
+    "github-settings": [
+      "Policy validation"
+    ]
+  },
+  "release_tags": [
+    "atrinik",
+    "devcontainer"
+  ],
+  "archive": [
+    "dwc",
+    "nawerhals",
+    "clearhaven-mine",
+    "strakewood-remake"
+  ]
+}

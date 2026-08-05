@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+organization=${ATRINIK_ORGANIZATION:-atrinik}
+apply=false
+
+case "${1:-}" in
+"") ;;
+--apply) apply=true ;;
+*)
+  echo "usage: $0 [--apply]" >&2
+  exit 2
+  ;;
+esac
+
+for command in gh jq; do
+  if ! command -v "${command}" >/dev/null 2>&1; then
+    echo "error: ${command} is required" >&2
+    exit 1
+  fi
+done
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+repositories_config=${root}/config/repositories.json
+temporary_files=()
+trap 'rm -f "${temporary_files[@]}"' EXIT
+
+run_api() {
+  local method=$1
+  local endpoint=$2
+  local input=$3
+
+  if ${apply}; then
+    gh api --method "${method}" "${endpoint}" --input "${input}" >/dev/null
+  else
+    echo "PLAN ${method} /${endpoint} <= ${input#"${root}/"}"
+  fi
+}
+
+upsert_ruleset() {
+  local repository=$1
+  local input=$2
+  local name id
+
+  name=$(jq -r '.name' "${input}")
+  id=$(
+    gh api "repos/${organization}/${repository}/rulesets?includes_parents=false" |
+      jq -r --arg name "${name}" 'map(select(.name == $name))[0].id // empty'
+  )
+
+  if [[ -n ${id} ]]; then
+    run_api PUT "repos/${organization}/${repository}/rulesets/${id}" "${input}"
+  else
+    run_api POST "repos/${organization}/${repository}/rulesets" "${input}"
+  fi
+}
+
+echo "Organization: ${organization}"
+${apply} && echo "Mode: apply" || echo "Mode: plan"
+
+run_api PATCH "orgs/${organization}" "${root}/config/organization.json"
+run_api PUT "orgs/${organization}/actions/permissions" \
+  "${root}/config/actions-permissions.json"
+run_api PUT "orgs/${organization}/actions/permissions/selected-actions" \
+  "${root}/config/actions-selected.json"
+run_api PUT "orgs/${organization}/actions/permissions/workflow" \
+  "${root}/config/actions-workflow.json"
+
+mapfile -t active_repositories < <(
+  gh api --paginate "orgs/${organization}/repos?per_page=100&type=all" \
+    --jq '.[] | select(.archived == false) | .name'
+)
+
+for repository in "${active_repositories[@]}"; do
+  upsert_ruleset "${repository}" \
+    "${root}/config/rulesets/default-branch-integrity.json"
+done
+
+while IFS= read -r repository; do
+  upsert_ruleset "${repository}" \
+    "${root}/config/rulesets/pull-request-gate.json"
+done < <(jq -r '.pull_request_gate[]' "${repositories_config}")
+
+while IFS= read -r repository; do
+  ci_payload=$(mktemp)
+  temporary_files+=("${ci_payload}")
+  jq --arg repository "${repository}" \
+    --argjson app_id 15368 \
+    --slurpfile repositories "${repositories_config}" \
+    '.rules[0].parameters.required_status_checks =
+      ($repositories[0].required_ci[$repository] |
+       map({context: ., integration_id: $app_id}))' \
+    "${root}/config/rulesets/required-ci.json" >"${ci_payload}"
+  upsert_ruleset "${repository}" "${ci_payload}"
+done < <(jq -r '.required_ci | keys[]' "${repositories_config}")
+
+while IFS= read -r repository; do
+  upsert_ruleset "${repository}" \
+    "${root}/config/rulesets/immutable-release-tags.json"
+done < <(jq -r '.release_tags[]' "${repositories_config}")
+
+while IFS= read -r repository; do
+  archive_payload=$(mktemp)
+  temporary_files+=("${archive_payload}")
+  jq -n '{archived: true}' >"${archive_payload}"
+  run_api PATCH "repos/${organization}/${repository}" "${archive_payload}"
+done < <(jq -r '.archive[]' "${repositories_config}")
+
+echo "Manual confirmation required: require 2FA and secure-only methods."

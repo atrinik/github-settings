@@ -1,0 +1,5 @@
+{
+  "require_two_factor_authentication": true,
+  "require_secure_two_factor_methods": true,
+  "reason": "The public GitHub REST API does not expose these organization authentication controls."
+}

@@ -1,0 +1,18 @@
+name: Publish settings
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Apply organization settings and repository rulesets
+        env:
+          GH_TOKEN: ${{ secrets.ATRINIK_SETTINGS_TOKEN }}
+        run: bin/publish --apply
