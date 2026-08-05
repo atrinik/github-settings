@@ -73,6 +73,8 @@ mapfile -t active_repositories < <(
 )
 
 for repository in "${active_repositories[@]}"; do
+  run_api PATCH "repos/${organization}/${repository}" \
+    "${root}/config/repository-defaults.json"
   upsert_ruleset "${repository}" \
     "${root}/config/rulesets/default-branch-integrity.json"
 done

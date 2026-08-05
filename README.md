@@ -17,6 +17,8 @@ into organization rulesets after a plan upgrade without changing the policy.
 - Maintained repositories require changes through pull requests.
 - Repositories with reliable CI require checks from the GitHub Actions app.
 - Release tags in release-producing repositories cannot be moved or deleted.
+- Active repositories allow squash merges only. The squash commit uses the
+  pull-request title and description.
 - Organization members cannot create repositories. Deletion, transfer, and
   visibility changes are recorded as required UI settings because GitHub does
   not expose them through the public API.
