@@ -17,16 +17,17 @@ into organization rulesets after a plan upgrade without changing the policy.
 - Maintained repositories require changes through pull requests.
 - Repositories with reliable CI require checks from the GitHub Actions app.
 - Release tags in release-producing repositories cannot be moved or deleted.
-- Organization members cannot create, delete, transfer, or change the
-  visibility of repositories.
+- Organization members cannot create repositories. Deletion, transfer, and
+  visibility changes are recorded as required UI settings because GitHub does
+  not expose them through the public API.
 - GitHub Actions defaults to read-only, cannot approve pull requests, and may
   use only Atrinik, GitHub, and explicitly allowed Docker actions.
 - Historical repositories listed in `config/repositories.json` are archived.
 
-The GitHub REST API does not expose the organization controls for requiring
-2FA or restricting it to secure methods. Their desired values are recorded in
-`config/manual-settings.json` and must be confirmed in **Organization settings
-> Authentication security**.
+The GitHub REST API does not expose the organization controls for repository
+deletion/transfer, repository visibility changes, requiring 2FA, or restricting
+2FA to secure methods. Their desired values are recorded in
+`config/manual-settings.json` and must be confirmed in the organization UI.
 
 ## Usage
 

@@ -107,4 +107,4 @@ while IFS= read -r repository; do
   run_api PATCH "repos/${organization}/${repository}" "${archive_payload}"
 done < <(jq -r '.archive[]' "${repositories_config}")
 
-echo "Manual confirmation required: require 2FA and secure-only methods."
+echo "Manual confirmation required for config/manual-settings.json."
