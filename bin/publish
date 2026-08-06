@@ -103,7 +103,14 @@ while IFS= read -r repository; do
 done < <(jq -r '.release_tags[]' "${repositories_config}")
 
 while IFS= read -r repository; do
-  if [[ $(gh api "repos/${organization}/${repository}" --jq '.archived') == true ]]; then
+  if ! repository_archived=$(
+    gh api "repos/${organization}/${repository}" --jq '.archived' 2>/dev/null
+  ); then
+    echo "SKIP ${organization}/${repository} does not exist"
+    continue
+  fi
+
+  if [[ ${repository_archived} == true ]]; then
     echo "SKIP ${organization}/${repository} is already archived"
     continue
   fi
