@@ -16,10 +16,7 @@
   ],
   "required_ci": {
     "atrinik": [
-      "GCC build and CTest",
-      "Clang ASan/UBSan",
-      "Windows client (MinGW)",
-      "Windows server (MinGW)",
+      "Integration validation",
       "Conventional PR title"
     ],
     "atrinik-sound": [
@@ -76,10 +73,14 @@
     "atrinik-sound",
     "client",
     "content",
+    "editor",
+    "github-settings",
     "libatrinik",
+    "metaserver-worker",
     "protocol",
     "resources",
     "server",
+    "tools",
     "devcontainer"
   ],
   "archive": [
