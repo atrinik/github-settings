@@ -14,6 +14,12 @@
       "Windows client (MinGW)",
       "Windows server (MinGW)"
     ],
+    "atrinik-sound": [
+      "Asset validation"
+    ],
+    "resources": [
+      "Asset validation"
+    ],
     "devcontainer": [
       "Required checks"
     ],
@@ -26,6 +32,8 @@
   },
   "release_tags": [
     "atrinik",
+    "atrinik-sound",
+    "resources",
     "devcontainer"
   ],
   "archive": [
