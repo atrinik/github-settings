@@ -13,25 +13,32 @@
       "GCC build and CTest",
       "Clang ASan/UBSan",
       "Windows client (MinGW)",
-      "Windows server (MinGW)"
+      "Windows server (MinGW)",
+      "Conventional PR title"
     ],
     "atrinik-sound": [
-      "Asset validation"
+      "Asset validation",
+      "Conventional PR title"
     ],
     "protocol": [
-      "Protocol validation"
+      "Protocol validation",
+      "Conventional PR title"
     ],
     "resources": [
-      "Asset validation"
+      "Asset validation",
+      "Conventional PR title"
     ],
     "devcontainer": [
-      "Required checks"
+      "Required checks",
+      "Conventional PR title"
     ],
     "metaserver-worker": [
-      "verify"
+      "verify",
+      "Conventional PR title"
     ],
     "github-settings": [
-      "Policy validation"
+      "Policy validation",
+      "Conventional PR title"
     ]
   },
   "release_tags": [
