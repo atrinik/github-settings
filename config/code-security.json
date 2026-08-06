@@ -1,6 +1,8 @@
 {
   "name": "Atrinik security baseline",
   "description": "Required security features for all Atrinik repositories.",
+  "code_security": "enabled",
+  "secret_protection": "enabled",
   "dependency_graph": "enabled",
   "dependabot_alerts": "enabled",
   "dependabot_security_updates": "enabled",
