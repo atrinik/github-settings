@@ -4,6 +4,7 @@
     "atrinik-sound",
     "client",
     "content",
+    "editor",
     "libatrinik",
     "protocol",
     "resources",
@@ -31,6 +32,10 @@
     ],
     "content": [
       "Content validation",
+      "Conventional PR title"
+    ],
+    "editor": [
+      "Editor packaging validation",
       "Conventional PR title"
     ],
     "libatrinik": [
