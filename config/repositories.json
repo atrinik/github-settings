@@ -8,6 +8,7 @@
     "protocol",
     "resources",
     "server",
+    "tools",
     "devcontainer",
     "metaserver-worker",
     "github-settings"
@@ -46,6 +47,10 @@
     ],
     "server": [
       "Server validation",
+      "Conventional PR title"
+    ],
+    "tools": [
+      "Tools validation",
       "Conventional PR title"
     ],
     "devcontainer": [
