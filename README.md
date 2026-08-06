@@ -13,6 +13,7 @@ read-only and are skipped on later runs.
 
 - Every active repository protects its default branch from deletion and
   non-fast-forward pushes.
+- Every active repository uses `main` as its default branch.
 - Maintained repositories require changes through pull requests.
 - Repositories with reliable CI require checks from the GitHub Actions app.
 - Release tags in release-producing repositories cannot be moved or deleted.
@@ -73,8 +74,9 @@ that token in this repository.
 
 ## Adding a repository
 
-Default-branch integrity, merge settings, and security policy are discovered
-dynamically and apply to every non-archived organization repository. The Team
+Create the repository's `main` branch before applying policy. Default-branch
+integrity, merge settings, and security policy are discovered dynamically and
+apply to every non-archived organization repository. The Team
 security configuration is also the default for newly created repositories.
 Add repositories to the appropriate arrays in `config/repositories.json` when
 they also need a pull-request gate, required CI, immutable release tags, or
