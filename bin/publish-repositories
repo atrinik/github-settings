@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+ATRINIK_POLICY_SCOPE=repository exec "${root}/bin/publish" "$@"

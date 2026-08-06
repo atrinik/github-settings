@@ -1,7 +1,10 @@
 {
   "members_can_delete_or_transfer_repositories": false,
   "members_can_change_repository_visibility": false,
+  "members_can_create_teams": false,
+  "repository_admins_can_install_github_apps": false,
+  "members_can_request_github_apps": true,
   "require_two_factor_authentication": true,
   "require_secure_two_factor_methods": true,
-  "reason": "The public GitHub API reports these settings but does not expose supported update parameters for them."
+  "reason": "The public GitHub API does not expose supported update parameters for every setting in this file. Confirm them in the organization UI."
 }
