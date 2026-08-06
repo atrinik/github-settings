@@ -2,10 +2,12 @@
   "pull_request_gate": [
     "atrinik",
     "atrinik-sound",
+    "client",
     "content",
     "libatrinik",
     "protocol",
     "resources",
+    "server",
     "devcontainer",
     "metaserver-worker",
     "github-settings"
@@ -20,6 +22,10 @@
     ],
     "atrinik-sound": [
       "Asset validation",
+      "Conventional PR title"
+    ],
+    "client": [
+      "Client validation",
       "Conventional PR title"
     ],
     "content": [
@@ -38,6 +44,10 @@
       "Asset validation",
       "Conventional PR title"
     ],
+    "server": [
+      "Server validation",
+      "Conventional PR title"
+    ],
     "devcontainer": [
       "Required checks",
       "Conventional PR title"
@@ -54,10 +64,12 @@
   "release_tags": [
     "atrinik",
     "atrinik-sound",
+    "client",
     "content",
     "libatrinik",
     "protocol",
     "resources",
+    "server",
     "devcontainer"
   ],
   "archive": [
