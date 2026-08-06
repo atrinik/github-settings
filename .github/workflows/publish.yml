@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Apply organization settings and repository rulesets
+      - name: Apply organization governance and security policy
         env:
           GH_TOKEN: ${{ secrets.ATRINIK_SETTINGS_TOKEN }}
         run: bin/publish --apply

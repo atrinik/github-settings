@@ -3,6 +3,8 @@
 set -euo pipefail
 
 organization=${ATRINIK_ORGANIZATION:-atrinik}
+policy_scope=${ATRINIK_POLICY_SCOPE:-auto}
+api_version=2026-03-10
 apply=false
 
 case "${1:-}" in
@@ -10,6 +12,14 @@ case "${1:-}" in
 --apply) apply=true ;;
 *)
   echo "usage: $0 [--apply]" >&2
+  exit 2
+  ;;
+esac
+
+case ${policy_scope} in
+auto | organization | repository) ;;
+*)
+  echo "error: ATRINIK_POLICY_SCOPE must be auto, organization, or repository" >&2
   exit 2
   ;;
 esac
@@ -26,26 +36,36 @@ repositories_config=${root}/config/repositories.json
 temporary_files=()
 trap 'rm -f "${temporary_files[@]}"' EXIT
 
+github_api() {
+  gh api -H "X-GitHub-Api-Version: ${api_version}" "$@"
+}
+
 run_api() {
   local method=$1
   local endpoint=$2
-  local input=$3
+  local input=${3:-}
 
   if ${apply}; then
-    gh api --method "${method}" "${endpoint}" --input "${input}" >/dev/null
-  else
+    if [[ -n ${input} ]]; then
+      github_api --method "${method}" "${endpoint}" --input "${input}" >/dev/null
+    else
+      github_api --method "${method}" "${endpoint}" >/dev/null
+    fi
+  elif [[ -n ${input} ]]; then
     echo "PLAN ${method} /${endpoint} <= ${input#"${root}/"}"
+  else
+    echo "PLAN ${method} /${endpoint}"
   fi
 }
 
-upsert_ruleset() {
+upsert_repository_ruleset() {
   local repository=$1
   local input=$2
   local name id
 
   name=$(jq -r '.name' "${input}")
   id=$(
-    gh api "repos/${organization}/${repository}/rulesets?includes_parents=false" |
+    github_api "repos/${organization}/${repository}/rulesets?includes_parents=false" |
       jq -r --arg name "${name}" 'map(select(.name == $name))[0].id // empty'
   )
 
@@ -56,7 +76,251 @@ upsert_ruleset() {
   fi
 }
 
+upsert_organization_ruleset() {
+  local input=$1
+  local name id
+
+  name=$(jq -r '.name' "${input}")
+  id=$(
+    github_api "orgs/${organization}/rulesets" |
+      jq -r --arg name "${name}" 'map(select(.name == $name))[0].id // empty'
+  )
+
+  if [[ -n ${id} ]]; then
+    run_api PUT "orgs/${organization}/rulesets/${id}" "${input}"
+  else
+    run_api POST "orgs/${organization}/rulesets" "${input}"
+  fi
+}
+
+make_organization_ruleset() {
+  local base=$1
+  local name=$2
+  local repositories=$3
+  local output
+
+  output=$(mktemp)
+  temporary_files+=("${output}")
+  jq --arg name "${name}" --argjson repositories "${repositories}" '
+    .name = $name |
+    .conditions.repository_name = {
+      include: $repositories,
+      exclude: [],
+      protected: false
+    }
+  ' "${base}" >"${output}"
+  echo "${output}"
+}
+
+delete_repository_ruleset() {
+  local repository=$1
+  local name=$2
+  local id
+
+  id=$(
+    github_api "repos/${organization}/${repository}/rulesets?includes_parents=false" |
+      jq -r --arg name "${name}" 'map(select(.name == $name))[0].id // empty'
+  )
+  if [[ -n ${id} ]]; then
+    run_api DELETE "repos/${organization}/${repository}/rulesets/${id}"
+  fi
+}
+
+delete_managed_organization_rulesets() {
+  local ruleset name id
+
+  while IFS= read -r ruleset; do
+    name=$(jq -r '.name' <<<"${ruleset}")
+    id=$(jq -r '.id' <<<"${ruleset}")
+    case ${name} in
+    "01 - Default branch integrity" | \
+      "02 - Changes through pull requests" | \
+      "04 - Immutable release tags" | \
+      "03 - Required CI - "*)
+      run_api DELETE "orgs/${organization}/rulesets/${id}"
+      ;;
+    esac
+  done < <(github_api "orgs/${organization}/rulesets" | jq -c '.[]')
+}
+
+publish_repository_rulesets() {
+  local repository ci_payload
+
+  for repository in "${active_repositories[@]}"; do
+    upsert_repository_ruleset "${repository}" \
+      "${root}/config/rulesets/default-branch-integrity.json"
+  done
+
+  while IFS= read -r repository; do
+    upsert_repository_ruleset "${repository}" \
+      "${root}/config/rulesets/pull-request-gate.json"
+  done < <(jq -r '.pull_request_gate[]' "${repositories_config}")
+
+  while IFS= read -r repository; do
+    ci_payload=$(mktemp)
+    temporary_files+=("${ci_payload}")
+    jq --arg repository "${repository}" \
+      --argjson app_id 15368 \
+      --slurpfile repositories "${repositories_config}" '
+        .rules[0].parameters.required_status_checks =
+          ($repositories[0].required_ci[$repository] |
+           map({context: ., integration_id: $app_id}))
+      ' "${root}/config/rulesets/required-ci.json" >"${ci_payload}"
+    upsert_repository_ruleset "${repository}" "${ci_payload}"
+  done < <(jq -r '.required_ci | keys[]' "${repositories_config}")
+
+  while IFS= read -r repository; do
+    upsert_repository_ruleset "${repository}" \
+      "${root}/config/rulesets/immutable-release-tags.json"
+  done < <(jq -r '.release_tags[]' "${repositories_config}")
+
+  if [[ ${organization_plan} != free ]]; then
+    delete_managed_organization_rulesets
+  fi
+}
+
+publish_organization_rulesets() {
+  local input repository ci_payload
+  local -a desired_rulesets
+  local repositories ruleset name id desired
+
+  desired_rulesets=(
+    "01 - Default branch integrity"
+    "02 - Changes through pull requests"
+    "04 - Immutable release tags"
+  )
+
+  input=$(make_organization_ruleset \
+    "${root}/config/rulesets/default-branch-integrity.json" \
+    "01 - Default branch integrity" '["~ALL"]')
+  temporary_files+=("${input}")
+  upsert_organization_ruleset "${input}"
+
+  repositories=$(jq -c '.pull_request_gate' "${repositories_config}")
+  input=$(make_organization_ruleset \
+    "${root}/config/rulesets/pull-request-gate.json" \
+    "02 - Changes through pull requests" "${repositories}")
+  temporary_files+=("${input}")
+  upsert_organization_ruleset "${input}"
+
+  repositories=$(jq -c '.release_tags' "${repositories_config}")
+  input=$(make_organization_ruleset \
+    "${root}/config/rulesets/immutable-release-tags.json" \
+    "04 - Immutable release tags" "${repositories}")
+  temporary_files+=("${input}")
+  upsert_organization_ruleset "${input}"
+
+  while IFS= read -r repository; do
+    name="03 - Required CI - ${repository}"
+    desired_rulesets+=("${name}")
+    ci_payload=$(mktemp)
+    temporary_files+=("${ci_payload}")
+    jq --arg name "${name}" \
+      --arg repository "${repository}" \
+      --argjson app_id 15368 \
+      --slurpfile repositories "${repositories_config}" '
+        .name = $name |
+        .conditions.repository_name = {
+          include: [$repository],
+          exclude: [],
+          protected: false
+        } |
+        .rules[0].parameters.required_status_checks =
+          ($repositories[0].required_ci[$repository] |
+           map({context: ., integration_id: $app_id}))
+      ' "${root}/config/rulesets/required-ci.json" >"${ci_payload}"
+    upsert_organization_ruleset "${ci_payload}"
+  done < <(jq -r '.required_ci | keys[]' "${repositories_config}")
+
+  while IFS= read -r ruleset; do
+    name=$(jq -r '.name' <<<"${ruleset}")
+    id=$(jq -r '.id' <<<"${ruleset}")
+    if [[ ${name} != "03 - Required CI - "* ]]; then
+      continue
+    fi
+    desired=false
+    for repository in "${desired_rulesets[@]}"; do
+      if [[ ${repository} == "${name}" ]]; then
+        desired=true
+        break
+      fi
+    done
+    if ! ${desired}; then
+      run_api DELETE "orgs/${organization}/rulesets/${id}"
+    fi
+  done < <(github_api "orgs/${organization}/rulesets" | jq -c '.[]')
+
+  for repository in "${active_repositories[@]}"; do
+    delete_repository_ruleset "${repository}" "01 - Default branch integrity"
+    delete_repository_ruleset "${repository}" "02 - Changes through pull requests"
+    delete_repository_ruleset "${repository}" "03 - Required CI"
+    delete_repository_ruleset "${repository}" "04 - Immutable release tags"
+  done
+}
+
+publish_organization_security() {
+  local name id defaults_payload attach_payload
+
+  name=$(jq -r '.name' "${root}/config/code-security.json")
+  id=$(
+    github_api "orgs/${organization}/code-security/configurations" |
+      jq -r --arg name "${name}" 'map(select(.name == $name))[0].id // empty'
+  )
+
+  if [[ -n ${id} ]]; then
+    run_api PATCH "orgs/${organization}/code-security/configurations/${id}" \
+      "${root}/config/code-security.json"
+  elif ${apply}; then
+    id=$(
+      github_api --method POST \
+        "orgs/${organization}/code-security/configurations" \
+        --input "${root}/config/code-security.json" | jq -r '.id'
+    )
+  else
+    echo "PLAN POST /orgs/${organization}/code-security/configurations <= config/code-security.json"
+    id='{configuration-id}'
+  fi
+
+  defaults_payload=$(mktemp)
+  temporary_files+=("${defaults_payload}")
+  jq -n '{default_for_new_repos: "all"}' >"${defaults_payload}"
+  run_api PUT \
+    "orgs/${organization}/code-security/configurations/${id}/defaults" \
+    "${defaults_payload}"
+
+  attach_payload=$(mktemp)
+  temporary_files+=("${attach_payload}")
+  jq -n '{scope: "all"}' >"${attach_payload}"
+  run_api POST \
+    "orgs/${organization}/code-security/configurations/${id}/attach" \
+    "${attach_payload}"
+}
+
+publish_repository_security() {
+  local repository
+
+  for repository in "${active_repositories[@]}"; do
+    run_api PATCH "repos/${organization}/${repository}" \
+      "${root}/config/repository-security.json"
+    run_api PUT "repos/${organization}/${repository}/vulnerability-alerts"
+    run_api PUT "repos/${organization}/${repository}/automated-security-fixes"
+    run_api PUT "repos/${organization}/${repository}/private-vulnerability-reporting"
+    run_api PATCH "repos/${organization}/${repository}/code-scanning/default-setup" \
+      "${root}/config/codeql-default-setup.json"
+  done
+}
+
+organization_plan=$(github_api "orgs/${organization}" --jq '.plan.name')
+if [[ ${policy_scope} == auto ]]; then
+  case ${organization_plan} in
+  team | enterprise) policy_scope=organization ;;
+  *) policy_scope=repository ;;
+  esac
+fi
+
 echo "Organization: ${organization}"
+echo "Plan: ${organization_plan}"
+echo "Policy scope: ${policy_scope}"
 ${apply} && echo "Mode: apply" || echo "Mode: plan"
 
 run_api PATCH "orgs/${organization}" "${root}/config/organization.json"
@@ -68,43 +332,26 @@ run_api PUT "orgs/${organization}/actions/permissions/workflow" \
   "${root}/config/actions-workflow.json"
 
 mapfile -t active_repositories < <(
-  gh api --paginate "orgs/${organization}/repos?per_page=100&type=all" \
+  github_api --paginate "orgs/${organization}/repos?per_page=100&type=all" \
     --jq '.[] | select(.archived == false) | .name'
 )
 
 for repository in "${active_repositories[@]}"; do
   run_api PATCH "repos/${organization}/${repository}" \
     "${root}/config/repository-defaults.json"
-  upsert_ruleset "${repository}" \
-    "${root}/config/rulesets/default-branch-integrity.json"
 done
 
-while IFS= read -r repository; do
-  upsert_ruleset "${repository}" \
-    "${root}/config/rulesets/pull-request-gate.json"
-done < <(jq -r '.pull_request_gate[]' "${repositories_config}")
-
-while IFS= read -r repository; do
-  ci_payload=$(mktemp)
-  temporary_files+=("${ci_payload}")
-  jq --arg repository "${repository}" \
-    --argjson app_id 15368 \
-    --slurpfile repositories "${repositories_config}" \
-    '.rules[0].parameters.required_status_checks =
-      ($repositories[0].required_ci[$repository] |
-       map({context: ., integration_id: $app_id}))' \
-    "${root}/config/rulesets/required-ci.json" >"${ci_payload}"
-  upsert_ruleset "${repository}" "${ci_payload}"
-done < <(jq -r '.required_ci | keys[]' "${repositories_config}")
-
-while IFS= read -r repository; do
-  upsert_ruleset "${repository}" \
-    "${root}/config/rulesets/immutable-release-tags.json"
-done < <(jq -r '.release_tags[]' "${repositories_config}")
+if [[ ${policy_scope} == organization ]]; then
+  publish_organization_rulesets
+  publish_organization_security
+else
+  publish_repository_rulesets
+  publish_repository_security
+fi
 
 while IFS= read -r repository; do
   if ! repository_archived=$(
-    gh api "repos/${organization}/${repository}" --jq '.archived' 2>/dev/null
+    github_api "repos/${organization}/${repository}" --jq '.archived' 2>/dev/null
   ); then
     echo "SKIP ${organization}/${repository} does not exist"
     continue
@@ -121,4 +368,7 @@ while IFS= read -r repository; do
   run_api PATCH "repos/${organization}/${repository}" "${archive_payload}"
 done < <(jq -r '.archive[]' "${repositories_config}")
 
+if [[ $(github_api "orgs/${organization}" --jq '.members_can_create_teams') != false ]]; then
+  echo "MANUAL members can still create teams; disable this in Member privileges."
+fi
 echo "Manual confirmation required for config/manual-settings.json."
