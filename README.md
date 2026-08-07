@@ -19,6 +19,9 @@ read-only and are skipped on later runs.
   Replacement repositories receive their required-check rules only after their
   bootstrap workflows publish stable aggregate job names; renamed repositories
   retain their established check contracts during the transition.
+- Declared maintenance branches reject deletion and non-fast-forward updates,
+  require linear history and pull requests, and require only checks already
+  emitted for that branch.
 - Release tags in release-producing repositories cannot be moved or deleted.
 - Active repositories allow squash merges only. The squash commit uses the
   pull-request title and description, and merged head branches are deleted.
@@ -46,7 +49,8 @@ their OIDC-authenticated coverage uploads and badges remain available.
 
 ## Usage
 
-Requirements: `gh`, `jq`, and an authenticated organization-owner account.
+Requirements: `git`, `gh`, `jq`, and an authenticated organization-owner
+account.
 
 ```sh
 gh auth refresh -h github.com -s admin:org
@@ -86,3 +90,32 @@ security configuration is also the default for newly created repositories.
 Add repositories to the appropriate arrays in `config/repositories.json` when
 they also need a pull-request gate, required CI, immutable release tags, or
 archival.
+
+## Protecting a maintenance branch
+
+Add a unique repository/branch entry to `maintenance_branches` in
+`config/repositories.json`. Branch names are repository-relative, so `1.x`
+becomes the exact ruleset ref `refs/heads/1.x`. Every entry receives deletion,
+non-fast-forward, linear-history, and pull-request rules. Its `required_ci`
+array may contain only stable checks already declared for that repository and
+emitted by workflows on the maintenance branch.
+
+`content/1.x` initially requires `Conventional PR title`, whose unfiltered
+pull-request policy already runs for that branch. `Content validation` remains
+deliberately absent until the content workflow is enabled and proven on `1.x`;
+add it to this entry in that implementation change before applying the tighter
+policy.
+
+On GitHub Team the publisher creates one organization ruleset per maintenance
+branch. The repository-policy fallback creates the equivalent repository
+ruleset. Both paths remove stale managed maintenance rulesets, and migration
+creates the destination protection before deleting the previous scope.
+
+Validate semantic configuration and both publisher scopes before reviewing the
+live plan:
+
+```sh
+bin/validate
+tests/publish-maintenance-branch.sh
+bin/publish
+```

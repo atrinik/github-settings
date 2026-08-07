@@ -24,7 +24,7 @@ auto | organization | repository) ;;
   ;;
 esac
 
-for command in gh jq; do
+for command in gh git jq; do
   if ! command -v "${command}" >/dev/null 2>&1; then
     echo "error: ${command} is required" >&2
     exit 1
@@ -35,6 +35,8 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 repositories_config=${root}/config/repositories.json
 temporary_files=()
 trap 'rm -f "${temporary_files[@]}"' EXIT
+
+"${root}/bin/validate" >/dev/null
 
 github_api() {
   gh api -H "X-GitHub-Api-Version: ${api_version}" "$@"
@@ -112,18 +114,121 @@ make_organization_ruleset() {
   echo "${output}"
 }
 
-delete_repository_ruleset() {
+maintenance_ruleset_name() {
   local repository=$1
-  local name=$2
-  local id
+  local branch=$2
 
-  id=$(
-    github_api "repos/${organization}/${repository}/rulesets?includes_parents=false" |
-      jq -r --arg name "${name}" 'map(select(.name == $name))[0].id // empty'
+  printf '05 - Maintenance branch - %s - %s' "${repository}" "${branch}"
+}
+
+make_maintenance_ruleset() {
+  local repository=$1
+  local branch=$2
+  local required_ci=$3
+  local scope=$4
+  local output name
+
+  name=$(maintenance_ruleset_name "${repository}" "${branch}")
+  output=$(mktemp)
+  temporary_files+=("${output}")
+  jq --arg name "${name}" \
+    --arg repository "${repository}" \
+    --arg branch "${branch}" \
+    --arg scope "${scope}" \
+    --argjson app_id 15368 \
+    --argjson required_ci "${required_ci}" '
+      .name = $name |
+      .conditions.ref_name.include = ["refs/heads/\($branch)"] |
+      .rules = (
+        .rules |
+        map(
+          if .type == "required_status_checks" then
+            .parameters.required_status_checks =
+              ($required_ci | map({context: ., integration_id: $app_id}))
+          else
+            .
+          end
+        ) |
+        if ($required_ci | length) == 0 then
+          map(select(.type != "required_status_checks"))
+        else
+          .
+        end
+      ) |
+      if $scope == "organization" then
+        .conditions.repository_name = {
+          include: [$repository],
+          exclude: [],
+          protected: false
+        }
+      else
+        .
+      end
+    ' "${root}/config/rulesets/maintenance-branch.json" >"${output}"
+  echo "${output}"
+}
+
+maintenance_ruleset_is_desired() {
+  local repository=$1
+  local candidate=$2
+  local branch expected
+
+  while IFS= read -r branch; do
+    expected=$(maintenance_ruleset_name "${repository}" "${branch}")
+    if [[ ${candidate} == "${expected}" ]]; then
+      return 0
+    fi
+  done < <(
+    jq -r --arg repository "${repository}" '
+      .maintenance_branches[] |
+      select(.repository == $repository) |
+      .branch
+    ' "${repositories_config}"
   )
-  if [[ -n ${id} ]]; then
-    run_api DELETE "repos/${organization}/${repository}/rulesets/${id}"
-  fi
+  return 1
+}
+
+delete_stale_repository_maintenance_rulesets() {
+  local repository ruleset name id
+
+  for repository in "${active_repositories[@]}"; do
+    while IFS= read -r ruleset; do
+      name=$(jq -r '.name' <<<"${ruleset}")
+      id=$(jq -r '.id' <<<"${ruleset}")
+      if [[ ${name} != "05 - Maintenance branch - "* ]]; then
+        continue
+      fi
+      if ! maintenance_ruleset_is_desired "${repository}" "${name}"; then
+        run_api DELETE "repos/${organization}/${repository}/rulesets/${id}"
+      fi
+    done < <(
+      github_api \
+        "repos/${organization}/${repository}/rulesets?includes_parents=false" |
+        jq -c '.[]'
+    )
+  done
+}
+
+delete_managed_repository_rulesets() {
+  local repository=$1
+  local ruleset name id
+
+  while IFS= read -r ruleset; do
+    name=$(jq -r '.name' <<<"${ruleset}")
+    id=$(jq -r '.id' <<<"${ruleset}")
+    case ${name} in
+    "01 - Default branch integrity" | \
+      "02 - Changes through pull requests" | \
+      "03 - Required CI" | \
+      "04 - Immutable release tags" | \
+      "05 - Maintenance branch - "*)
+      run_api DELETE "repos/${organization}/${repository}/rulesets/${id}"
+      ;;
+    esac
+  done < <(
+    github_api "repos/${organization}/${repository}/rulesets?includes_parents=false" |
+      jq -c '.[]'
+  )
 }
 
 delete_managed_organization_rulesets() {
@@ -136,7 +241,8 @@ delete_managed_organization_rulesets() {
     "01 - Default branch integrity" | \
       "02 - Changes through pull requests" | \
       "04 - Immutable release tags" | \
-      "03 - Required CI - "*)
+      "03 - Required CI - "* | \
+      "05 - Maintenance branch - "*)
       run_api DELETE "orgs/${organization}/rulesets/${id}"
       ;;
     esac
@@ -144,7 +250,7 @@ delete_managed_organization_rulesets() {
 }
 
 publish_repository_rulesets() {
-  local repository ci_payload
+  local repository ci_payload maintenance branch required_ci input
 
   for repository in "${active_repositories[@]}"; do
     upsert_repository_ruleset "${repository}" \
@@ -174,13 +280,25 @@ publish_repository_rulesets() {
       "${root}/config/rulesets/immutable-release-tags.json"
   done < <(jq -r '.release_tags[]' "${repositories_config}")
 
+  while IFS= read -r maintenance; do
+    repository=$(jq -r '.repository' <<<"${maintenance}")
+    branch=$(jq -r '.branch' <<<"${maintenance}")
+    required_ci=$(jq -c '.required_ci' <<<"${maintenance}")
+    input=$(make_maintenance_ruleset \
+      "${repository}" "${branch}" "${required_ci}" repository)
+    temporary_files+=("${input}")
+    upsert_repository_ruleset "${repository}" "${input}"
+  done < <(jq -c '.maintenance_branches[]' "${repositories_config}")
+
+  delete_stale_repository_maintenance_rulesets
+
   if [[ ${organization_plan} != free ]]; then
     delete_managed_organization_rulesets
   fi
 }
 
 publish_organization_rulesets() {
-  local input repository ci_payload
+  local input repository ci_payload maintenance branch required_ci
   local -a desired_rulesets
   local repositories ruleset name id desired
 
@@ -232,12 +350,27 @@ publish_organization_rulesets() {
     upsert_organization_ruleset "${ci_payload}"
   done < <(jq -r '.required_ci | keys[]' "${repositories_config}")
 
+  while IFS= read -r maintenance; do
+    repository=$(jq -r '.repository' <<<"${maintenance}")
+    branch=$(jq -r '.branch' <<<"${maintenance}")
+    required_ci=$(jq -c '.required_ci' <<<"${maintenance}")
+    name=$(maintenance_ruleset_name "${repository}" "${branch}")
+    desired_rulesets+=("${name}")
+    input=$(make_maintenance_ruleset \
+      "${repository}" "${branch}" "${required_ci}" organization)
+    temporary_files+=("${input}")
+    upsert_organization_ruleset "${input}"
+  done < <(jq -c '.maintenance_branches[]' "${repositories_config}")
+
   while IFS= read -r ruleset; do
     name=$(jq -r '.name' <<<"${ruleset}")
     id=$(jq -r '.id' <<<"${ruleset}")
-    if [[ ${name} != "03 - Required CI - "* ]]; then
+    case ${name} in
+    "03 - Required CI - "* | "05 - Maintenance branch - "*) ;;
+    *)
       continue
-    fi
+      ;;
+    esac
     desired=false
     for repository in "${desired_rulesets[@]}"; do
       if [[ ${repository} == "${name}" ]]; then
@@ -251,10 +384,7 @@ publish_organization_rulesets() {
   done < <(github_api "orgs/${organization}/rulesets" | jq -c '.[]')
 
   for repository in "${active_repositories[@]}"; do
-    delete_repository_ruleset "${repository}" "01 - Default branch integrity"
-    delete_repository_ruleset "${repository}" "02 - Changes through pull requests"
-    delete_repository_ruleset "${repository}" "03 - Required CI"
-    delete_repository_ruleset "${repository}" "04 - Immutable release tags"
+    delete_managed_repository_rulesets "${repository}"
   done
 }
 
