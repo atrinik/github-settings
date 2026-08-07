@@ -16,6 +16,9 @@ read-only and are skipped on later runs.
 - Every active repository uses `main` as its default branch.
 - Maintained repositories require changes through pull requests.
 - Repositories with reliable CI require checks from the GitHub Actions app.
+  Replacement repositories receive their required-check rules only after their
+  bootstrap workflows publish stable aggregate job names; renamed repositories
+  retain their established check contracts during the transition.
 - Release tags in release-producing repositories cannot be moved or deleted.
 - Active repositories allow squash merges only. The squash commit uses the
   pull-request title and description, and merged head branches are deleted.

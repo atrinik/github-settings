@@ -7,7 +7,13 @@
   "codecov_github_app_repositories": [
     "atrinik",
     "client",
-    "libatrinik",
+    "content-toolkit",
+    "editor",
+    "legacy-client",
+    "legacy-libatrinik",
+    "legacy-server",
+    "protocol",
+    "renderer",
     "server"
   ],
   "require_two_factor_authentication": true,
