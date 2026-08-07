@@ -3,6 +3,7 @@
   "verified_allowed": false,
   "patterns_allowed": [
     "atrinik/*",
+    "codecov/codecov-action@*",
     "docker/login-action@*",
     "docker/setup-buildx-action@*",
     "docker/build-push-action@*"

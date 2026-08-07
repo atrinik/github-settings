@@ -31,13 +31,15 @@ read-only and are skipped on later runs.
   request GitHub Apps for owner review. These UI-only settings are recorded in
   `config/manual-settings.json`.
 - GitHub Actions defaults to read-only, cannot approve pull requests, and may
-  use only Atrinik, GitHub, and explicitly allowed Docker actions.
+  use only Atrinik, GitHub, Codecov coverage, and explicitly allowed Docker
+  actions.
 - Historical repositories listed in `config/repositories.json` are archived.
 
 The GitHub REST API does not expose every organization control. The desired
 values are recorded in `config/manual-settings.json` and must be confirmed in
-the organization UI under **Member privileges** and **Authentication
-security**.
+the organization UI under **Member privileges**, **Authentication security**,
+and **GitHub Apps**. Codecov must be installed for the listed repositories so
+their OIDC-authenticated coverage uploads and badges remain available.
 
 ## Usage
 
