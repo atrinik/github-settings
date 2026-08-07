@@ -4,7 +4,13 @@
   "members_can_create_teams": false,
   "repository_admins_can_install_github_apps": false,
   "members_can_request_github_apps": true,
+  "codecov_github_app_repositories": [
+    "atrinik",
+    "client",
+    "libatrinik",
+    "server"
+  ],
   "require_two_factor_authentication": true,
   "require_secure_two_factor_methods": true,
-  "reason": "The public GitHub API does not expose supported update parameters for every setting in this file. Confirm them in the organization UI."
+  "reason": "The public GitHub API does not expose supported update parameters for every setting in this file. Confirm them and the Codecov GitHub App repository access in the organization UI."
 }
