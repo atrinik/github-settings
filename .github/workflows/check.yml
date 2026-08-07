@@ -18,8 +18,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Validate JSON
-        run: find config -name '*.json' -print0 | xargs -0 -n1 jq empty
+      - name: Validate configuration
+        run: bin/validate
 
-      - name: Check publisher
-        run: shellcheck bin/publish
+      - name: Check governance scripts
+        run: shellcheck bin/publish bin/publish-repositories bin/validate tests/*.sh
+
+      - name: Test publisher policy scopes
+        run: tests/publish-maintenance-branch.sh

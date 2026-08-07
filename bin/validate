@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+repositories_config=${root}/config/repositories.json
+
+for command in git jq; do
+  if ! command -v "${command}" >/dev/null 2>&1; then
+    echo "error: ${command} is required" >&2
+    exit 1
+  fi
+done
+
+while IFS= read -r -d '' config; do
+  jq empty "${config}" >/dev/null
+done < <(find "${root}/config" -name '*.json' -print0 | sort -z)
+
+jq -e '
+  . as $config |
+  (.maintenance_branches | type == "array") and
+  all(
+    .maintenance_branches[];
+    (keys == ["branch", "repository", "required_ci"]) and
+    (.repository | type == "string" and length > 0) and
+    (.branch | type == "string" and length > 0 and . != "main") and
+    (.required_ci | type == "array") and
+    ((.required_ci | length) == (.required_ci | unique | length)) and
+    all(.required_ci[]; type == "string" and length > 0) and
+    (.repository as $repository |
+      ($config.pull_request_gate | index($repository)) != null) and
+    (.repository as $repository |
+      .required_ci |
+      all(
+        .[];
+        . as $check |
+        (($config.required_ci[$repository] // []) | index($check)) != null
+      ))
+  ) and
+  ([.maintenance_branches[] | [.repository, .branch]] as $branches |
+    ($branches | length) == ($branches | unique | length))
+' "${repositories_config}" >/dev/null
+
+while IFS= read -r branch; do
+  if ! git check-ref-format --branch "${branch}" >/dev/null; then
+    echo "error: invalid maintenance branch name: ${branch}" >&2
+    exit 1
+  fi
+done < <(jq -r '.maintenance_branches[].branch' "${repositories_config}")
+
+echo "Governance configuration is valid."
