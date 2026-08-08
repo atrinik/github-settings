@@ -244,7 +244,7 @@ Use this rollout order:
      orgs/atrinik/settings/immutable-releases
    gh api --paginate -H 'X-GitHub-Api-Version: 2026-03-10' \
      'orgs/atrinik/settings/immutable-releases/repositories?per_page=100' \
-     --jq '.[] | [.name, .id]'
+     --jq '.repositories[] | [.name, .id]'
    gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
      repos/atrinik/classic/immutable-releases
    ```

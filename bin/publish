@@ -726,7 +726,7 @@ current_immutable_release_payload() {
     if ! selected_repository_ids=$(
       github_api --paginate \
         "orgs/${organization}/settings/immutable-releases/repositories?per_page=100" \
-        --jq '.[].id' | jq -cs 'map(tonumber) | sort | unique'
+        --jq '.repositories[].id' | jq -cs 'map(tonumber) | sort | unique'
     ); then
       echo "error: failed to read repositories selected for immutable releases" >&2
       return 1

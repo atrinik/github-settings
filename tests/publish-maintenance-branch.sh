@@ -239,8 +239,13 @@ case "${endpoint}|${jq_filter}" in
 "orgs/atrinik/settings/immutable-releases|"*)
   jq '{enforced_repositories}' "${GH_IMMUTABLE_STATE}"
   ;;
-"orgs/atrinik/settings/immutable-releases/repositories?per_page=100|.[].id")
-  jq -r '.selected_repository_ids[]?' "${GH_IMMUTABLE_STATE}"
+"orgs/atrinik/settings/immutable-releases/repositories?per_page=100|"*)
+  jq '
+    {
+      total_count: (.selected_repository_ids | length),
+      repositories: [.selected_repository_ids[]? | {id: .}]
+    }
+  ' "${GH_IMMUTABLE_STATE}" | jq -r "${jq_filter}"
   ;;
 "repos/atrinik/classic/immutable-releases|"*)
   if [[ ${GH_IMMUTABLE_VERIFY_FAILURE:-false} == true ]]; then
