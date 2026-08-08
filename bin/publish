@@ -400,7 +400,7 @@ publish_organization_rulesets() {
 upsert_code_security_configuration() {
   local input=$1
   local placeholder=$2
-  local name id
+  local name id current
 
   name=$(jq -r '.name' "${input}")
   id=$(
@@ -409,8 +409,15 @@ upsert_code_security_configuration() {
   )
 
   if [[ -n ${id} ]]; then
-    run_api PATCH "orgs/${organization}/code-security/configurations/${id}" \
-      "${input}"
+    current=$(github_api \
+      "orgs/${organization}/code-security/configurations/${id}")
+    if code_security_configuration_matches "${input}" "${current}"; then
+      echo "KEEP /orgs/${organization}/code-security/configurations/${id} matches ${input#"${root}/"}"
+    else
+      run_api PATCH \
+        "orgs/${organization}/code-security/configurations/${id}" \
+        "${input}"
+    fi
   elif ${apply}; then
     id=$(
       github_api --method POST \
@@ -430,10 +437,66 @@ upsert_code_security_configuration() {
   upserted_code_security_configuration_id=${id}
 }
 
+code_security_configuration_matches() {
+  local input=$1
+  local current=$2
+
+  # GitHub currently returns the legacy advanced_security summary even when
+  # code_security and secret_protection were written separately. Normalize
+  # that response before comparing only the fields owned by desired state.
+  jq -e --slurpfile desired "${input}" '
+    . as $current |
+    (
+      $current + {
+        code_security: (
+          if $current.code_security != null then
+            $current.code_security
+          elif (
+            $current.advanced_security == "enabled" or
+            $current.advanced_security == "code_security"
+          ) then
+            "enabled"
+          elif (
+            $current.advanced_security == "disabled" or
+            $current.advanced_security == "secret_protection"
+          ) then
+            "disabled"
+          else
+            "not_set"
+          end
+        ),
+        secret_protection: (
+          if $current.secret_protection != null then
+            $current.secret_protection
+          elif (
+            $current.advanced_security == "enabled" or
+            $current.advanced_security == "secret_protection"
+          ) then
+            "enabled"
+          elif (
+            $current.advanced_security == "disabled" or
+            $current.advanced_security == "code_security"
+          ) then
+            "disabled"
+          else
+            "not_set"
+          end
+        )
+      }
+    ) as $normalized |
+    $desired[0] as $wanted |
+    reduce ($wanted | keys[]) as $key
+      (true; . and ($normalized[$key] == $wanted[$key]))
+  ' <<<"${current}" >/dev/null
+}
+
 make_security_attach_payload() {
   local advanced=$1
-  local output repository repository_is_advanced id
+  local expected_id=$2
+  local repository repository_is_advanced id current status current_id
   local ids='[]'
+
+  security_attachment_wait_needed=false
 
   for repository in "${active_repositories[@]}"; do
     repository_is_advanced=false
@@ -445,13 +508,58 @@ make_security_attach_payload() {
     fi
 
     id=${active_repository_ids["${repository}"]}
+    current=
+    if current=$(github_api \
+      "repos/${organization}/${repository}/code-security-configuration" \
+      2>/dev/null); then
+      status=$(jq -r '.status // empty' <<<"${current}")
+      current_id=$(jq -r '.configuration.id // empty' <<<"${current}")
+      if [[ ${current_id} == "${expected_id}" ]]; then
+        # Both managed configurations require enforcement. An attached
+        # relationship must settle to enforced, but must not be re-attached.
+        case ${status} in
+        enforced)
+          continue
+          ;;
+        attached | attaching | updating)
+          security_attachment_wait_needed=true
+          continue
+          ;;
+        esac
+      fi
+    fi
+
     ids=$(jq --argjson id "${id}" '. + [$id]' <<<"${ids}")
+    security_attachment_wait_needed=true
   done
 
-  output=$(mktemp)
+  security_attach_payload=$(mktemp)
   jq -n --argjson ids "${ids}" \
-    '{scope: "selected", selected_repository_ids: $ids}' >"${output}"
-  echo "${output}"
+    '{scope: "selected", selected_repository_ids: $ids}' \
+    >"${security_attach_payload}"
+  security_attachment_count=$(jq '.selected_repository_ids | length' \
+    "${security_attach_payload}")
+}
+
+converge_security_configuration_attachments() {
+  local advanced=$1
+  local expected_id=$2
+  local cohort=$3
+
+  make_security_attach_payload "${advanced}" "${expected_id}"
+  temporary_files+=("${security_attach_payload}")
+
+  if ((security_attachment_count > 0)); then
+    run_api POST \
+      "orgs/${organization}/code-security/configurations/${expected_id}/attach" \
+      "${security_attach_payload}"
+  elif ! ${security_attachment_wait_needed}; then
+    echo "KEEP /orgs/${organization}/code-security/configurations/${expected_id}/attach already covers ${cohort} repositories"
+  fi
+
+  if ${security_attachment_wait_needed}; then
+    wait_for_code_security_configuration "${advanced}" "${expected_id}"
+  fi
 }
 
 wait_for_code_security_configuration() {
@@ -478,11 +586,14 @@ wait_for_code_security_configuration() {
         2>/dev/null); then
         status=$(jq -r '.status // empty' <<<"${response}")
         id=$(jq -r '.configuration.id // empty' <<<"${response}")
+        # "attached" is active but not the enforced terminal state required
+        # by both managed configurations.
         if [[ ${id} == "${expected_id}" ]] &&
-          [[ ${status} == attached || ${status} == enforced ]]; then
+          [[ ${status} == enforced ]]; then
           break
         fi
-        if [[ ${status} == failed ]]; then
+        if [[ ${id} == "${expected_id}" ]] &&
+          [[ ${status} == failed ]]; then
           echo "error: security configuration attachment failed for ${organization}/${repository}" >&2
           exit 1
         fi
@@ -528,9 +639,8 @@ converge_codeql_default_setup() {
 }
 
 publish_organization_security() {
-  local advanced_id baseline_id defaults_payload
-  local advanced_attach_payload baseline_attach_payload
-  local advanced_repository_count
+  local advanced_id baseline_id defaults_payload defaults
+  local advanced_repository_count baseline_repository_count
 
   # Move governed advanced-setup repositories first. This prevents a baseline
   # update from temporarily re-enabling default setup during later publishes.
@@ -541,12 +651,8 @@ publish_organization_security() {
   advanced_repository_count=$(jq '.repositories | length' \
     "${codeql_advanced_config}")
   if ((advanced_repository_count > 0)); then
-    advanced_attach_payload=$(make_security_attach_payload true)
-    temporary_files+=("${advanced_attach_payload}")
-    run_api POST \
-      "orgs/${organization}/code-security/configurations/${advanced_id}/attach" \
-      "${advanced_attach_payload}"
-    wait_for_code_security_configuration true "${advanced_id}"
+    converge_security_configuration_attachments \
+      true "${advanced_id}" "${advanced_repository_count}"
   else
     echo "SKIP advanced CodeQL attachment: inventory is empty"
   fi
@@ -559,16 +665,31 @@ publish_organization_security() {
   defaults_payload=$(mktemp)
   temporary_files+=("${defaults_payload}")
   jq -n '{default_for_new_repos: "all"}' >"${defaults_payload}"
-  run_api PUT \
-    "orgs/${organization}/code-security/configurations/${baseline_id}/defaults" \
-    "${defaults_payload}"
+  defaults=$(github_api \
+    "orgs/${organization}/code-security/configurations/defaults")
+  if jq -e --arg id "${baseline_id}" '
+    any(
+      .[];
+      (
+        (
+          .configuration.id // .configuration.value.id // null |
+          tostring
+        ) == $id
+      ) and
+      .default_for_new_repos == "all"
+    )
+  ' <<<"${defaults}" >/dev/null; then
+    echo "KEEP /orgs/${organization}/code-security/configurations/${baseline_id}/defaults is all"
+  else
+    run_api PUT \
+      "orgs/${organization}/code-security/configurations/${baseline_id}/defaults" \
+      "${defaults_payload}"
+  fi
 
-  baseline_attach_payload=$(make_security_attach_payload false)
-  temporary_files+=("${baseline_attach_payload}")
-  run_api POST \
-    "orgs/${organization}/code-security/configurations/${baseline_id}/attach" \
-    "${baseline_attach_payload}"
-  wait_for_code_security_configuration false "${baseline_id}"
+  baseline_repository_count=$((${#active_repositories[@]} - \
+    advanced_repository_count))
+  converge_security_configuration_attachments \
+    false "${baseline_id}" "${baseline_repository_count}"
 
   converge_codeql_default_setup
 }

@@ -12,6 +12,11 @@ plan attaches the advanced-allowed security configuration before disabling
 default setup, and include the immediate workflow rerun and rollback owner in
 the deployment handoff.
 
+Security publisher changes must test both real drift convergence and a fully
+converged rerun. The converged case must not update a security configuration,
+replace its default, or re-attach repositories, because attachment starts an
+asynchronous enablement event.
+
 Do not require a new workflow context until that exact aggregate context has
 landed and passed on the protected branch. In particular, add Classic's
 `CodeQL validation` requirement only after its advanced workflow is merged;

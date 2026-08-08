@@ -31,6 +31,12 @@
   must explicitly converge inventory repositories to default-setup
   `not-configured` and all other active repositories to `configured` without
   weakening dependency, secret-scanning, or vulnerability-reporting features.
+- Keep organization security publication delta-aware. Normalize GitHub's
+  legacy aggregate security response before comparing desired configuration,
+  update only real configuration/default drift, and never re-attach a
+  repository that is already attached or enforced on the intended
+  configuration. Preserve regression coverage for GitHub's asynchronous
+  enablement-event behavior.
 - Never deploy a new advanced CodeQL exception without its target workflow pull
   request open and ready to rerun. After applying policy, immediately rerun and
   verify the advanced analysis before merging the workflow. If it cannot pass

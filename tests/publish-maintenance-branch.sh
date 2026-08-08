@@ -64,7 +64,151 @@ jq -cn \
   '{method: $method, endpoint: $endpoint, payload: $payload}' \
   >>"${GH_API_LOG}"
 
+security_scenario=${GH_SECURITY_SCENARIO:-converged}
+
+attachment_was_requested() {
+  local configuration_id=$1
+  local repository_id=$2
+
+  jq -s -e \
+    --arg endpoint \
+      "orgs/atrinik/code-security/configurations/${configuration_id}/attach" \
+    --argjson repository_id "${repository_id}" '
+      any(
+        .[];
+        .method == "POST" and
+        .endpoint == $endpoint and
+        (.payload.selected_repository_ids | index($repository_id)) != null
+      )
+  ' "${GH_API_LOG}" >/dev/null
+}
+
+print_attachment_progress() {
+  local configuration_id=$1
+  local repository_id=$2
+  local repository=$3
+  local checks
+
+  checks=$(jq -s \
+    --arg attach_endpoint \
+      "orgs/atrinik/code-security/configurations/${configuration_id}/attach" \
+    --arg repository_endpoint \
+      "repos/atrinik/${repository}/code-security-configuration" \
+    --argjson repository_id "${repository_id}" '
+      . as $events |
+      (
+        [
+          $events | to_entries[] |
+          select(
+            .value.method == "POST" and
+            .value.endpoint == $attach_endpoint and
+            (
+              .value.payload.selected_repository_ids |
+              index($repository_id)
+            ) != null
+          ) |
+          .key
+        ] | last
+      ) as $attach |
+      [
+        $events | to_entries[] |
+        select(
+          .key > $attach and
+          .value.method == "GET" and
+          .value.endpoint == $repository_endpoint
+        )
+      ] | length
+    ' "${GH_API_LOG}")
+
+  if ((checks == 1)); then
+    printf '{"status":"attached","configuration":{"id":%s}}\n' \
+      "${configuration_id}"
+  else
+    printf '{"status":"enforced","configuration":{"id":%s}}\n' \
+      "${configuration_id}"
+  fi
+}
+
+print_existing_attachment_progress() {
+  local configuration_id=$1
+  local repository=$2
+  local checks
+
+  checks=$(jq -s \
+    --arg endpoint \
+      "repos/atrinik/${repository}/code-security-configuration" '
+      [
+        .[] |
+        select(.method == "GET" and .endpoint == $endpoint)
+      ] | length
+    ' "${GH_API_LOG}")
+
+  if ((checks == 1)); then
+    printf '{"status":"attached","configuration":{"id":%s}}\n' \
+      "${configuration_id}"
+  else
+    printf '{"status":"enforced","configuration":{"id":%s}}\n' \
+      "${configuration_id}"
+  fi
+}
+
+print_security_configuration() {
+  local id=$1
+  local advanced=$2
+  local name description allow_advanced push_protection
+
+  name="Atrinik security baseline"
+  description="Required security features for all Atrinik repositories."
+  allow_advanced=false
+  if [[ ${advanced} == true ]]; then
+    name="Atrinik advanced CodeQL baseline"
+    description="Atrinik security baseline for repositories with governed CodeQL advanced setup."
+    allow_advanced=true
+  fi
+
+  push_protection=enabled
+  if [[ ${security_scenario} == drifted ]]; then
+    push_protection=disabled
+  fi
+
+  jq -cn \
+    --argjson id "${id}" \
+    --arg name "${name}" \
+    --arg description "${description}" \
+    --argjson allow_advanced "${allow_advanced}" \
+    --arg push_protection "${push_protection}" '
+      {
+        id: $id,
+        name: $name,
+        description: $description,
+        advanced_security: "enabled",
+        dependency_graph: "enabled",
+        dependabot_alerts: "enabled",
+        dependabot_security_updates: "enabled",
+        code_scanning_default_setup: "enabled",
+        code_scanning_options: {allow_advanced: $allow_advanced},
+        secret_scanning: "enabled",
+        secret_scanning_push_protection: $push_protection,
+        secret_scanning_validity_checks: "enabled",
+        private_vulnerability_reporting: "enabled",
+        enforcement: "enforced"
+      }
+    '
+}
+
 if [[ ${method} != GET ]]; then
+  if [[ ${security_scenario} == converged ]] &&
+    [[ ${method} == POST ]] &&
+    [[ ${endpoint} == orgs/atrinik/code-security/configurations/*/attach ]]; then
+    : >"${GH_ENABLEMENT_EVENT_FILE:?}"
+  fi
+  if [[ ${security_scenario} == converged ]] &&
+    [[ ${method} == PATCH ]] &&
+    [[ ${endpoint} == orgs/atrinik/code-security/configurations/* ]] &&
+    [[ -f ${GH_ENABLEMENT_EVENT_FILE:-} ]]; then
+    echo "Another enablement event is in progress" >&2
+    exit 1
+  fi
   if [[ ${method} == POST ]] &&
     [[ ${endpoint} == orgs/atrinik/code-security/configurations ]]; then
     printf '{"id":265377}\n'
@@ -94,21 +238,66 @@ case "${endpoint}|${jq_filter}" in
     printf '[{"id":265376,"name":"Atrinik security baseline"},{"id":265377,"name":"Atrinik advanced CodeQL baseline"}]\n'
   fi
   ;;
+"orgs/atrinik/code-security/configurations/265376|"*)
+  print_security_configuration 265376 false
+  ;;
+"orgs/atrinik/code-security/configurations/265377|"*)
+  print_security_configuration 265377 true
+  ;;
+"orgs/atrinik/code-security/configurations/defaults|"*)
+  if [[ ${security_scenario} == drifted ]]; then
+    printf '[]\n'
+  else
+    printf '[{"default_for_new_repos":"all","configuration":{"id":265376}}]\n'
+  fi
+  ;;
 "repos/atrinik/classic/code-security-configuration|"*)
   if [[ ${GH_EMPTY_ADVANCED_INVENTORY:-false} == true ]]; then
-    printf '{"status":"attached","configuration":{"id":265376}}\n'
+    if attachment_was_requested 265376 102; then
+      print_attachment_progress 265376 102 classic
+    else
+      printf '{"status":"enforced","configuration":{"id":265377}}\n'
+    fi
+  elif [[ ${security_scenario} == drifted ||
+    ${security_scenario} == create ]]; then
+    if attachment_was_requested 265377 102; then
+      print_attachment_progress 265377 102 classic
+    else
+      printf '{"status":"enforced","configuration":{"id":265376}}\n'
+    fi
+  elif [[ ${security_scenario} == pending ]]; then
+    print_existing_attachment_progress 265377 classic
   else
-    printf '{"status":"attached","configuration":{"id":265377}}\n'
+    printf '{"status":"enforced","configuration":{"id":265377}}\n'
   fi
   ;;
 "repos/atrinik/content/code-security-configuration|"*)
-  printf '{"status":"attached","configuration":{"id":265376}}\n'
+  if [[ ${security_scenario} == drifted ]]; then
+    if attachment_was_requested 265376 101; then
+      print_attachment_progress 265376 101 content
+    else
+      printf '{"status":"enforced","configuration":{"id":265377}}\n'
+    fi
+  else
+    printf '{"status":"enforced","configuration":{"id":265376}}\n'
+  fi
   ;;
 "repos/atrinik/classic/code-scanning/default-setup|"*)
-  printf '{"state":"configured","query_suite":"default"}\n'
+  if [[ ${security_scenario} == drifted ||
+    ${security_scenario} == create ||
+    ${GH_EMPTY_ADVANCED_INVENTORY:-false} == true ]]; then
+    printf '{"state":"configured","query_suite":"default"}\n'
+  else
+    printf '{"state":"not-configured","query_suite":"default"}\n'
+  fi
   ;;
 "repos/atrinik/content/code-scanning/default-setup|"*)
-  printf '{"state":"not-configured"}\n'
+  if [[ ${security_scenario} == drifted ||
+    ${security_scenario} == create ]]; then
+    printf '{"state":"not-configured"}\n'
+  else
+    printf '{"state":"configured","query_suite":"default"}\n'
+  fi
   ;;
 "repos/atrinik/nawerhals|.archived")
   printf 'true\n'
@@ -129,6 +318,18 @@ repos/atrinik/*/rulesets\?includes_parents=false\|*)
 esac
 EOF
 chmod +x "${temporary}/bin/gh"
+
+cat >"${temporary}/bin/sleep" <<'EOF'
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if (($# != 1)) || [[ $1 != 2 ]]; then
+  echo "unexpected security publisher sleep: $*" >&2
+  exit 1
+fi
+EOF
+chmod +x "${temporary}/bin/sleep"
 
 assert_maintenance_payload() {
   local log=$1
@@ -310,7 +511,7 @@ assert_organization_codeql_configurations() {
             "repos/atrinik/classic/code-security-configuration"
         ) |
         .key
-      ][0] as $attached |
+      ] as $attachment_checks |
       [
         to_entries[] |
         select(
@@ -320,7 +521,10 @@ assert_organization_codeql_configurations() {
         ) |
         .key
       ][0] as $disable |
-      $attach < $attached and $attached < $disable
+      ($attachment_checks | length) >= 3 and
+      $attachment_checks[0] < $attach and
+      $attach < $attachment_checks[-1] and
+      $attachment_checks[-1] < $disable
     )
   ' "${log}" >/dev/null
 }
@@ -393,7 +597,7 @@ assert_empty_inventory_rollback() {
       .method == "POST" and
       .endpoint ==
         "orgs/atrinik/code-security/configurations/265376/attach" and
-      .payload == {scope: "selected", selected_repository_ids: [102, 101]}
+      .payload == {scope: "selected", selected_repository_ids: [102]}
     ) and
     all(
       .[];
@@ -404,8 +608,31 @@ assert_empty_inventory_rollback() {
   ' "${log}" >/dev/null
 }
 
+assert_idempotent_organization_security() {
+  local log=$1
+
+  jq -s -e '
+    all(
+      .[];
+      .method == "GET" or
+      (
+        (.endpoint | startswith(
+          "orgs/atrinik/code-security/configurations"
+        ) | not) and
+        (
+          (
+            .endpoint | startswith("repos/atrinik/") and
+            endswith("/code-scanning/default-setup")
+          ) | not
+        )
+      )
+    )
+  ' "${log}" >/dev/null
+}
+
 organization_log=${temporary}/organization.jsonl
 GH_API_LOG=${organization_log} \
+  GH_SECURITY_SCENARIO=drifted \
   PATH="${temporary}/bin:${PATH}" \
   ATRINIK_POLICY_SCOPE=organization \
   "${root}/bin/publish" --apply >/dev/null
@@ -423,9 +650,51 @@ jq -s -e '
   )
 ' "${organization_log}" >/dev/null
 
+idempotent_log=${temporary}/organization-idempotent.jsonl
+idempotent_output=${temporary}/organization-idempotent.txt
+enablement_event=${temporary}/enablement-event
+GH_API_LOG=${idempotent_log} \
+  GH_ENABLEMENT_EVENT_FILE=${enablement_event} \
+  GH_SECURITY_SCENARIO=converged \
+  PATH="${temporary}/bin:${PATH}" \
+  ATRINIK_POLICY_SCOPE=organization \
+  "${root}/bin/publish" --apply >"${idempotent_output}"
+assert_idempotent_organization_security "${idempotent_log}"
+[[ ! -e ${enablement_event} ]]
+grep -F \
+  'KEEP /orgs/atrinik/code-security/configurations/265377 matches config/code-security-advanced.json' \
+  "${idempotent_output}" >/dev/null
+grep -F \
+  'KEEP /orgs/atrinik/code-security/configurations/265377/attach already covers 1 repositories' \
+  "${idempotent_output}" >/dev/null
+grep -F \
+  'KEEP /orgs/atrinik/code-security/configurations/265376/defaults is all' \
+  "${idempotent_output}" >/dev/null
+
+pending_log=${temporary}/organization-pending.jsonl
+GH_API_LOG=${pending_log} \
+  GH_SECURITY_SCENARIO=pending \
+  PATH="${temporary}/bin:${PATH}" \
+  ATRINIK_POLICY_SCOPE=organization \
+  "${root}/bin/publish" --apply >/dev/null
+assert_idempotent_organization_security "${pending_log}"
+jq -s -e '
+  (
+    [
+      .[] |
+      select(
+        .method == "GET" and
+        .endpoint ==
+          "repos/atrinik/classic/code-security-configuration"
+      )
+    ] | length
+  ) >= 2
+' "${pending_log}" >/dev/null
+
 creation_log=${temporary}/organization-create-codeql.jsonl
 GH_API_LOG=${creation_log} \
   GH_ADVANCED_CONFIG_MISSING=true \
+  GH_SECURITY_SCENARIO=create \
   PATH="${temporary}/bin:${PATH}" \
   ATRINIK_POLICY_SCOPE=organization \
   "${root}/bin/publish" --apply >/dev/null
@@ -443,6 +712,7 @@ rollback_log=${temporary}/empty-inventory.jsonl
 rollback_output=${temporary}/empty-inventory.txt
 GH_API_LOG=${rollback_log} \
   GH_EMPTY_ADVANCED_INVENTORY=true \
+  GH_SECURITY_SCENARIO=rollback \
   PATH="${temporary}/bin:${PATH}" \
   ATRINIK_POLICY_SCOPE=organization \
   "${rollback_root}/bin/publish" --apply >"${rollback_output}"
@@ -455,6 +725,7 @@ grep -F \
 
 repository_log=${temporary}/repository.jsonl
 GH_API_LOG=${repository_log} \
+  GH_SECURITY_SCENARIO=drifted \
   PATH="${temporary}/bin:${PATH}" \
   ATRINIK_POLICY_SCOPE=repository \
   "${root}/bin/publish" --apply >/dev/null
@@ -496,6 +767,7 @@ done
 
 plan_output=${temporary}/plan.txt
 GH_API_LOG=${temporary}/plan.jsonl \
+  GH_SECURITY_SCENARIO=drifted \
   PATH="${temporary}/bin:${PATH}" \
   ATRINIK_POLICY_SCOPE=organization \
   "${root}/bin/publish" >"${plan_output}"
