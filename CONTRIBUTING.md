@@ -18,3 +18,9 @@ repository name and stable numeric ID, the exact organization selected set,
 owner-enforcement verification, and snapshot rollback tests. Merge the policy
 before requesting explicit authorization for `bin/publish --apply`; never
 deploy the setting from an unmerged policy branch.
+
+Do not require a new workflow context until that exact aggregate context has
+landed and passed on the protected branch. In particular, add Classic's
+`CodeQL validation` requirement only after its advanced workflow is merged;
+otherwise the required check would prevent the workflow pull request itself
+from merging.

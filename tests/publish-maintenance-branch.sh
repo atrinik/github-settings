@@ -216,6 +216,47 @@ assert_maintenance_payload() {
     ' "${log}" >/dev/null
 }
 
+assert_classic_required_ci_payload() {
+  local log=$1
+  local endpoint=$2
+  local organization_scope=$3
+  local ruleset_name="03 - Required CI"
+
+  if [[ ${organization_scope} == true ]]; then
+    ruleset_name="03 - Required CI - classic"
+  fi
+
+  jq -s -e \
+    --arg endpoint "${endpoint}" \
+    --arg ruleset_name "${ruleset_name}" \
+    --argjson organization_scope "${organization_scope}" '
+      [
+        .[] |
+        select(
+          .method == "POST" and
+          .endpoint == $endpoint and
+          .payload.name == $ruleset_name
+        )
+      ] as $matches |
+      ($matches | length) == 1 and
+      (
+        ($matches[0].payload.conditions | has("repository_name")) ==
+          $organization_scope
+      ) and
+      (
+        ($organization_scope | not) or
+        ($matches[0].payload.conditions.repository_name.include == ["classic"])
+      ) and
+      (
+        $matches[0].payload.rules[0].parameters.required_status_checks == [
+          {context: "Classic validation", integration_id: 15368},
+          {context: "CodeQL validation", integration_id: 15368},
+          {context: "Conventional PR title", integration_id: 15368}
+        ]
+      )
+    ' "${log}" >/dev/null
+}
+
 assert_codeql_default_setup() {
   local log=$1
 
@@ -454,6 +495,8 @@ GH_API_LOG=${organization_log} \
 assert_immutable_release_apply "${organization_log}"
 assert_maintenance_payload \
   "${organization_log}" "orgs/atrinik/rulesets" true
+assert_classic_required_ci_payload \
+  "${organization_log}" "orgs/atrinik/rulesets" true
 assert_organization_codeql_configurations "${organization_log}"
 assert_codeql_default_setup "${organization_log}"
 jq -s -e '
@@ -513,6 +556,8 @@ GH_API_LOG=${repository_log} \
   "${root}/bin/publish" --apply >/dev/null
 assert_maintenance_payload \
   "${repository_log}" "repos/atrinik/content/rulesets" false
+assert_classic_required_ci_payload \
+  "${repository_log}" "repos/atrinik/classic/rulesets" false
 assert_repository_security_preserved "${repository_log}"
 assert_codeql_default_setup "${repository_log}"
 jq -s -e '
