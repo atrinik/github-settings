@@ -22,6 +22,12 @@
   and the retained repository-level fallback when changing this contract.
 - Preserve the selected-actions entry for Codecov and the manual GitHub App
   repository-access inventory while coverage uploads use OIDC authentication.
+- Record cross-repository private-package consumption in
+  `config/manual-settings.json` with stable package and repository IDs. Grant
+  consumer workflows only the `read` role through the package's **Manage
+  Actions access** UI. Do not change package visibility, permission
+  inheritance, or source-repository association, and do not automate the grant
+  through an undocumented API.
 - Treat `config/codeql-advanced-setup.json` as the exhaustive exception
   inventory for repositories whose component/path-aware CodeQL workflow cannot
   use repository-wide default setup. Keep the advanced security configuration
