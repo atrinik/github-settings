@@ -15,6 +15,14 @@ organization-owner exception needed for GitHub's security-advisory lifecycle
 must remain isolated to linear history, pull-request gates, and required CI,
 and must use pull-request-only bypass mode.
 
+GitHub does not classify an advisory-level merge as a pull-request action. A
+specifically authorized Classic advisory merge window may therefore use
+organization-owner `always` bypass only for Classic linear history, the
+Classic pull-request gate, and Classic required CI. The reviewed rollback must
+empty `config/advisory-merge-windows.json` and be applied immediately after
+the advisory merge; deletion and non-fast-forward protections remain
+non-bypassable throughout.
+
 An advanced CodeQL inventory change must be coordinated with an open,
 review-ready workflow pull request in the target repository. Validate that the
 plan attaches the advanced-allowed security configuration before disabling

@@ -265,7 +265,11 @@ case "${endpoint}|${jq_filter}" in
   fi
   ;;
 "orgs/atrinik/rulesets|"*)
-  printf '[{"id":900,"name":"05 - Maintenance branch - content - retired"}]\n'
+  if [[ ${GH_ADVISORY_RULESETS_PRESENT:-false} == true ]]; then
+    printf '%s\n' '[{"id":900,"name":"05 - Maintenance branch - content - retired"},{"id":901,"name":"01 - Default branch linear history - classic"},{"id":902,"name":"02 - Changes through pull requests - classic"}]'
+  else
+    printf '[{"id":900,"name":"05 - Maintenance branch - content - retired"}]\n'
+  fi
   ;;
 "orgs/atrinik/code-security/configurations|"*)
   if [[ ${GH_ADVANCED_CONFIG_MISSING:-false} == true ]]; then
@@ -346,7 +350,11 @@ case "${endpoint}|${jq_filter}" in
   printf 'false\n'
   ;;
 repos/atrinik/*/rulesets\?includes_parents=false\|*)
-  printf '[{"id":900,"name":"05 - Maintenance branch - content - retired"}]\n'
+  if [[ ${GH_ADVISORY_RULESETS_PRESENT:-false} == true ]]; then
+    printf '%s\n' '[{"id":900,"name":"05 - Maintenance branch - content - retired"},{"id":901,"name":"01 - Default branch linear history - classic"},{"id":902,"name":"02 - Changes through pull requests - classic"}]'
+  else
+    printf '[{"id":900,"name":"05 - Maintenance branch - content - retired"}]\n'
+  fi
   ;;
 *)
   printf '[]\n'
@@ -489,13 +497,198 @@ assert_default_branch_policy_payloads() {
         (
           $linear[0].value.payload.conditions.repository_name.include ==
             ["~ALL"] and
+          $linear[0].value.payload.conditions.repository_name.exclude ==
+            ["classic"] and
           $integrity[0].value.payload.conditions.repository_name.include ==
             ["~ALL"] and
+          $integrity[0].value.payload.conditions.repository_name.exclude ==
+            [] and
+          (
+            $pull_request[0].value.payload.conditions.repository_name.include |
+            index("classic")
+          ) == null
+        )
+      )
+    ' "${log}" >/dev/null
+}
+
+assert_classic_advisory_bypass_payloads() {
+  local log=$1
+  local endpoint=$2
+  local organization_scope=$3
+
+  jq -s -e \
+    --arg endpoint "${endpoint}" \
+    --argjson organization_scope "${organization_scope}" '
+      [
+        to_entries[] |
+        select(
+          .value.method == "POST" and
+          .value.endpoint == $endpoint and
+          .value.payload.name ==
+            "01 - Default branch linear history - classic"
+        )
+      ] as $linear |
+      [
+        to_entries[] |
+        select(
+          .value.method == "POST" and
+          .value.endpoint == $endpoint and
+          .value.payload.name ==
+            "02 - Changes through pull requests - classic"
+        )
+      ] as $pull_request |
+      [
+        to_entries[] |
+        select(
+          .value.method == "POST" and
+          .value.endpoint == $endpoint and
+          .value.payload.name == "01 - Default branch integrity"
+        )
+      ] as $integrity |
+      ($linear | length) == 1 and
+      ($pull_request | length) == 1 and
+      ($linear[0].value.payload.bypass_actors == [{
+        actor_id: 1,
+        actor_type: "OrganizationAdmin",
+        bypass_mode: "always"
+      }]) and
+      ($linear[0].value.payload.rules == [{
+        type: "required_linear_history"
+      }]) and
+      ($pull_request[0].value.payload.bypass_actors == [{
+        actor_id: 1,
+        actor_type: "OrganizationAdmin",
+        bypass_mode: "always"
+      }]) and
+      ([$pull_request[0].value.payload.rules[].type] == ["pull_request"]) and
+      (
+        ($linear[0].value.payload.conditions | has("repository_name")) ==
+          $organization_scope
+      ) and
+      (
+        ($pull_request[0].value.payload.conditions | has("repository_name")) ==
+          $organization_scope
+      ) and
+      (
+        if $organization_scope then
+          $linear[0].value.payload.conditions.repository_name.include ==
+            ["classic"] and
+          $linear[0].value.payload.conditions.repository_name.exclude == [] and
+          $pull_request[0].value.payload.conditions.repository_name.include ==
+            ["classic"] and
+          $pull_request[0].value.payload.conditions.repository_name.exclude ==
+            [] and
+          $linear[0].key < ([
+            to_entries[] |
+            select(
+              .value.method == "POST" and
+              .value.endpoint == $endpoint and
+              .value.payload.name == "01 - Default branch linear history"
+            ) |
+            .key
+          ][0]) and
+          $pull_request[0].key < ([
+            to_entries[] |
+            select(
+              .value.method == "POST" and
+              .value.endpoint == $endpoint and
+              .value.payload.name == "02 - Changes through pull requests"
+            ) |
+            .key
+          ][0])
+        else
+          ($integrity | length) == 1 and
+          $integrity[0].value.payload.bypass_actors == [] and
+          ([$integrity[0].value.payload.rules[].type] == [
+            "deletion",
+            "non_fast_forward"
+          ])
+        end
+      )
+    ' "${log}" >/dev/null
+}
+
+assert_advisory_window_closed() {
+  local log=$1
+  local endpoint=$2
+  local delete_prefix=$3
+  local organization_scope=$4
+  local ci_name="03 - Required CI"
+
+  if [[ ${organization_scope} == true ]]; then
+    ci_name="03 - Required CI - classic"
+  fi
+
+  jq -s -e \
+    --arg endpoint "${endpoint}" \
+    --arg delete_prefix "${delete_prefix}" \
+    --arg ci_name "${ci_name}" \
+    --argjson organization_scope "${organization_scope}" '
+      [
+        to_entries[] |
+        select(
+          .value.method == "POST" and
+          .value.endpoint == $endpoint and
+          .value.payload.name == "01 - Default branch linear history"
+        )
+      ] as $linear |
+      [
+        to_entries[] |
+        select(
+          .value.method == "POST" and
+          .value.endpoint == $endpoint and
+          .value.payload.name == "02 - Changes through pull requests"
+        )
+      ] as $pull_request |
+      [
+        to_entries[] |
+        select(
+          .value.method == "POST" and
+          .value.endpoint == $endpoint and
+          .value.payload.name == $ci_name
+        )
+      ] as $ci |
+      [
+        to_entries[] |
+        select(
+          .value.method == "DELETE" and
+          (
+            .value.endpoint == "\($delete_prefix)/901" or
+            .value.endpoint == "\($delete_prefix)/902"
+          )
+        )
+      ] as $deletes |
+      ($linear | length) == 1 and
+      ($pull_request | length) == 1 and
+      ($ci | length) == 1 and
+      ($deletes | length) == 2 and
+      ($linear[0].value.payload.bypass_actors[0].bypass_mode ==
+        "pull_request") and
+      ($pull_request[0].value.payload.bypass_actors[0].bypass_mode ==
+        "pull_request") and
+      ($ci[0].value.payload.bypass_actors[0].bypass_mode == "pull_request") and
+      (
+        if $organization_scope then
+          $linear[0].value.payload.conditions.repository_name.exclude == [] and
           (
             $pull_request[0].value.payload.conditions.repository_name.include |
             index("classic")
           ) != null
-        )
+        else
+          ($linear[0].value.payload.conditions | has("repository_name") | not) and
+          (
+            $pull_request[0].value.payload.conditions |
+            has("repository_name") |
+            not
+          )
+        end
+      ) and
+      all(
+        $deletes[];
+        .key > $linear[0].key and
+        .key > $pull_request[0].key and
+        .key > $ci[0].key
       )
     ' "${log}" >/dev/null
 }
@@ -528,9 +721,14 @@ assert_replacement_required_ci_payload() {
       ] as $matches |
       ($matches | length) == 1 and
       (
-        ($matches[0].payload.conditions | has("repository_name")) ==
+      ($matches[0].payload.conditions | has("repository_name")) ==
           $organization_scope
       ) and
+      ($matches[0].payload.bypass_actors == [{
+        actor_id: 1,
+        actor_type: "OrganizationAdmin",
+        bypass_mode: "pull_request"
+      }]) and
       (
         ($organization_scope | not) or
         ($matches[0].payload.conditions.repository_name.include == [$repository])
@@ -568,9 +766,14 @@ assert_classic_required_ci_payload() {
       ] as $matches |
       ($matches | length) == 1 and
       (
-        ($matches[0].payload.conditions | has("repository_name")) ==
+      ($matches[0].payload.conditions | has("repository_name")) ==
           $organization_scope
       ) and
+      ($matches[0].payload.bypass_actors == [{
+        actor_id: 1,
+        actor_type: "OrganizationAdmin",
+        bypass_mode: "always"
+      }]) and
       (
         ($organization_scope | not) or
         ($matches[0].payload.conditions.repository_name.include == ["classic"])
@@ -860,6 +1063,8 @@ assert_maintenance_payload \
   "${organization_log}" "orgs/atrinik/rulesets" true
 assert_default_branch_policy_payloads \
   "${organization_log}" "orgs/atrinik/rulesets" true
+assert_classic_advisory_bypass_payloads \
+  "${organization_log}" "orgs/atrinik/rulesets" true
 assert_classic_required_ci_payload \
   "${organization_log}" "orgs/atrinik/rulesets" true
 while IFS=$'\t' read -r repository validation_context; do
@@ -982,6 +1187,8 @@ GH_API_LOG=${repository_log} \
 assert_maintenance_payload \
   "${repository_log}" "repos/atrinik/content/rulesets" false
 assert_default_branch_policy_payloads \
+  "${repository_log}" "repos/atrinik/content/rulesets" false
+assert_classic_advisory_bypass_payloads \
   "${repository_log}" "repos/atrinik/classic/rulesets" false
 assert_classic_required_ci_payload \
   "${repository_log}" "repos/atrinik/classic/rulesets" false
@@ -1012,6 +1219,49 @@ jq -s -e '
     .endpoint == "orgs/atrinik/rulesets/900"
   )
 ' "${repository_log}" >/dev/null
+
+advisory_rollback_root=${temporary}/advisory-window-rollback
+mkdir -p "${advisory_rollback_root}/bin"
+cp "${root}/bin/publish" "${root}/bin/validate" \
+  "${advisory_rollback_root}/bin/"
+cp -R "${root}/config" "${advisory_rollback_root}/config"
+cp -R "${root}/community-health" \
+  "${advisory_rollback_root}/community-health"
+jq '.repositories = []' \
+  "${root}/config/advisory-merge-windows.json" \
+  >"${advisory_rollback_root}/config/advisory-merge-windows.json"
+
+advisory_organization_log=${temporary}/advisory-organization-rollback.jsonl
+advisory_organization_state=${temporary}/advisory-organization-state.json
+printf '%s\n' \
+  '{"enforced_repositories":"selected","selected_repository_ids":[1327289971]}' \
+  >"${advisory_organization_state}"
+GH_ADVISORY_RULESETS_PRESENT=true \
+  GH_API_LOG=${advisory_organization_log} \
+  GH_IMMUTABLE_STATE=${advisory_organization_state} \
+  GH_SECURITY_SCENARIO=converged \
+  PATH="${temporary}/bin:${PATH}" \
+  ATRINIK_POLICY_SCOPE=organization \
+  "${advisory_rollback_root}/bin/publish" --apply >/dev/null
+assert_advisory_window_closed \
+  "${advisory_organization_log}" "orgs/atrinik/rulesets" \
+  "orgs/atrinik/rulesets" true
+
+advisory_repository_log=${temporary}/advisory-repository-rollback.jsonl
+advisory_repository_state=${temporary}/advisory-repository-state.json
+printf '%s\n' \
+  '{"enforced_repositories":"selected","selected_repository_ids":[1327289971]}' \
+  >"${advisory_repository_state}"
+GH_ADVISORY_RULESETS_PRESENT=true \
+  GH_API_LOG=${advisory_repository_log} \
+  GH_IMMUTABLE_STATE=${advisory_repository_state} \
+  GH_SECURITY_SCENARIO=converged \
+  PATH="${temporary}/bin:${PATH}" \
+  ATRINIK_POLICY_SCOPE=repository \
+  "${advisory_rollback_root}/bin/publish" --apply >/dev/null
+assert_advisory_window_closed \
+  "${advisory_repository_log}" "repos/atrinik/classic/rulesets" \
+  "repos/atrinik/classic/rulesets" false
 
 for repository in \
   legacy-client \

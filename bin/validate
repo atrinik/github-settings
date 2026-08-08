@@ -4,6 +4,7 @@ set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 repositories_config=${root}/config/repositories.json
+advisory_merge_windows_config=${root}/config/advisory-merge-windows.json
 advanced_codeql_config=${root}/config/codeql-advanced-setup.json
 immutable_releases_config=${root}/config/immutable-releases.json
 manual_settings_config=${root}/config/manual-settings.json
@@ -40,10 +41,41 @@ jq -e '
   .bypass_actors == [{
     actor_id: 1,
     actor_type: "OrganizationAdmin",
+    bypass_mode: "always"
+  }] and
+  [.rules[].type] == ["required_linear_history"]
+' "${root}/config/rulesets/default-branch-linear-history-classic.json" \
+  >/dev/null
+
+jq -e '
+  .bypass_actors == [{
+    actor_id: 1,
+    actor_type: "OrganizationAdmin",
     bypass_mode: "pull_request"
   }] and
   [.rules[].type] == ["pull_request"]
 ' "${root}/config/rulesets/pull-request-gate.json" >/dev/null
+
+jq -e '
+  .bypass_actors == [{
+    actor_id: 1,
+    actor_type: "OrganizationAdmin",
+    bypass_mode: "always"
+  }] and
+  [.rules[].type] == ["pull_request"]
+' "${root}/config/rulesets/pull-request-gate-classic.json" >/dev/null
+
+jq -e \
+  --slurpfile repositories "${repositories_config}" '
+    (keys == ["repositories"]) and
+    (.repositories == ["classic"] or .repositories == []) and
+    all(
+      .repositories[];
+      . as $repository |
+      ($repositories[0].pull_request_gate | index($repository)) != null and
+      ($repositories[0].required_ci | has($repository))
+    )
+  ' "${advisory_merge_windows_config}" >/dev/null
 
 jq -e '
   . as $config |

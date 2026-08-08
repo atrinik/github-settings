@@ -33,6 +33,7 @@ done
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 repositories_config=${root}/config/repositories.json
+advisory_merge_windows_config=${root}/config/advisory-merge-windows.json
 codeql_advanced_config=${root}/config/codeql-advanced-setup.json
 immutable_releases_config=${root}/config/immutable-releases.json
 temporary_files=()
@@ -68,6 +69,14 @@ repository_uses_advanced_codeql() {
   jq -e --arg repository "${repository}" \
     '(.repositories | index($repository)) != null' \
     "${codeql_advanced_config}" >/dev/null
+}
+
+repository_has_advisory_merge_window() {
+  local repository=$1
+
+  jq -e --arg repository "${repository}" \
+    '(.repositories | index($repository)) != null' \
+    "${advisory_merge_windows_config}" >/dev/null
 }
 
 is_temporary_security_advisory_repository() {
@@ -138,15 +147,18 @@ make_organization_ruleset() {
   local base=$1
   local name=$2
   local repositories=$3
+  local excluded_repositories=${4:-[]}
   local output
 
   output=$(mktemp)
   temporary_files+=("${output}")
-  jq --arg name "${name}" --argjson repositories "${repositories}" '
+  jq --arg name "${name}" \
+    --argjson repositories "${repositories}" \
+    --argjson excluded_repositories "${excluded_repositories}" '
     .name = $name |
     .conditions.repository_name = {
       include: $repositories,
-      exclude: [],
+      exclude: $excluded_repositories,
       protected: false
     }
   ' "${base}" >"${output}"
@@ -248,6 +260,31 @@ delete_stale_repository_maintenance_rulesets() {
   done
 }
 
+delete_stale_repository_advisory_rulesets() {
+  local repository ruleset name id
+
+  while IFS= read -r repository; do
+    if repository_has_advisory_merge_window "${repository}"; then
+      continue
+    fi
+    while IFS= read -r ruleset; do
+      name=$(jq -r '.name' <<<"${ruleset}")
+      id=$(jq -r '.id' <<<"${ruleset}")
+      case ${name} in
+      "01 - Default branch linear history - ${repository}" | \
+        "02 - Changes through pull requests - ${repository}")
+        run_api DELETE \
+          "repos/${organization}/${repository}/rulesets/${id}"
+        ;;
+      esac
+    done < <(
+      github_api \
+        "repos/${organization}/${repository}/rulesets?includes_parents=false" |
+        jq -c '.[]'
+    )
+  done < <(jq -r '.pull_request_gate[]' "${repositories_config}")
+}
+
 delete_managed_repository_rulesets() {
   local repository=$1
   local ruleset name id
@@ -258,7 +295,9 @@ delete_managed_repository_rulesets() {
     case ${name} in
     "01 - Default branch integrity" | \
       "01 - Default branch linear history" | \
+      "01 - Default branch linear history - classic" | \
       "02 - Changes through pull requests" | \
+      "02 - Changes through pull requests - classic" | \
       "03 - Required CI" | \
       "04 - Immutable release tags" | \
       "05 - Maintenance branch - "*)
@@ -280,7 +319,9 @@ delete_managed_organization_rulesets() {
     case ${name} in
     "01 - Default branch integrity" | \
       "01 - Default branch linear history" | \
+      "01 - Default branch linear history - classic" | \
       "02 - Changes through pull requests" | \
+      "02 - Changes through pull requests - classic" | \
       "04 - Immutable release tags" | \
       "03 - Required CI - "* | \
       "05 - Maintenance branch - "*)
@@ -291,13 +332,17 @@ delete_managed_organization_rulesets() {
 }
 
 publish_repository_rulesets() {
-  local repository ci_payload maintenance branch required_ci input
+  local repository ruleset_config ci_payload maintenance branch required_ci
+  local input
 
-  # Establish the replacement linear-history protection before removing that
-  # rule from the existing integrity ruleset.
+  # Establish the Classic-specific policy before replacing its shared policy.
   for repository in "${active_repositories[@]}"; do
+    ruleset_config=${root}/config/rulesets/default-branch-linear-history.json
+    if repository_has_advisory_merge_window "${repository}"; then
+      ruleset_config=${root}/config/rulesets/default-branch-linear-history-classic.json
+    fi
     upsert_repository_ruleset "${repository}" \
-      "${root}/config/rulesets/default-branch-linear-history.json"
+      "${ruleset_config}"
   done
 
   for repository in "${active_repositories[@]}"; do
@@ -306,8 +351,12 @@ publish_repository_rulesets() {
   done
 
   while IFS= read -r repository; do
+    ruleset_config=${root}/config/rulesets/pull-request-gate.json
+    if repository_has_advisory_merge_window "${repository}"; then
+      ruleset_config=${root}/config/rulesets/pull-request-gate-classic.json
+    fi
     upsert_repository_ruleset "${repository}" \
-      "${root}/config/rulesets/pull-request-gate.json"
+      "${ruleset_config}"
   done < <(jq -r '.pull_request_gate[]' "${repositories_config}")
 
   while IFS= read -r repository; do
@@ -315,7 +364,15 @@ publish_repository_rulesets() {
     temporary_files+=("${ci_payload}")
     jq --arg repository "${repository}" \
       --argjson app_id 15368 \
+      --slurpfile advisory_windows "${advisory_merge_windows_config}" \
       --slurpfile repositories "${repositories_config}" '
+        .bypass_actors |= map(
+          if ($advisory_windows[0].repositories | index($repository)) != null then
+            .bypass_mode = "always"
+          else
+            .
+          end
+        ) |
         .rules[0].parameters.required_status_checks =
           ($repositories[0].required_ci[$repository] |
            map({context: ., integration_id: $app_id}))
@@ -339,6 +396,7 @@ publish_repository_rulesets() {
   done < <(jq -c '.maintenance_branches[]' "${repositories_config}")
 
   delete_stale_repository_maintenance_rulesets
+  delete_stale_repository_advisory_rulesets
 
   if [[ ${organization_plan} != free ]]; then
     delete_managed_organization_rulesets
@@ -357,11 +415,25 @@ publish_organization_rulesets() {
     "04 - Immutable release tags"
   )
 
-  # Establish the replacement linear-history protection before removing that
-  # rule from the existing integrity ruleset.
+  # Establish the Classic-specific policy before excluding it from the shared
+  # linear-history policy.
+  if repository_has_advisory_merge_window classic; then
+    desired_rulesets+=(
+      "01 - Default branch linear history - classic"
+      "02 - Changes through pull requests - classic"
+    )
+    input=$(make_organization_ruleset \
+      "${root}/config/rulesets/default-branch-linear-history-classic.json" \
+      "01 - Default branch linear history - classic" '["classic"]')
+    temporary_files+=("${input}")
+    upsert_organization_ruleset "${input}"
+  fi
+
+  repositories=$(jq -c '.repositories' "${advisory_merge_windows_config}")
+
   input=$(make_organization_ruleset \
     "${root}/config/rulesets/default-branch-linear-history.json" \
-    "01 - Default branch linear history" '["~ALL"]')
+    "01 - Default branch linear history" '["~ALL"]' "${repositories}")
   temporary_files+=("${input}")
   upsert_organization_ruleset "${input}"
 
@@ -371,7 +443,20 @@ publish_organization_rulesets() {
   temporary_files+=("${input}")
   upsert_organization_ruleset "${input}"
 
-  repositories=$(jq -c '.pull_request_gate' "${repositories_config}")
+  # Establish the Classic-specific policy before excluding it from the shared
+  # pull-request policy.
+  if repository_has_advisory_merge_window classic; then
+    input=$(make_organization_ruleset \
+      "${root}/config/rulesets/pull-request-gate-classic.json" \
+      "02 - Changes through pull requests - classic" '["classic"]')
+    temporary_files+=("${input}")
+    upsert_organization_ruleset "${input}"
+  fi
+
+  repositories=$(jq -c \
+    --slurpfile advisory_windows "${advisory_merge_windows_config}" \
+    '.pull_request_gate - $advisory_windows[0].repositories' \
+    "${repositories_config}")
   input=$(make_organization_ruleset \
     "${root}/config/rulesets/pull-request-gate.json" \
     "02 - Changes through pull requests" "${repositories}")
@@ -393,8 +478,16 @@ publish_organization_rulesets() {
     jq --arg name "${name}" \
       --arg repository "${repository}" \
       --argjson app_id 15368 \
+      --slurpfile advisory_windows "${advisory_merge_windows_config}" \
       --slurpfile repositories "${repositories_config}" '
         .name = $name |
+        .bypass_actors |= map(
+          if ($advisory_windows[0].repositories | index($repository)) != null then
+            .bypass_mode = "always"
+          else
+            .
+          end
+        ) |
         .conditions.repository_name = {
           include: [$repository],
           exclude: [],
@@ -423,7 +516,10 @@ publish_organization_rulesets() {
     name=$(jq -r '.name' <<<"${ruleset}")
     id=$(jq -r '.id' <<<"${ruleset}")
     case ${name} in
-    "03 - Required CI - "* | "05 - Maintenance branch - "*) ;;
+    "01 - Default branch linear history - "* | \
+      "02 - Changes through pull requests - "* | \
+      "03 - Required CI - "* | \
+      "05 - Maintenance branch - "*) ;;
     *)
       continue
       ;;

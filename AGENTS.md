@@ -42,6 +42,11 @@
   Isolate the organization-owner security-advisory exception to linear
   history, pull-request gates, and required CI, and use pull-request-only
   bypass mode so direct pushes never inherit the exception.
+- A specifically authorized Classic advisory merge may temporarily split
+  Classic from those shared rules and use organization-owner `always` bypass.
+  Keep that window Classic-only, retain deletion and non-fast-forward rules,
+  record it only in `config/advisory-merge-windows.json`, and merge and apply
+  the reviewed empty-inventory rollback immediately after the advisory merge.
 - Declare protected non-default lines in `maintenance_branches`. Give each
   repository/branch pair a unique entry, and require only status checks that
   the branch's workflows already emit. Validate both Team organization rulesets
