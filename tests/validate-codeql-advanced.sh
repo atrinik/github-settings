@@ -9,6 +9,7 @@ trap 'rm -rf "${temporary}"' EXIT
 mkdir -p "${temporary}/bin"
 cp "${root}/bin/validate" "${temporary}/bin/validate"
 cp -R "${root}/config" "${temporary}/config"
+cp -R "${root}/community-health" "${temporary}/community-health"
 
 assert_invalid() {
   local description=$1

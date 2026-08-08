@@ -1,0 +1,261 @@
+{
+  "project": {
+    "title": "Atrinik work",
+    "short_description": "The shared cross-repository cockpit for Atrinik issues and pull requests.",
+    "readme": "# Atrinik work\n\nThis organization project is the shared source of truth for active Atrinik work across repositories. New issues enter **Inbox**; the existing portfolio was imported into **Backlog**. Use issue type, Priority, Effort, Start date, Target date, milestone, and hierarchy for planning. Pull requests enter **Review** automatically.\n\nStatus changes made by people are preserved while work remains open. Closing an issue or pull request moves it to **Done**; reopening it returns it to the appropriate intake state.",
+    "public": true,
+    "triage_cutover": "2026-08-08T09:16:03Z",
+    "statuses": [
+      {
+        "name": "Inbox",
+        "color": "GRAY",
+        "description": "New work awaiting triage.",
+        "previous_names": [
+          "Todo"
+        ]
+      },
+      {
+        "name": "Backlog",
+        "color": "BLUE",
+        "description": "Accepted work that is not ready to start.",
+        "previous_names": []
+      },
+      {
+        "name": "Ready",
+        "color": "YELLOW",
+        "description": "Triage is complete and the work can be picked up.",
+        "previous_names": []
+      },
+      {
+        "name": "In progress",
+        "color": "ORANGE",
+        "description": "Implementation is actively underway.",
+        "previous_names": [
+          "In Progress"
+        ]
+      },
+      {
+        "name": "Blocked",
+        "color": "RED",
+        "description": "Progress depends on an unresolved prerequisite.",
+        "previous_names": []
+      },
+      {
+        "name": "Review",
+        "color": "PURPLE",
+        "description": "A pull request or decision is awaiting review.",
+        "previous_names": []
+      },
+      {
+        "name": "Done",
+        "color": "GREEN",
+        "description": "The issue or pull request is closed.",
+        "previous_names": []
+      }
+    ],
+    "views": [
+      {
+        "name": "Triage",
+        "layout": "TABLE_LAYOUT",
+        "filter": "is:open status:Inbox",
+        "visible_fields": [
+          "Title",
+          "Repository",
+          "Issue Type",
+          "Priority",
+          "Effort",
+          "Status",
+          "Milestone",
+          "Assignees"
+        ]
+      },
+      {
+        "name": "Backlog",
+        "layout": "TABLE_LAYOUT",
+        "filter": "is:open status:Backlog",
+        "visible_fields": [
+          "Title",
+          "Repository",
+          "Issue Type",
+          "Priority",
+          "Effort",
+          "Status",
+          "Milestone",
+          "Assignees"
+        ]
+      },
+      {
+        "name": "Active",
+        "layout": "BOARD_LAYOUT",
+        "filter": "is:open -status:Inbox -status:Backlog",
+        "visible_fields": [
+          "Title",
+          "Repository",
+          "Status",
+          "Priority",
+          "Assignees",
+          "Linked pull requests"
+        ]
+      },
+      {
+        "name": "Roadmap",
+        "layout": "ROADMAP_LAYOUT",
+        "filter": "is:open is:issue -status:Inbox",
+        "visible_fields": [
+          "Title",
+          "Repository",
+          "Start date",
+          "Target date",
+          "Status",
+          "Milestone",
+          "Assignees"
+        ]
+      },
+      {
+        "name": "Pull requests",
+        "layout": "TABLE_LAYOUT",
+        "filter": "is:open is:pr",
+        "visible_fields": [
+          "Title",
+          "Repository",
+          "Status",
+          "Reviewers",
+          "Linked pull requests"
+        ]
+      },
+      {
+        "name": "Done",
+        "layout": "TABLE_LAYOUT",
+        "filter": "status:Done",
+        "visible_fields": [
+          "Title",
+          "Repository",
+          "Issue Type",
+          "Status",
+          "Milestone",
+          "Assignees"
+        ]
+      }
+    ]
+  },
+  "issue_types": [
+    {
+      "name": "Task",
+      "description": "A specific piece of work",
+      "color": "YELLOW",
+      "enabled": true
+    },
+    {
+      "name": "Bug",
+      "description": "An unexpected problem or behavior",
+      "color": "RED",
+      "enabled": true
+    },
+    {
+      "name": "Feature",
+      "description": "A request, idea, or new functionality",
+      "color": "BLUE",
+      "enabled": true
+    },
+    {
+      "name": "Initiative",
+      "description": "A cross-repository outcome composed of tracked work",
+      "color": "PURPLE",
+      "enabled": true
+    }
+  ],
+  "issue_fields": [
+    {
+      "name": "Priority",
+      "description": "Current importance level assigned to this issue",
+      "data_type": "SINGLE_SELECT",
+      "visibility": "ALL",
+      "options": [
+        {
+          "name": "Urgent",
+          "color": "PINK",
+          "description": "Immediate action is required"
+        },
+        {
+          "name": "High",
+          "color": "RED",
+          "description": "Important work for the current planning horizon"
+        },
+        {
+          "name": "Medium",
+          "color": "YELLOW",
+          "description": "Normal priority"
+        },
+        {
+          "name": "Low",
+          "color": "GREEN",
+          "description": "Useful work with no near-term urgency"
+        }
+      ]
+    },
+    {
+      "name": "Effort",
+      "description": "Relative level of effort for completing this issue",
+      "data_type": "SINGLE_SELECT",
+      "visibility": "ALL",
+      "options": [
+        {
+          "name": "High",
+          "color": "RED",
+          "description": "Large, uncertain, or cross-cutting work"
+        },
+        {
+          "name": "Medium",
+          "color": "YELLOW",
+          "description": "Moderate, bounded work"
+        },
+        {
+          "name": "Low",
+          "color": "GREEN",
+          "description": "Small, well-understood work"
+        }
+      ]
+    },
+    {
+      "name": "Start date",
+      "description": "Date when work on issue will begin",
+      "data_type": "DATE",
+      "visibility": "ALL"
+    },
+    {
+      "name": "Target date",
+      "description": "Expected completion date for this issue",
+      "data_type": "DATE",
+      "visibility": "ALL"
+    }
+  ],
+  "type_inference": {
+    "initiative_when_parent": true,
+    "bug_labels": [
+      "bug"
+    ],
+    "feature_labels": [
+      "enhancement",
+      "new feature"
+    ],
+    "default": "Task"
+  },
+  "personal_saved_views": [
+    {
+      "name": "My issues",
+      "query": "org:atrinik is:open is:issue assignee:@me"
+    },
+    {
+      "name": "Review requests",
+      "query": "org:atrinik is:open is:pr review-requested:@me"
+    },
+    {
+      "name": "Mentions",
+      "query": "org:atrinik is:open mentions:@me"
+    },
+    {
+      "name": "Unassigned issues",
+      "query": "org:atrinik is:open is:issue no:assignee"
+    }
+  ]
+}

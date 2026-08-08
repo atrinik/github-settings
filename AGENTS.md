@@ -2,7 +2,9 @@
 
 - This repository is the desired-state source for Atrinik organization
   repositories, rulesets, merge policy, Actions policy, and manual governance
-  settings. It does not own component implementation.
+  settings. It also owns organization issue metadata, the shared Project and
+  synchronization contract, repository custom properties, and generated
+  community-health defaults. It does not own component implementation.
 - Atrinik uses GitHub Team. Keep organization controls Team-compatible and
   record unavailable or manual settings explicitly rather than pretending they
   were applied.
@@ -13,6 +15,26 @@
 - Run `bin/publish` in plan mode first and review its entire diff. `--apply`
   mutates live organization state and requires explicit authorization; never
   use it as routine validation.
+- Apply planning state only in the documented dependency order: plan and apply
+  `bin/publish-planning`, then `bin/sync-project`,
+  `bin/publish-community-health`, and finally
+  `bin/publish-repository-properties`. Each script is plan-only by default and
+  needs the same explicit live-mutation authorization for `--apply`.
+- Keep Project synchronization conservative and idempotent. Add every open
+  issue and pull request from non-archived repositories, preserve a person's
+  status on open work, set intake status only when absent or reopened, infer
+  only missing issue types, and converge tracked closed work to `Done`. Do not
+  infer Priority, Effort, or dates from weak signals.
+- Atrinik uses the central synchronizer instead of Team's five-workflow
+  Project auto-add limit. The scheduled workflow and one-time backfill require
+  `ATRINIK_SETTINGS_TOKEN` to have the classic PAT `project` scope as well as
+  the existing organization and repository administration scopes. Personal
+  issue-dashboard saved views remain documented manual state because GitHub
+  exposes no public API for them.
+- `community-health/` is authoritative; `atrinik/.github` is a generated
+  deployment target. Never hand-edit that repository, add independent release
+  automation to it, or add its issue forms' `projects:` key: public
+  contributors may not have the Project write permission that key requires.
 - Keep required workflow job names synchronized with rulesets. Workflow or
   permissions changes also require actionlint, least-privilege review, and
   immutable action references according to policy.

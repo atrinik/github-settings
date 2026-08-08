@@ -1,0 +1,309 @@
+#!/usr/bin/env bash
+
+# GraphQL variable names are intentionally literal dollar-prefixed strings.
+# shellcheck disable=SC2016
+
+set -euo pipefail
+
+organization=${ATRINIK_ORGANIZATION:-atrinik}
+api_version=2026-03-10
+pause_seconds=${ATRINIK_PROJECT_SYNC_PAUSE_SECONDS:-0.2}
+apply=false
+
+case ${1:-} in
+"") ;;
+--apply) apply=true ;;
+*)
+  echo "usage: $0 [--apply]" >&2
+  exit 2
+  ;;
+esac
+
+for command in gh jq sleep; do
+  if ! command -v "${command}" >/dev/null 2>&1; then
+    echo "error: ${command} is required" >&2
+    exit 1
+  fi
+done
+if [[ ! ${pause_seconds} =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+  echo "error: ATRINIK_PROJECT_SYNC_PAUSE_SECONDS must be numeric" >&2
+  exit 2
+fi
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+planning_config=${root}/config/planning.json
+temporary=$(mktemp -d)
+trap 'rm -rf "${temporary}"' EXIT
+
+"${root}/bin/validate" >/dev/null
+
+github_api() {
+  gh api -H "X-GitHub-Api-Version: ${api_version}" "$@"
+}
+
+graphql() {
+  local query=$1
+  local variables=$2
+  local input response
+
+  input=${temporary}/graphql-$RANDOM.json
+  jq -n --arg query "${query}" --argjson variables "${variables}" \
+    '{query: $query, variables: $variables}' >"${input}"
+  response=$(github_api graphql --input "${input}")
+  if jq -e '.errors | length > 0' <<<"${response}" >/dev/null; then
+    jq -r '.errors[].message' <<<"${response}" >&2
+    return 1
+  fi
+  printf '%s\n' "${response}"
+}
+
+project_title=$(jq -r '.project.title' "${planning_config}")
+organization_query='query($login:String!){organization(login:$login){issueTypes(first:25){nodes{id name isEnabled}} projectsV2(first:50){nodes{id number title fields(first:100){nodes{... on ProjectV2Field{id name} ... on ProjectV2IterationField{id name} ... on ProjectV2MultiSelectField{id name} ... on ProjectV2SingleSelectField{id name options{id name}}}}}}}}'
+organization_data=$(graphql "${organization_query}" \
+  "$(jq -cn --arg login "${organization}" '{login: $login}')" |
+  jq -c '.data.organization')
+project=$(jq -c --arg title "${project_title}" '
+  .projectsV2.nodes | map(select(.title == $title))[0] // null
+' <<<"${organization_data}")
+if [[ ${project} == null ]]; then
+  echo "error: organization project is missing: ${project_title}" >&2
+  echo "run bin/publish-planning --apply first" >&2
+  exit 1
+fi
+project_id=$(jq -r '.id' <<<"${project}")
+project_number=$(jq -r '.number' <<<"${project}")
+status_field=$(jq -c '
+  .fields.nodes | map(select(.name == "Status"))[0] // null
+' <<<"${project}")
+if [[ ${status_field} == null ]]; then
+  echo "error: project Status field is missing" >&2
+  exit 1
+fi
+status_field_id=$(jq -r '.id' <<<"${status_field}")
+
+declare -A status_option_ids=()
+while IFS=$'\t' read -r name id; do
+  status_option_ids["${name}"]=${id}
+done < <(jq -r '.options[] | [.name, .id] | @tsv' <<<"${status_field}")
+for status in Inbox Backlog Review Done; do
+  if [[ ! -v status_option_ids["${status}"] ]]; then
+    echo "error: project Status option is missing: ${status}" >&2
+    exit 1
+  fi
+done
+
+declare -A issue_type_ids=()
+while IFS=$'\t' read -r name id; do
+  issue_type_ids["${name}"]=${id}
+done < <(jq -r '.issueTypes.nodes[] | select(.isEnabled) | [.name, .id] | @tsv' \
+  <<<"${organization_data}")
+for issue_type in Task Bug Feature Initiative; do
+  if [[ ! -v issue_type_ids["${issue_type}"] ]]; then
+    echo "error: enabled organization issue type is missing: ${issue_type}" >&2
+    exit 1
+  fi
+done
+
+search_query='query($queryString:String!,$endCursor:String){search(query:$queryString,type:ISSUE,first:100,after:$endCursor){nodes{... on Issue{__typename id url createdAt state issueType{name} repository{name isArchived} labels(first:50){nodes{name}} subIssues(first:1){totalCount}} ... on PullRequest{__typename id url createdAt state isDraft repository{name isArchived}}} pageInfo{hasNextPage endCursor}}}'
+open_items=${temporary}/open-items.jsonl
+: >"${open_items}"
+for qualifier in is:issue is:pr; do
+  github_api graphql --paginate \
+    -f query="${search_query}" \
+    -F queryString="org:${organization} is:open ${qualifier} archived:false" \
+    --jq '.data.search.nodes[] | select(.repository.isArchived == false)' \
+    >>"${open_items}"
+done
+
+project_items_query='query($id:ID!,$endCursor:String){node(id:$id){... on ProjectV2{items(first:100,after:$endCursor){nodes{id fieldValueByName(name:"Status"){... on ProjectV2ItemFieldSingleSelectValue{name optionId}} content{... on Issue{__typename id url createdAt state issueType{name} repository{name isArchived} labels(first:50){nodes{name}} subIssues(first:1){totalCount}} ... on PullRequest{__typename id url createdAt state isDraft repository{name isArchived}}}} pageInfo{hasNextPage endCursor}}}}}'
+project_items=${temporary}/project-items.jsonl
+github_api graphql --paginate \
+  -f query="${project_items_query}" \
+  -F id="${project_id}" \
+  --jq '.data.node.items.nodes[]' >"${project_items}"
+
+declare -A project_item_ids=()
+declare -A project_item_statuses=()
+while IFS= read -r item; do
+  content_id=$(jq -r '.content.id // empty' <<<"${item}")
+  [[ -n ${content_id} ]] || continue
+  project_item_ids["${content_id}"]=$(jq -r '.id' <<<"${item}")
+  project_item_statuses["${content_id}"]=$(jq -r \
+    '.fieldValueByName.name // empty' <<<"${item}")
+done <"${project_items}"
+
+mutation_count=0
+added_count=0
+status_count=0
+done_count=0
+type_count=0
+task_count=0
+bug_count=0
+feature_count=0
+initiative_count=0
+
+pause_after_mutation() {
+  if ${apply} && [[ ${pause_seconds} != 0 ]] && [[ ${pause_seconds} != 0.0 ]]; then
+    sleep "${pause_seconds}"
+  fi
+}
+
+add_project_item() {
+  local content_id=$1
+  local response
+  local variables
+
+  variables=$(jq -cn --arg projectId "${project_id}" \
+    --arg contentId "${content_id}" \
+    '{input: {projectId: $projectId, contentId: $contentId}}')
+  response=$(graphql \
+    'mutation($input:AddProjectV2ItemByIdInput!){addProjectV2ItemById(input:$input){item{id}}}' \
+    "${variables}")
+  jq -r '.data.addProjectV2ItemById.item.id' <<<"${response}"
+  pause_after_mutation
+}
+
+set_project_status() {
+  local item_id=$1
+  local status=$2
+  local variables
+
+  variables=$(jq -cn \
+    --arg projectId "${project_id}" \
+    --arg itemId "${item_id}" \
+    --arg fieldId "${status_field_id}" \
+    --arg optionId "${status_option_ids["${status}"]}" '
+      {input: {
+        projectId: $projectId,
+        itemId: $itemId,
+        fieldId: $fieldId,
+        value: {singleSelectOptionId: $optionId}
+      }}
+    ')
+  graphql \
+    'mutation($input:UpdateProjectV2ItemFieldValueInput!){updateProjectV2ItemFieldValue(input:$input){projectV2Item{id}}}' \
+    "${variables}" >/dev/null
+  pause_after_mutation
+}
+
+set_issue_type() {
+  local issue_id=$1
+  local issue_type=$2
+  local variables
+
+  variables=$(jq -cn --arg id "${issue_id}" \
+    --arg issueTypeId "${issue_type_ids["${issue_type}"]}" \
+    '{input: {id: $id, issueTypeId: $issueTypeId}}')
+  graphql \
+    'mutation($input:UpdateIssueInput!){updateIssue(input:$input){issue{id}}}' \
+    "${variables}" >/dev/null
+  pause_after_mutation
+}
+
+infer_issue_type() {
+  local issue=$1
+  jq -r --slurpfile config "${planning_config}" '
+    $config[0].type_inference as $inference |
+    ([.labels.nodes[].name | ascii_downcase]) as $labels |
+    ($inference.bug_labels | map(ascii_downcase)) as $bugs |
+    ($inference.feature_labels | map(ascii_downcase)) as $features |
+    if $inference.initiative_when_parent and .subIssues.totalCount > 0 then
+      "Initiative"
+    elif any($labels[]; . as $label | ($bugs | index($label)) != null) then
+      "Bug"
+    elif any($labels[]; . as $label | ($features | index($label)) != null) then
+      "Feature"
+    else
+      $inference.default
+    end
+  ' <<<"${issue}"
+}
+
+triage_cutover=$(jq -r '.project.triage_cutover' "${planning_config}")
+while IFS= read -r content; do
+  content_id=$(jq -r '.id' <<<"${content}")
+  content_type=$(jq -r '.__typename' <<<"${content}")
+  url=$(jq -r '.url' <<<"${content}")
+  desired_status=Review
+  if [[ ${content_type} == Issue ]]; then
+    if [[ $(jq -r '.createdAt' <<<"${content}") < ${triage_cutover} ]]; then
+      desired_status=Backlog
+    else
+      desired_status=Inbox
+    fi
+  fi
+
+  item_id=${project_item_ids["${content_id}"]:-}
+  current_status=${project_item_statuses["${content_id}"]:-}
+  if [[ -z ${item_id} ]]; then
+    ((added_count += 1))
+    ((status_count += 1))
+    ((mutation_count += 2))
+    if ${apply}; then
+      item_id=$(add_project_item "${content_id}")
+      set_project_status "${item_id}" "${desired_status}"
+    fi
+  elif [[ -z ${current_status} ]] || [[ ${current_status} == Done ]]; then
+    ((status_count += 1))
+    ((mutation_count += 1))
+    if ${apply}; then
+      set_project_status "${item_id}" "${desired_status}"
+    fi
+  fi
+
+  if [[ ${content_type} == Issue ]] && \
+    [[ $(jq -r '.issueType.name // empty' <<<"${content}") == "" ]]; then
+    issue_type=$(infer_issue_type "${content}")
+    ((type_count += 1))
+    ((mutation_count += 1))
+    case ${issue_type} in
+    Task) ((task_count += 1)) ;;
+    Bug) ((bug_count += 1)) ;;
+    Feature) ((feature_count += 1)) ;;
+    Initiative) ((initiative_count += 1)) ;;
+    *)
+      echo "error: unsupported inferred issue type: ${issue_type}" >&2
+      exit 1
+      ;;
+    esac
+    if ${apply}; then
+      set_issue_type "${content_id}" "${issue_type}"
+    fi
+  fi
+
+  if ${apply} && ((mutation_count > 0)) && ((mutation_count % 50 == 0)); then
+    echo "PROGRESS ${mutation_count} mutations; latest ${url}"
+  fi
+done <"${open_items}"
+
+while IFS= read -r item; do
+  content_id=$(jq -r '.content.id // empty' <<<"${item}")
+  [[ -n ${content_id} ]] || continue
+  state=$(jq -r '.content.state // empty' <<<"${item}")
+  current_status=$(jq -r '.fieldValueByName.name // empty' <<<"${item}")
+  case ${state} in
+  CLOSED | MERGED)
+    if [[ ${current_status} != Done ]]; then
+      ((done_count += 1))
+      ((mutation_count += 1))
+      if ${apply}; then
+        set_project_status "$(jq -r '.id' <<<"${item}")" Done
+      fi
+    fi
+    ;;
+  esac
+done <"${project_items}"
+
+mode=PLAN
+${apply} && mode=APPLY
+open_count=$(wc -l <"${open_items}")
+tracked_count=$(jq -s '[.[] | select(.content.id != null)] | length' \
+  "${project_items}")
+echo "${mode} project ${project_number} (${project_title})"
+echo "Open issues and pull requests: ${open_count}"
+echo "Currently tracked items: ${tracked_count}"
+echo "Items to add: ${added_count}"
+echo "Open-item status changes: ${status_count}"
+echo "Closed-item moves to Done: ${done_count}"
+echo "Issue types to set: ${type_count} (Initiative ${initiative_count}, Feature ${feature_count}, Bug ${bug_count}, Task ${task_count})"
+echo "Total mutations: ${mutation_count}"

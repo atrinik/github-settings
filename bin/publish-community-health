@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+organization=${ATRINIK_ORGANIZATION:-atrinik}
+api_version=2026-03-10
+apply=false
+
+case ${1:-} in
+"") ;;
+--apply) apply=true ;;
+*)
+  echo "usage: $0 [--apply]" >&2
+  exit 2
+  ;;
+esac
+
+for command in base64 gh jq; do
+  if ! command -v "${command}" >/dev/null 2>&1; then
+    echo "error: ${command} is required" >&2
+    exit 1
+  fi
+done
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+community_config=${root}/config/community-health.json
+temporary_files=()
+trap 'rm -f "${temporary_files[@]}"' EXIT
+
+"${root}/bin/validate" >/dev/null
+
+github_api() {
+  gh api -H "X-GitHub-Api-Version: ${api_version}" "$@"
+}
+
+run_api() {
+  local method=$1
+  local endpoint=$2
+  local input=$3
+
+  if ${apply}; then
+    github_api --method "${method}" "${endpoint}" --input "${input}" \
+      >/dev/null
+    echo "APPLY ${method} /${endpoint}"
+  else
+    echo "PLAN ${method} /${endpoint} <= ${input#"${root}/"}"
+  fi
+}
+
+repository=$(jq -r '.repository.name' "${community_config}")
+repository_created=false
+if current_repository=$(github_api "repos/${organization}/${repository}" \
+  2>/dev/null); then
+  desired_repository=$(jq -c '.repository' "${community_config}")
+  if jq -e --argjson desired "${desired_repository}" '
+    {
+      name,
+      description,
+      private,
+      has_issues,
+      has_projects,
+      has_wiki
+    } == $desired
+  ' <<<"${current_repository}" >/dev/null; then
+    echo "KEEP /repos/${organization}/${repository} metadata"
+  else
+    input=$(mktemp)
+    temporary_files+=("${input}")
+    jq '.repository | del(.name)' "${community_config}" >"${input}"
+    run_api PATCH "repos/${organization}/${repository}" "${input}"
+  fi
+else
+  input=$(mktemp)
+  temporary_files+=("${input}")
+  jq '.repository + {auto_init: false}' "${community_config}" >"${input}"
+  run_api POST "orgs/${organization}/repos" "${input}"
+  repository_created=true
+fi
+
+first_file=true
+while IFS=$'\t' read -r source target; do
+  local_path=${root}/community-health/${source}
+  local_content=$(base64 -w 0 "${local_path}")
+  remote_sha=
+  remote_content=
+  if ! ${repository_created}; then
+    if current=$(github_api \
+      "repos/${organization}/${repository}/contents/${target}?ref=main" \
+      2>/dev/null); then
+      remote_sha=$(jq -r '.sha // empty' <<<"${current}")
+      remote_content=$(jq -r '.content // empty' <<<"${current}" | tr -d '\n')
+    fi
+  fi
+
+  if [[ -n ${remote_sha} ]] && [[ ${remote_content} == "${local_content}" ]]; then
+    echo "KEEP /repos/${organization}/${repository}/contents/${target}"
+    first_file=false
+    continue
+  fi
+
+  input=$(mktemp)
+  temporary_files+=("${input}")
+  omit_branch=false
+  if ${repository_created} && ${first_file}; then
+    omit_branch=true
+  fi
+  jq -n \
+    --arg message "chore: synchronize organization community health defaults" \
+    --arg content "${local_content}" \
+    --arg sha "${remote_sha}" \
+    --arg branch main \
+    --argjson omit_branch "${omit_branch}" '
+      {message: $message, content: $content} +
+      (if $sha == "" then {} else {sha: $sha} end) +
+      (if $omit_branch then {} else {branch: $branch} end)
+    ' >"${input}"
+  run_api PUT \
+    "repos/${organization}/${repository}/contents/${target}" "${input}"
+  first_file=false
+done < <(jq -r '.files[] | [.source, .target] | @tsv' "${community_config}")
+
+echo "Organization community health defaults are converged."
