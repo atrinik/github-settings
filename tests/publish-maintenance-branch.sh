@@ -1064,6 +1064,17 @@ assert_idempotent_organization_security() {
   ' "${log}" >/dev/null
 }
 
+advisory_active_root=${temporary}/advisory-window-active
+mkdir -p "${advisory_active_root}/bin"
+cp "${root}/bin/publish" "${root}/bin/validate" \
+  "${advisory_active_root}/bin/"
+cp -R "${root}/config" "${advisory_active_root}/config"
+cp -R "${root}/community-health" \
+  "${advisory_active_root}/community-health"
+jq '.repositories = ["classic"]' \
+  "${root}/config/advisory-merge-windows.json" \
+  >"${advisory_active_root}/config/advisory-merge-windows.json"
+
 organization_log=${temporary}/organization.jsonl
 organization_immutable_state=${temporary}/organization-immutable.json
 printf '{"enforced_repositories":"none"}\n' \
@@ -1073,7 +1084,8 @@ GH_API_LOG=${organization_log} \
   GH_SECURITY_SCENARIO=drifted \
   PATH="${temporary}/bin:${PATH}" \
   ATRINIK_POLICY_SCOPE=organization \
-  "${root}/bin/publish" --apply >"${temporary}/organization.txt"
+  "${advisory_active_root}/bin/publish" --apply \
+  >"${temporary}/organization.txt"
 grep -F \
   'SKIP atrinik/classic-ghsa-8533-3vg8-r287 is a temporary security-advisory workspace' \
   "${temporary}/organization.txt" >/dev/null
@@ -1209,7 +1221,7 @@ GH_API_LOG=${repository_log} \
   GH_SECURITY_SCENARIO=drifted \
   PATH="${temporary}/bin:${PATH}" \
   ATRINIK_POLICY_SCOPE=repository \
-  "${root}/bin/publish" --apply >/dev/null
+  "${advisory_active_root}/bin/publish" --apply >/dev/null
 assert_maintenance_payload \
   "${repository_log}" "repos/atrinik/content/rulesets" false
 assert_default_branch_policy_payloads \
