@@ -45,38 +45,40 @@ if [[ ${PLANNING_SCENARIO:-initial} == partial ]] && \
         node: {
           fields: {
             nodes: (
-              [
-                "Title",
-                "Repository",
-                "Milestone",
-                "Assignees",
-                "Reviewers",
-                "Linked pull requests"
-              ] |
-              map({id: ("PROJECT-FIELD-" + .), name: .})
-            ) + [{
-              id: "PROJECT-FIELD-Status",
-              name: "Status",
-              dataType: "SINGLE_SELECT",
-              options: [
-                $config.project.statuses[] |
-                {
-                  id: ("STATUS-" + .name),
-                  name,
-                  color,
-                  description
-                }
-              ]
-            }] +
-            if env.PLANNING_COLLISION == "true" then
-              [{
-                id: "PROJECT-FIELD-Issue-Type",
-                name: "Issue Type",
-                dataType: "TEXT"
-              }]
-            else
-              []
-            end
+              (
+                [
+                  "Title",
+                  "Repository",
+                  "Milestone",
+                  "Assignees",
+                  "Reviewers",
+                  "Linked pull requests"
+                ] |
+                map({id: ("PROJECT-FIELD-" + .), name: .})
+              ) + [{
+                id: "PROJECT-FIELD-Status",
+                name: "Status",
+                dataType: "SINGLE_SELECT",
+                options: [
+                  $config.project.statuses[] |
+                  {
+                    id: ("STATUS-" + .name),
+                    name,
+                    color,
+                    description
+                  }
+                ]
+              }] +
+              (if env.PLANNING_COLLISION == "true" then
+                 [{
+                   id: "PROJECT-FIELD-Issue-Type",
+                   name: "Issue Type",
+                   dataType: "TEXT"
+                 }]
+               else
+                 []
+               end)
+            )
           },
           views: {
             nodes: [{
@@ -131,7 +133,7 @@ jq -n --slurpfile config "${PLANNING_CONFIG:?}" '
           ]
         },
         projectsV2: {
-          nodes:
+          nodes: (
             if env.PLANNING_SCENARIO == "partial" then
               [{
                 id: "PROJECT",
@@ -145,6 +147,7 @@ jq -n --slurpfile config "${PLANNING_CONFIG:?}" '
             else
               []
             end
+          )
         }
       }
     }
