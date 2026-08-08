@@ -1,11 +1,5 @@
 {
   "project": {
-    "builtin_fields": [
-      {
-        "name": "Issue Type",
-        "data_type": "ISSUE_TYPE"
-      }
-    ],
     "title": "Atrinik work",
     "short_description": "The shared cross-repository cockpit for Atrinik issues and pull requests.",
     "readme": "# Atrinik work\n\nThis organization project is the shared source of truth for active Atrinik work across repositories. New issues enter **Inbox**; the existing portfolio was imported into **Backlog**. Use issue type, Priority, Effort, Start date, Target date, milestone, and hierarchy for planning. Pull requests enter **Review** automatically.\n\nStatus changes made by people are preserved while work remains open. Closing an issue or pull request moves it to **Done**; reopening it returns it to the appropriate intake state.",
@@ -67,7 +61,6 @@
         "visible_fields": [
           "Title",
           "Repository",
-          "Issue Type",
           "Priority",
           "Effort",
           "Status",
@@ -82,7 +75,6 @@
         "visible_fields": [
           "Title",
           "Repository",
-          "Issue Type",
           "Priority",
           "Effort",
           "Status",
@@ -136,7 +128,6 @@
         "visible_fields": [
           "Title",
           "Repository",
-          "Issue Type",
           "Status",
           "Milestone",
           "Assignees"
