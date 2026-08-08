@@ -18,6 +18,36 @@ done < <(find "${root}/config" -name '*.json' -print0 | sort -z)
 
 jq -e '
   . as $config |
+  (.pull_request_gate | type == "array") and
+  ((.pull_request_gate | length) == (.pull_request_gate | unique | length)) and
+  all(.pull_request_gate[]; type == "string" and length > 0) and
+  (.required_ci | type == "object") and
+  all(
+    .required_ci | to_entries[];
+    (.key | type == "string" and length > 0) and
+    (.value | type == "array" and length > 0) and
+    ((.value | length) == (.value | unique | length)) and
+    all(.value[]; type == "string" and length > 0) and
+    (.key as $repository |
+      ($config.pull_request_gate | index($repository)) != null)
+  ) and
+  (.release_tags | type == "array") and
+  ((.release_tags | length) == (.release_tags | unique | length)) and
+  all(.release_tags[]; type == "string" and length > 0) and
+  (.archive | type == "array") and
+  ((.archive | length) == (.archive | unique | length)) and
+  all(.archive[]; type == "string" and length > 0) and
+  all(
+    .archive[];
+    . as $repository |
+    ($config.pull_request_gate | index($repository)) == null and
+    ($config.required_ci | has($repository) | not) and
+    ($config.release_tags | index($repository)) == null and
+    all(
+      $config.maintenance_branches[];
+      .repository != $repository
+    )
+  ) and
   (.maintenance_branches | type == "array") and
   all(
     .maintenance_branches[];

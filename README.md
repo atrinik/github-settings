@@ -18,7 +18,10 @@ read-only and are skipped on later runs.
 - Repositories with reliable CI require checks from the GitHub Actions app.
   Replacement repositories receive their required-check rules only after their
   bootstrap workflows publish stable aggregate job names; renamed repositories
-  retain their established check contracts during the transition.
+  retain their established check contracts during the transition. The
+  `classic` monorepo requires its stable aggregate `Classic validation` job
+  and `Conventional PR title`; its module-specific jobs remain diagnostic and
+  are not independent merge gates.
 - Declared maintenance branches reject deletion and non-fast-forward updates,
   require linear history and pull requests, and require only checks already
   emitted for that branch.
@@ -40,6 +43,9 @@ read-only and are skipped on later runs.
   use only Atrinik, GitHub, Codecov coverage, and explicitly allowed Docker
   actions.
 - Historical repositories listed in `config/repositories.json` are archived.
+  The former standalone classic component repositories are archived only after
+  their history, active work, issues, and release metadata have been preserved
+  in `atrinik/classic`.
 
 The GitHub REST API does not expose every organization control. The desired
 values are recorded in `config/manual-settings.json` and must be confirmed in
@@ -90,6 +96,12 @@ security configuration is also the default for newly created repositories.
 Add repositories to the appropriate arrays in `config/repositories.json` when
 they also need a pull-request gate, required CI, immutable release tags, or
 archival.
+
+Moving a repository to `archive` is an executable policy change: the next
+`bin/publish --apply` makes it read-only. Before applying an archival change,
+confirm that remaining pull requests and branches have been preserved at their
+new location. For `atrinik/classic`, also complete any intentional tag rebuild
+before applying immutable release-tag policy.
 
 ## Protecting a maintenance branch
 

@@ -1,17 +1,13 @@
 {
   "pull_request_gate": [
     "atrinik",
+    "classic",
     "client",
     "content",
     "content-toolkit",
     "devcontainer",
     "editor",
     "github-settings",
-    "legacy-client",
-    "legacy-editor",
-    "legacy-libatrinik",
-    "legacy-protocol",
-    "legacy-server",
     "metaserver-worker",
     "protocol",
     "renderer",
@@ -26,36 +22,20 @@
       "Integration validation",
       "Conventional PR title"
     ],
-    "sound": [
-      "Asset validation",
+    "classic": [
+      "Classic validation",
       "Conventional PR title"
     ],
-    "legacy-client": [
-      "Client validation",
+    "sound": [
+      "Asset validation",
       "Conventional PR title"
     ],
     "content": [
       "Content validation",
       "Conventional PR title"
     ],
-    "legacy-editor": [
-      "Editor packaging validation",
-      "Conventional PR title"
-    ],
-    "legacy-libatrinik": [
-      "Library validation",
-      "Conventional PR title"
-    ],
-    "legacy-protocol": [
-      "Protocol validation",
-      "Conventional PR title"
-    ],
     "resources": [
       "Asset validation",
-      "Conventional PR title"
-    ],
-    "legacy-server": [
-      "Server validation",
       "Conventional PR title"
     ],
     "tools": [
@@ -86,17 +66,13 @@
   ],
   "release_tags": [
     "atrinik",
+    "classic",
     "client",
     "content",
     "content-toolkit",
     "devcontainer",
     "editor",
     "github-settings",
-    "legacy-client",
-    "legacy-editor",
-    "legacy-libatrinik",
-    "legacy-protocol",
-    "legacy-server",
     "metaserver-worker",
     "protocol",
     "renderer",
@@ -107,6 +83,11 @@
     "website"
   ],
   "archive": [
+    "legacy-client",
+    "legacy-editor",
+    "legacy-libatrinik",
+    "legacy-protocol",
+    "legacy-server",
     "nawerhals"
   ]
 }
