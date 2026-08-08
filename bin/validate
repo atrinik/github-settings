@@ -7,6 +7,9 @@ repositories_config=${root}/config/repositories.json
 advanced_codeql_config=${root}/config/codeql-advanced-setup.json
 immutable_releases_config=${root}/config/immutable-releases.json
 manual_settings_config=${root}/config/manual-settings.json
+planning_config=${root}/config/planning.json
+repository_properties_config=${root}/config/repository-properties.json
+community_health_config=${root}/config/community-health.json
 
 for command in git jq; do
   if ! command -v "${command}" >/dev/null 2>&1; then
@@ -179,6 +182,228 @@ jq -e '
     (.role == "read")
   )
 ' "${manual_settings_config}" >/dev/null
+
+jq -e '
+  (keys == [
+    "issue_fields",
+    "issue_types",
+    "personal_saved_views",
+    "project",
+    "type_inference"
+  ]) and
+  (.project | keys == [
+    "public",
+    "readme",
+    "short_description",
+    "statuses",
+    "title",
+    "triage_cutover",
+    "views"
+  ]) and
+  (.project.title | type == "string" and length > 0) and
+  (.project.short_description | type == "string" and length > 0) and
+  (.project.readme | type == "string" and length > 0) and
+  (.project.public | type == "boolean") and
+  (.project.triage_cutover | fromdateiso8601 | type == "number") and
+  (.project.statuses | type == "array" and length >= 3) and
+  ([.project.statuses[].name] | length == (unique | length)) and
+  all(
+    .project.statuses[];
+    (keys == ["color", "description", "name", "previous_names"]) and
+    (.name | type == "string" and length > 0) and
+    (.description | type == "string" and length > 0) and
+    (.color | IN(
+      "BLUE", "GRAY", "GREEN", "ORANGE", "PINK", "PURPLE", "RED", "YELLOW"
+    )) and
+    (.previous_names | type == "array") and
+    ((.previous_names | length) == (.previous_names | unique | length)) and
+    all(.previous_names[]; type == "string" and length > 0)
+  ) and
+  ([.project.statuses[].previous_names[]] as $previous |
+    ($previous | length) == ($previous | unique | length)) and
+  ([.project.statuses[].name] as $status_names |
+    all(
+      .project.statuses[].previous_names[];
+      . as $previous_name |
+      ($status_names | index($previous_name)) == null
+    )) and
+  ([.project.statuses[].name] | index("Inbox") != null) and
+  ([.project.statuses[].name] | index("Backlog") != null) and
+  ([.project.statuses[].name] | index("Review") != null) and
+  ([.project.statuses[].name] | index("Done") != null) and
+  (.project.views | type == "array" and length > 0) and
+  ([.project.views[].name] | length == (unique | length)) and
+  all(
+    .project.views[];
+    (keys == ["filter", "layout", "name", "visible_fields"]) and
+    (.name | type == "string" and length > 0) and
+    (.layout | IN("BOARD_LAYOUT", "ROADMAP_LAYOUT", "TABLE_LAYOUT")) and
+    (.filter | type == "string") and
+    (.visible_fields | type == "array" and length > 0) and
+    ((.visible_fields | length) == (.visible_fields | unique | length)) and
+    all(.visible_fields[]; type == "string" and length > 0)
+  ) and
+  (.issue_types | type == "array" and length > 0) and
+  ([.issue_types[].name] | length == (unique | length)) and
+  all(
+    .issue_types[];
+    (keys == ["color", "description", "enabled", "name"]) and
+    (.name | type == "string" and length > 0) and
+    (.description | type == "string" and length > 0) and
+    (.color | IN("BLUE", "GRAY", "GREEN", "ORANGE", "PINK", "PURPLE", "RED", "YELLOW")) and
+    (.enabled | type == "boolean")
+  ) and
+  (.issue_fields | type == "array" and length > 0) and
+  ([.issue_fields[].name] | length == (unique | length)) and
+  all(
+    .issue_fields[];
+    (.name | type == "string" and length > 0) and
+    (.description | type == "string" and length > 0) and
+    (.data_type | IN("DATE", "MULTI_SELECT", "NUMBER", "SINGLE_SELECT", "TEXT")) and
+    (.visibility | IN("ALL", "ORG_ONLY")) and
+    if (.data_type | IN("MULTI_SELECT", "SINGLE_SELECT")) then
+      (keys == ["data_type", "description", "name", "options", "visibility"]) and
+      (.options | type == "array" and length > 0) and
+      ([.options[].name] | length == (unique | length)) and
+      all(
+        .options[];
+        (keys == ["color", "description", "name"]) and
+        (.name | type == "string" and length > 0) and
+        (.description | type == "string" and length > 0) and
+        (.color | IN("BLUE", "GRAY", "GREEN", "ORANGE", "PINK", "PURPLE", "RED", "YELLOW"))
+      )
+    else
+      (keys == ["data_type", "description", "name", "visibility"])
+    end
+  ) and
+  ([.issue_types[].name] as $type_names |
+    (.type_inference | keys == [
+      "bug_labels", "default", "feature_labels", "initiative_when_parent"
+    ]) and
+    (.type_inference.initiative_when_parent | type == "boolean") and
+    (.type_inference.default as $name | ($type_names | index($name)) != null) and
+    all(.type_inference.bug_labels[]; type == "string" and length > 0) and
+    all(.type_inference.feature_labels[]; type == "string" and length > 0) and
+    ((.type_inference.bug_labels + .type_inference.feature_labels) |
+      length == (unique | length))) and
+  (.personal_saved_views | type == "array" and length > 0) and
+  ([.personal_saved_views[].name] | length == (unique | length)) and
+  all(
+    .personal_saved_views[];
+    (keys == ["name", "query"]) and
+    (.name | type == "string" and length > 0) and
+    (.query | type == "string" and startswith("org:atrinik "))
+  )
+' "${planning_config}" >/dev/null
+
+jq -e \
+  --slurpfile repositories "${repositories_config}" '
+    . as $config |
+    ([".github"] + $repositories[0].pull_request_gate + $repositories[0].archive |
+      sort | unique) as $expected_repositories |
+    ($config.definitions |
+      map({key: .property_name, value: .}) | from_entries) as $definitions |
+    ($config | keys == ["definitions", "repositories"]) and
+    ($config.definitions | type == "array" and length > 0) and
+    ([$config.definitions[].property_name] | length == (unique | length)) and
+    all(
+      $config.definitions[];
+      (keys == [
+        "allowed_values",
+        "default_value",
+        "description",
+        "property_name",
+        "required",
+        "value_type"
+      ]) and
+      (.property_name | type == "string" and test("^[a-z][a-z0-9_]*$")) and
+      (.description | type == "string" and length > 0) and
+      (.value_type | IN("multi_select", "single_select")) and
+      (.required == true) and
+      (.default_value == null) and
+      (.allowed_values | type == "array" and length > 0) and
+      (.allowed_values == (.allowed_values | sort | unique)) and
+      all(.allowed_values[]; type == "string" and length > 0)
+    ) and
+    ($config.repositories | keys) == $expected_repositories and
+    all(
+      $config.repositories | to_entries[];
+      (.value | keys) == ($definitions | keys) and
+      all(
+        .value | to_entries[];
+        .key as $name |
+        $definitions[$name] as $definition |
+        if $definition.value_type == "multi_select" then
+          (.value | type == "array" and length > 0) and
+          (.value == (.value | sort | unique)) and
+          all(.value[]; . as $value | ($definition.allowed_values | index($value)) != null)
+        else
+          (.value | type == "string") and
+          (.value as $value | ($definition.allowed_values | index($value)) != null)
+        end
+      )
+    ) and
+    all(
+      $repositories[0].archive[];
+      . as $repository |
+      $config.repositories[$repository].lifecycle == "archived" and
+      $config.repositories[$repository].release_policy == "none"
+    ) and
+    all(
+      $repositories[0].pull_request_gate[];
+      . as $repository |
+      $config.repositories[$repository].lifecycle != "archived" and
+      $config.repositories[$repository].release_policy == "semantic-release"
+    ) and
+    $config.repositories[".github"] == {
+      component_role: ["governance"],
+      provider_set: ["organization"],
+      lifecycle: "active",
+      release_policy: "none"
+    }
+  ' "${repository_properties_config}" >/dev/null
+
+jq -e '
+  (keys == ["files", "repository"]) and
+  (.repository == {
+    name: ".github",
+    description: "Atrinik organization-wide community health defaults",
+    private: false,
+    has_issues: false,
+    has_projects: false,
+    has_wiki: false
+  }) and
+  (.files | type == "array" and length > 0) and
+  ([.files[].source] | length == (unique | length)) and
+  ([.files[].target] | length == (unique | length)) and
+  all(
+    .files[];
+    (keys == ["source", "target"]) and
+    (.source | type == "string" and length > 0 and startswith("/") | not) and
+    (.target | type == "string" and length > 0 and startswith("/") | not) and
+    (.source | contains("..") | not) and
+    (.target | contains("..") | not)
+  )
+' "${community_health_config}" >/dev/null
+
+while IFS= read -r community_file; do
+  if [[ ! -s ${root}/community-health/${community_file} ]]; then
+    echo "error: missing community-health source file: ${community_file}" >&2
+    exit 1
+  fi
+done < <(jq -r '.files[].source' "${community_health_config}")
+
+while IFS= read -r issue_type; do
+  if ! jq -e --arg issue_type "${issue_type}" \
+    'any(.issue_types[]; .name == $issue_type and .enabled)' \
+    "${planning_config}" >/dev/null; then
+    echo "error: issue form references an unavailable issue type: ${issue_type}" >&2
+    exit 1
+  fi
+done < <(
+  sed -n 's/^type: \(.*\)$/\1/p' \
+    "${root}"/community-health/.github/ISSUE_TEMPLATE/*.yml
+)
 
 while IFS= read -r branch; do
   if ! git check-ref-format --branch "${branch}" >/dev/null; then

@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+organization=${ATRINIK_ORGANIZATION:-atrinik}
+api_version=2026-03-10
+apply=false
+
+case ${1:-} in
+"") ;;
+--apply) apply=true ;;
+*)
+  echo "usage: $0 [--apply]" >&2
+  exit 2
+  ;;
+esac
+
+for command in gh jq; do
+  if ! command -v "${command}" >/dev/null 2>&1; then
+    echo "error: ${command} is required" >&2
+    exit 1
+  fi
+done
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+properties_config=${root}/config/repository-properties.json
+temporary_files=()
+trap 'rm -f "${temporary_files[@]}"' EXIT
+
+"${root}/bin/validate" >/dev/null
+
+github_api() {
+  gh api -H "X-GitHub-Api-Version: ${api_version}" "$@"
+}
+
+run_api() {
+  local method=$1
+  local endpoint=$2
+  local input=$3
+
+  if ${apply}; then
+    github_api --method "${method}" "${endpoint}" --input "${input}" \
+      >/dev/null
+    echo "APPLY ${method} /${endpoint}"
+  else
+    echo "PLAN ${method} /${endpoint} <= ${input#"${root}/"}"
+  fi
+}
+
+schema=$(github_api "orgs/${organization}/properties/schema")
+
+while IFS= read -r definition; do
+  property_name=$(jq -r '.property_name' <<<"${definition}")
+  current=$(jq -c --arg property_name "${property_name}" '
+    map(select(.property_name == $property_name))[0] // null
+  ' <<<"${schema}")
+  desired=$(jq -c '{
+    property_name,
+    value_type,
+    required,
+    default_value,
+    description,
+    allowed_values
+  }' <<<"${definition}")
+
+  if jq -e --argjson desired "${desired}" '
+    {
+      property_name,
+      value_type,
+      required,
+      default_value,
+      description,
+      allowed_values
+    } == $desired
+  ' <<<"${current}" >/dev/null; then
+    echo "KEEP /orgs/${organization}/properties/schema/${property_name}"
+    continue
+  fi
+
+  input=$(mktemp)
+  temporary_files+=("${input}")
+  if [[ ${current} == null ]]; then
+    jq . <<<"${desired}" >"${input}"
+    run_api POST "orgs/${organization}/properties/schema" "${input}"
+  else
+    jq 'del(.property_name)' <<<"${desired}" >"${input}"
+    run_api PATCH \
+      "orgs/${organization}/properties/schema/${property_name}" "${input}"
+  fi
+done < <(jq -c '.definitions[]' "${properties_config}")
+
+declare -A live_repositories=()
+while IFS= read -r repository; do
+  live_repositories["${repository}"]=true
+done < <(
+  github_api --paginate "orgs/${organization}/repos?per_page=100&type=all" \
+    --jq '.[].name'
+)
+
+while IFS= read -r repository; do
+  if [[ ! -v live_repositories["${repository}"] ]]; then
+    echo "error: repository property inventory is not live: ${organization}/${repository}" >&2
+    exit 1
+  fi
+
+  desired=$(jq -c --arg repository "${repository}" '
+    .repositories[$repository] |
+    to_entries |
+    map({property_name: .key, value: .value}) |
+    sort_by(.property_name)
+  ' "${properties_config}")
+  current=$(github_api "repos/${organization}/${repository}/properties/values" |
+    jq -c 'map({property_name, value}) | sort_by(.property_name)')
+  if jq -e --argjson desired "${desired}" '. == $desired' \
+    <<<"${current}" >/dev/null; then
+    echo "KEEP /repos/${organization}/${repository}/properties/values"
+    continue
+  fi
+
+  input=$(mktemp)
+  temporary_files+=("${input}")
+  jq -n --arg repository "${repository}" --argjson properties "${desired}" '
+    {repository_names: [$repository], properties: $properties}
+  ' >"${input}"
+  run_api PATCH "orgs/${organization}/properties/values" "${input}"
+done < <(jq -r '.repositories | keys[]' "${properties_config}")
+
+echo "Repository custom properties are converged."

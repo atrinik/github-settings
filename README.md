@@ -4,6 +4,11 @@ This repository is the source of truth for Atrinik organization settings and
 repository rulesets. `bin/publish` uses the GitHub REST API to apply the policy
 to every targeted repository in one run.
 
+The same repository owns Atrinik's cross-repository planning system:
+organization issue types and fields, the public **Atrinik work** Project and
+shared views, scheduled item synchronization, repository custom properties,
+and the generated organization community-health repository.
+
 Atrinik uses GitHub Team. The publisher detects the organization plan and uses
 organization-level rulesets on Team or Enterprise. On GitHub Free it installs
 equivalent repository-level rulesets instead. Archived repositories are
@@ -61,6 +66,23 @@ read-only and are skipped on later runs.
   The five former standalone classic component repositories are already
   archived read-only after their history, active work, issues, and release
   metadata were preserved for the `atrinik/classic` transition.
+- `config/planning.json` defines one public organization Project, its workflow
+  statuses and shared views, enabled issue types, and public organization issue
+  fields. New issues enter **Inbox**, pull requests enter **Review**, and the
+  pre-existing portfolio enters **Backlog**. Human status changes on open work
+  are preserved; closed work converges to **Done**.
+- Unset issue types are inferred conservatively: parent issues become
+  **Initiative**, `bug` becomes **Bug**, `enhancement` or `new feature` becomes
+  **Feature**, and everything else becomes **Task**. Existing issue types are
+  never overwritten.
+- `config/repository-properties.json` declares a complete taxonomy for active
+  and archived repositories: component role, provider set, lifecycle, and
+  release policy.
+- `community-health/` is the source for organization-wide issue forms,
+  pull-request guidance, contribution guidance, conduct policy, and security
+  reporting. `bin/publish-community-health` generates `atrinik/.github`
+  directly from this released source; the generated repository is not edited
+  or released independently.
 
 The GitHub REST API does not expose every organization control. The desired
 values are recorded in `config/manual-settings.json` and must be confirmed in
@@ -75,7 +97,7 @@ Requirements: `git`, `gh`, `jq`, and an authenticated organization-owner
 account.
 
 ```sh
-gh auth refresh -h github.com -s admin:org
+gh auth refresh -h github.com -s admin:org,project,repo
 bin/publish
 bin/publish --apply
 ```
@@ -115,6 +137,62 @@ The manual `Publish settings` workflow provides the same operation in GitHub
 Actions. It requires an `ATRINIK_SETTINGS_TOKEN` repository secret with
 organization administration and repository administration access. Never store
 that token in this repository.
+
+## Cross-repository planning
+
+Review and apply the planning layers in their dependency order:
+
+```sh
+bin/publish-planning
+bin/publish-planning --apply
+bin/sync-project
+bin/sync-project --apply
+bin/publish-community-health
+bin/publish-community-health --apply
+bin/publish-repository-properties
+bin/publish-repository-properties --apply
+```
+
+`bin/publish-planning` creates or updates organization issue metadata, the
+single public Project, its Status options, linked organization fields, and the
+six shared views. It reuses the new Project's default `View 1` as **Triage**
+and preserves any additional manually created shared views.
+
+`bin/sync-project` is the Team-compatible alternative to Project auto-add
+workflows, which are limited to five repository-specific workflows and do not
+backfill existing work. It discovers every non-archived repository, adds all
+open issues and pull requests, sets intake status only when missing or when
+work is reopened, infers only missing issue types, and moves tracked closed
+items to **Done**. The scheduled `Synchronize project` workflow repeats this
+every 30 minutes. The first apply intentionally performs a large one-time
+backfill; later runs are incremental and idempotent.
+
+`bin/publish-community-health` creates the public `atrinik/.github` deployment
+repository if needed and converges every file listed in
+`config/community-health.json`. Local community-health files in a component
+repository continue to take precedence over these defaults.
+
+`bin/publish-repository-properties` creates the organization property schema
+and assigns the complete desired value set to every repository. It runs after
+the generated `.github` repository exists so the inventory and live repository
+set agree.
+
+The manual `Publish planning` workflow performs those four apply steps in the
+same order. Both planning workflows use `ATRINIK_SETTINGS_TOKEN`; in addition
+to the existing organization and repository administration access, that token
+must have the classic PAT `project` scope. The current GitHub Actions
+`GITHUB_TOKEN` cannot administer an organization Project.
+
+GitHub exposes shared Project views through GraphQL but does not expose a
+public API for a person's issue-dashboard saved views. The desired personal
+views are therefore recorded in `personal_saved_views` in
+`config/planning.json`. Each user creates them once at
+<https://github.com/issues> using these queries:
+
+- **My issues:** `org:atrinik is:open is:issue assignee:@me`
+- **Review requests:** `org:atrinik is:open is:pr review-requested:@me`
+- **Mentions:** `org:atrinik is:open mentions:@me`
+- **Unassigned issues:** `org:atrinik is:open is:issue no:assignee`
 
 ## Adding a repository
 

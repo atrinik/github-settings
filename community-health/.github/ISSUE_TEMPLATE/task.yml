@@ -1,0 +1,41 @@
+name: Task
+description: Propose a bounded maintenance, documentation, or engineering task
+title: ""
+labels: []
+type: Task
+body:
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective
+      description: State the concrete result this task should produce.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Explain why the work is needed and link prerequisite decisions or issues.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification
+      description: Describe how completion can be demonstrated.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched for existing issues and project items covering this task.
+          required: true

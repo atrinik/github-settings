@@ -1,0 +1,490 @@
+#!/usr/bin/env bash
+
+# GraphQL variable names are intentionally literal dollar-prefixed strings.
+# shellcheck disable=SC2016
+
+set -euo pipefail
+
+organization=${ATRINIK_ORGANIZATION:-atrinik}
+api_version=2026-03-10
+apply=false
+
+case ${1:-} in
+"") ;;
+--apply) apply=true ;;
+*)
+  echo "usage: $0 [--apply]" >&2
+  exit 2
+  ;;
+esac
+
+for command in gh jq; do
+  if ! command -v "${command}" >/dev/null 2>&1; then
+    echo "error: ${command} is required" >&2
+    exit 1
+  fi
+done
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+planning_config=${root}/config/planning.json
+
+"${root}/bin/validate" >/dev/null
+
+github_api() {
+  gh api -H "X-GitHub-Api-Version: ${api_version}" "$@"
+}
+
+graphql() {
+  local query=$1
+  local variables=$2
+  local input response
+
+  input=$(mktemp)
+  jq -n --arg query "${query}" --argjson variables "${variables}" \
+    '{query: $query, variables: $variables}' >"${input}"
+  if ! response=$(github_api graphql --input "${input}"); then
+    rm -f "${input}"
+    return 1
+  fi
+  rm -f "${input}"
+  printf '%s\n' "${response}"
+}
+
+organization_query='query($login:String!){organization(login:$login){id issueTypes(first:25){nodes{id name description color isEnabled}} issueFields(first:50){nodes{... on IssueFieldCommon{name description dataType visibility} ... on IssueFieldDate{id} ... on IssueFieldNumber{id} ... on IssueFieldText{id} ... on IssueFieldSingleSelect{id options{id name description color}} ... on IssueFieldMultiSelect{id options{id name description color}}}} projectsV2(first:50){nodes{id number title shortDescription readme public closed}}}}'
+organization_data=$(graphql "${organization_query}" \
+  "$(jq -cn --arg login "${organization}" '{login: $login}')")
+if jq -e '.errors | length > 0' <<<"${organization_data}" >/dev/null; then
+  jq -r '.errors[].message' <<<"${organization_data}" >&2
+  exit 1
+fi
+organization_data=$(jq -c '.data.organization' <<<"${organization_data}")
+organization_id=$(jq -r '.id' <<<"${organization_data}")
+
+while IFS= read -r desired; do
+  name=$(jq -r '.name' <<<"${desired}")
+  current=$(jq -c --arg name "${name}" '
+    .issueTypes.nodes | map(select(.name == $name))[0] // null
+  ' <<<"${organization_data}")
+  desired_comparison=$(jq -c '{
+    name,
+    description,
+    color,
+    isEnabled: .enabled
+  }' <<<"${desired}")
+
+  if jq -e --argjson desired "${desired_comparison}" '
+    {name, description, color, isEnabled} == $desired
+  ' <<<"${current}" >/dev/null; then
+    echo "KEEP organization issue type ${name}"
+    continue
+  fi
+
+  if [[ ${current} == null ]]; then
+    variables=$(jq -cn \
+      --arg ownerId "${organization_id}" \
+      --arg name "${name}" \
+      --arg description "$(jq -r '.description' <<<"${desired}")" \
+      --arg color "$(jq -r '.color' <<<"${desired}")" \
+      --argjson isEnabled "$(jq '.enabled' <<<"${desired}")" '
+        {input: {
+          ownerId: $ownerId,
+          name: $name,
+          description: $description,
+          color: $color,
+          isEnabled: $isEnabled
+        }}
+      ')
+    if ${apply}; then
+      response=$(graphql \
+        'mutation($input:CreateIssueTypeInput!){createIssueType(input:$input){issueType{id}}}' \
+        "${variables}")
+      jq -e '.data.createIssueType.issueType.id | length > 0' \
+        <<<"${response}" >/dev/null
+      echo "APPLY create organization issue type ${name}"
+    else
+      echo "PLAN create organization issue type ${name}"
+    fi
+  else
+    id=$(jq -r '.id' <<<"${current}")
+    variables=$(jq -cn \
+      --arg issueTypeId "${id}" \
+      --arg name "${name}" \
+      --arg description "$(jq -r '.description' <<<"${desired}")" \
+      --arg color "$(jq -r '.color' <<<"${desired}")" \
+      --argjson isEnabled "$(jq '.enabled' <<<"${desired}")" '
+        {input: {
+          issueTypeId: $issueTypeId,
+          name: $name,
+          description: $description,
+          color: $color,
+          isEnabled: $isEnabled
+        }}
+      ')
+    if ${apply}; then
+      graphql \
+        'mutation($input:UpdateIssueTypeInput!){updateIssueType(input:$input){issueType{id}}}' \
+        "${variables}" >/dev/null
+      echo "APPLY update organization issue type ${name}"
+    else
+      echo "PLAN update organization issue type ${name}"
+    fi
+  fi
+done < <(jq -c '.issue_types[]' "${planning_config}")
+
+declare -A issue_field_ids=()
+while IFS= read -r desired; do
+  name=$(jq -r '.name' <<<"${desired}")
+  current=$(jq -c --arg name "${name}" '
+    .issueFields.nodes | map(select(.name == $name))[0] // null
+  ' <<<"${organization_data}")
+  desired_comparison=$(jq -c '
+    {
+      name,
+      description,
+      dataType: .data_type,
+      visibility
+    } +
+    if has("options") then
+      {options: [.options[] | {name, description, color}]}
+    else
+      {}
+    end
+  ' <<<"${desired}")
+
+  if jq -e --argjson desired "${desired_comparison}" '
+    ({name, description, dataType, visibility} +
+      if has("options") then
+        {options: [.options[] | {name, description, color}]}
+      else
+        {}
+      end) == $desired
+  ' <<<"${current}" >/dev/null; then
+    issue_field_ids["${name}"]=$(jq -r '.id' <<<"${current}")
+    echo "KEEP organization issue field ${name}"
+    continue
+  fi
+
+  options=$(jq -c '
+    if has("options") then
+      [.options | to_entries[] | .value + {priority: .key}]
+    else
+      null
+    end
+  ' <<<"${desired}")
+  if [[ ${current} == null ]]; then
+    variables=$(jq -cn \
+      --arg ownerId "${organization_id}" \
+      --arg name "${name}" \
+      --arg description "$(jq -r '.description' <<<"${desired}")" \
+      --arg dataType "$(jq -r '.data_type' <<<"${desired}")" \
+      --arg visibility "$(jq -r '.visibility' <<<"${desired}")" \
+      --argjson options "${options}" '
+        {input: ({
+          ownerId: $ownerId,
+          name: $name,
+          description: $description,
+          dataType: $dataType,
+          visibility: $visibility
+        } + if $options == null then {} else {options: $options} end)}
+      ')
+    if ${apply}; then
+      response=$(graphql \
+        'mutation($input:CreateIssueFieldInput!){createIssueField(input:$input){issueField{... on IssueFieldDate{id} ... on IssueFieldNumber{id} ... on IssueFieldText{id} ... on IssueFieldSingleSelect{id} ... on IssueFieldMultiSelect{id}}}}' \
+        "${variables}")
+      issue_field_ids["${name}"]=$(jq -r \
+        '.data.createIssueField.issueField.id' <<<"${response}")
+      echo "APPLY create organization issue field ${name}"
+    else
+      issue_field_ids["${name}"]="{issue-field-${name}}"
+      echo "PLAN create organization issue field ${name}"
+    fi
+  else
+    id=$(jq -r '.id' <<<"${current}")
+    issue_field_ids["${name}"]=${id}
+    options_drift=$(jq -n \
+      --argjson desired "${desired_comparison}" \
+      --argjson current "${current}" '
+        (($desired.options // null) !=
+          (if $current | has("options") then
+            [$current.options[] | {name, description, color}]
+          else
+            null
+          end))
+      ')
+    variables=$(jq -cn \
+      --arg id "${id}" \
+      --arg name "${name}" \
+      --arg description "$(jq -r '.description' <<<"${desired}")" \
+      --arg visibility "$(jq -r '.visibility' <<<"${desired}")" \
+      --argjson options "${options}" \
+      --argjson optionsDrift "${options_drift}" '
+        {input: ({
+          id: $id,
+          name: $name,
+          description: $description,
+          visibility: $visibility
+        } + if $optionsDrift then {options: $options} else {} end)}
+      ')
+    if ${apply}; then
+      graphql \
+        'mutation($input:UpdateIssueFieldInput!){updateIssueField(input:$input){issueField{... on IssueFieldDate{id} ... on IssueFieldNumber{id} ... on IssueFieldText{id} ... on IssueFieldSingleSelect{id} ... on IssueFieldMultiSelect{id}}}}' \
+        "${variables}" >/dev/null
+      echo "APPLY update organization issue field ${name}"
+    else
+      echo "PLAN update organization issue field ${name}"
+    fi
+  fi
+done < <(jq -c '.issue_fields[]' "${planning_config}")
+
+project_title=$(jq -r '.project.title' "${planning_config}")
+project=$(jq -c --arg title "${project_title}" '
+  .projectsV2.nodes | map(select(.title == $title))[0] // null
+' <<<"${organization_data}")
+project_id=
+project_number=
+if [[ ${project} == null ]]; then
+  variables=$(jq -cn --arg ownerId "${organization_id}" \
+    --arg title "${project_title}" \
+    '{input: {ownerId: $ownerId, title: $title}}')
+  if ${apply}; then
+    response=$(graphql \
+      'mutation($input:CreateProjectV2Input!){createProjectV2(input:$input){projectV2{id number}}}' \
+      "${variables}")
+    project_id=$(jq -r '.data.createProjectV2.projectV2.id' <<<"${response}")
+    project_number=$(jq -r '.data.createProjectV2.projectV2.number' \
+      <<<"${response}")
+    echo "APPLY create organization project ${project_title}"
+  else
+    project_id='{project-id}'
+    project_number='{project-number}'
+    echo "PLAN create organization project ${project_title}"
+  fi
+else
+  project_id=$(jq -r '.id' <<<"${project}")
+  project_number=$(jq -r '.number' <<<"${project}")
+fi
+
+desired_project=$(jq -c '.project | {
+  title,
+  shortDescription: .short_description,
+  readme,
+  public,
+  closed: false
+}' "${planning_config}")
+if [[ ${project} != null ]] && jq -e --argjson desired "${desired_project}" '
+  {title, shortDescription, readme, public, closed} == $desired
+' <<<"${project}" >/dev/null; then
+  echo "KEEP organization project ${project_title} metadata"
+else
+  variables=$(jq -cn --arg projectId "${project_id}" \
+    --argjson desired "${desired_project}" \
+    '{input: ($desired + {projectId: $projectId})}')
+  if ${apply}; then
+    graphql \
+      'mutation($input:UpdateProjectV2Input!){updateProjectV2(input:$input){projectV2{id}}}' \
+      "${variables}" >/dev/null
+    echo "APPLY update organization project ${project_title} metadata"
+  else
+    echo "PLAN update organization project ${project_title} metadata"
+  fi
+fi
+
+if ! ${apply} && [[ ${project} == null ]]; then
+  while IFS= read -r field; do
+    echo "PLAN link organization issue field ${field} to ${project_title}"
+  done < <(jq -r '.issue_fields[].name' "${planning_config}")
+  echo "PLAN replace the default Status options for ${project_title}"
+  while IFS= read -r view; do
+    echo "PLAN create shared project view ${view}"
+  done < <(jq -r '.project.views[].name' "${planning_config}")
+  echo "Project planning configuration is ready to apply."
+  exit 0
+fi
+
+project_query='query($id:ID!){node(id:$id){... on ProjectV2{fields(first:100){nodes{... on ProjectV2Field{id name dataType} ... on ProjectV2IterationField{id name dataType} ... on ProjectV2MultiSelectField{id name dataType} ... on ProjectV2SingleSelectField{id name dataType options{id name color description}}}} views(first:50){nodes{id name layout filter fields(first:100){nodes{... on ProjectV2Field{id name} ... on ProjectV2IterationField{id name} ... on ProjectV2MultiSelectField{id name} ... on ProjectV2SingleSelectField{id name}}}}}}}}'
+read_project() {
+  graphql "${project_query}" \
+    "$(jq -cn --arg id "${project_id}" '{id: $id}')" |
+    jq -c '.data.node'
+}
+
+project_data=$(read_project)
+while IFS= read -r field_name; do
+  if jq -e --arg name "${field_name}" '
+    any(.fields.nodes[]; .name == $name)
+  ' <<<"${project_data}" >/dev/null; then
+    echo "KEEP ${project_title} issue field ${field_name}"
+    continue
+  fi
+  variables=$(jq -cn --arg projectId "${project_id}" \
+    --arg issueFieldId "${issue_field_ids["${field_name}"]}" '
+      {input: {projectId: $projectId, issueFieldId: $issueFieldId}}
+    ')
+  if ${apply}; then
+    graphql \
+      'mutation($input:CreateProjectV2IssueFieldInput!){createProjectV2IssueField(input:$input){projectV2Field{id}}}' \
+      "${variables}" >/dev/null
+    echo "APPLY link organization issue field ${field_name} to ${project_title}"
+  else
+    echo "PLAN link organization issue field ${field_name} to ${project_title}"
+  fi
+done < <(jq -r '.issue_fields[].name' "${planning_config}")
+
+if ${apply}; then
+  project_data=$(read_project)
+fi
+
+status_field=$(jq -c '
+  .fields.nodes | map(select(.name == "Status"))[0] // null
+' <<<"${project_data}")
+if [[ ${status_field} == null ]]; then
+  echo "error: ${project_title} has no Status field" >&2
+  exit 1
+fi
+status_field_id=$(jq -r '.id' <<<"${status_field}")
+status_options=$(jq -cn \
+  --slurpfile config "${planning_config}" \
+  --argjson current "$(jq '.options' <<<"${status_field}")" '
+    [
+      $config[0].project.statuses[] as $desired |
+      (
+        [$current[] as $option |
+          select(
+            $option.name == $desired.name or
+            ($desired.previous_names | index($option.name)) != null
+          ) |
+          $option][0].id // null
+      ) as $id |
+      {
+        name: $desired.name,
+        color: $desired.color,
+        description: $desired.description
+      } + if $id == null then {} else {id: $id} end
+    ]
+  ')
+status_comparison=$(jq -c '[.[] | {name, color, description}]' \
+  <<<"${status_options}")
+current_status_comparison=$(jq -c \
+  '[.options[] | {name, color, description}]' <<<"${status_field}")
+if [[ ${current_status_comparison} == "${status_comparison}" ]]; then
+  echo "KEEP ${project_title} Status options"
+else
+  variables=$(jq -cn --arg fieldId "${status_field_id}" \
+    --argjson singleSelectOptions "${status_options}" '
+      {input: {
+        fieldId: $fieldId,
+        singleSelectOptions: $singleSelectOptions
+      }}
+    ')
+  if ${apply}; then
+    graphql \
+      'mutation($input:UpdateProjectV2FieldInput!){updateProjectV2Field(input:$input){projectV2Field{... on ProjectV2SingleSelectField{id}}}}' \
+      "${variables}" >/dev/null
+    echo "APPLY update ${project_title} Status options"
+  else
+    echo "PLAN update ${project_title} Status options"
+  fi
+fi
+
+if ${apply}; then
+  project_data=$(read_project)
+fi
+
+default_view_id=$(jq -r '
+  .views.nodes | map(select(.name == "View 1"))[0].id // empty
+' <<<"${project_data}")
+while IFS= read -r desired_view; do
+  view_name=$(jq -r '.name' <<<"${desired_view}")
+  current_view=$(jq -c --arg name "${view_name}" '
+    .views.nodes | map(select(.name == $name))[0] // null
+  ' <<<"${project_data}")
+  view_id=
+  if [[ ${current_view} != null ]]; then
+    view_id=$(jq -r '.id' <<<"${current_view}")
+  elif [[ ${view_name} == Triage ]] && [[ -n ${default_view_id} ]]; then
+    view_id=${default_view_id}
+  else
+    visible_field_ids=$(jq -cn \
+      --argjson view "${desired_view}" \
+      --argjson project "${project_data}" '
+        [$view.visible_fields[] as $name |
+          $project.fields.nodes[] | select(.name == $name) | .id]
+      ')
+    if [[ $(jq 'length' <<<"${visible_field_ids}") != \
+      "$(jq '.visible_fields | length' <<<"${desired_view}")" ]]; then
+      echo "error: a visible field for ${view_name} is unavailable" >&2
+      exit 1
+    fi
+    variables=$(jq -cn \
+      --arg projectId "${project_id}" \
+      --arg name "${view_name}" \
+      --arg layout "$(jq -r '.layout' <<<"${desired_view}")" \
+      --argjson visibleFieldIds "${visible_field_ids}" '
+        {input: {
+          projectId: $projectId,
+          name: $name,
+          layout: $layout,
+          configuration: {visibleFieldIds: $visibleFieldIds}
+        }}
+      ')
+    if ${apply}; then
+      response=$(graphql \
+        'mutation($input:CreateProjectV2ViewInput!){createProjectV2View(input:$input){projectV2View{id}}}' \
+        "${variables}")
+      view_id=$(jq -r '.data.createProjectV2View.projectV2View.id' \
+        <<<"${response}")
+      echo "APPLY create shared project view ${view_name}"
+    else
+      echo "PLAN create shared project view ${view_name}"
+      continue
+    fi
+  fi
+
+  visible_field_ids=$(jq -cn \
+    --argjson view "${desired_view}" \
+    --argjson project "${project_data}" '
+      [$view.visible_fields[] as $name |
+        $project.fields.nodes[] | select(.name == $name) | .id]
+    ')
+  if [[ $(jq 'length' <<<"${visible_field_ids}") != \
+    "$(jq '.visible_fields | length' <<<"${desired_view}")" ]]; then
+    echo "error: a visible field for ${view_name} is unavailable" >&2
+    exit 1
+  fi
+  variables=$(jq -cn \
+    --arg viewId "${view_id}" \
+    --arg name "${view_name}" \
+    --arg layout "$(jq -r '.layout' <<<"${desired_view}")" \
+    --arg filter "$(jq -r '.filter' <<<"${desired_view}")" \
+    --argjson visibleFieldIds "${visible_field_ids}" '
+      {input: {
+        viewId: $viewId,
+        name: $name,
+        layout: $layout,
+        filter: $filter,
+        configuration: {visibleFieldIds: $visibleFieldIds}
+      }}
+    ')
+  desired_view_comparison=$(jq -cn \
+    --arg name "${view_name}" \
+    --arg layout "$(jq -r '.layout' <<<"${desired_view}")" \
+    --arg filter "$(jq -r '.filter' <<<"${desired_view}")" \
+    --argjson fields "${visible_field_ids}" \
+    '{name: $name, layout: $layout, filter: $filter, fields: $fields}')
+  current_view_comparison=$(jq -c '
+    {name, layout, filter: (.filter // ""), fields: [.fields.nodes[].id]}
+  ' <<<"${current_view}")
+  if [[ ${current_view} != null ]] && \
+    [[ ${current_view_comparison} == "${desired_view_comparison}" ]]; then
+    echo "KEEP shared project view ${view_name}"
+  elif ${apply}; then
+    graphql \
+      'mutation($input:UpdateProjectV2ViewInput!){updateProjectV2View(input:$input){projectV2View{id}}}' \
+      "${variables}" >/dev/null
+    echo "APPLY update shared project view ${view_name}"
+  else
+    echo "PLAN update shared project view ${view_name}"
+  fi
+done < <(jq -c '.project.views[]' "${planning_config}")
+
+echo "Project planning configuration is converged (project ${project_number})."

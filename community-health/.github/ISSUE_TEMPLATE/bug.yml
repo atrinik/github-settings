@@ -1,0 +1,64 @@
+name: Bug report
+description: Report reproducible behavior that is not working as intended
+title: ""
+labels: []
+type: Bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search existing issues first. Security vulnerabilities must use a private vulnerability report instead of this form.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the actual behavior and its impact.
+      placeholder: A concise description of the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+      description: Describe the behavior you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: Give the smallest deterministic sequence that reproduces the problem.
+      placeholder: |
+        1. Start ...
+        2. Run ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: input
+    id: revision
+    attributes:
+      label: Version or revision
+      description: Release, branch, or commit where the problem occurs.
+      placeholder: main at abc1234
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Relevant operating system, architecture, client/server topology, and configuration.
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs or other evidence
+      description: Paste only relevant, redacted output. Drag files here when appropriate.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched for an existing issue describing this problem.
+          required: true
+        - label: This report does not contain credentials, private player data, or an undisclosed vulnerability.
+          required: true

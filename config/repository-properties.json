@@ -1,0 +1,310 @@
+{
+  "definitions": [
+    {
+      "property_name": "component_role",
+      "value_type": "multi_select",
+      "required": true,
+      "description": "Logical roles owned or served by the repository",
+      "allowed_values": [
+        "aggregate",
+        "assets",
+        "client",
+        "content",
+        "coordination",
+        "editor",
+        "governance",
+        "historical",
+        "infrastructure",
+        "library",
+        "protocol",
+        "renderer",
+        "server",
+        "service",
+        "tooling",
+        "website"
+      ],
+      "default_value": null
+    },
+    {
+      "property_name": "provider_set",
+      "value_type": "multi_select",
+      "required": true,
+      "description": "Atrinik provider cohort represented by the repository",
+      "allowed_values": [
+        "classic",
+        "organization",
+        "replacement",
+        "shared"
+      ],
+      "default_value": null
+    },
+    {
+      "property_name": "lifecycle",
+      "value_type": "single_select",
+      "required": true,
+      "description": "Current support and delivery stage",
+      "allowed_values": [
+        "active",
+        "archived",
+        "maintenance",
+        "seed"
+      ],
+      "default_value": null
+    },
+    {
+      "property_name": "release_policy",
+      "value_type": "single_select",
+      "required": true,
+      "description": "How changes in the repository are released",
+      "allowed_values": [
+        "none",
+        "semantic-release"
+      ],
+      "default_value": null
+    }
+  ],
+  "repositories": {
+    ".github": {
+      "component_role": [
+        "governance"
+      ],
+      "provider_set": [
+        "organization"
+      ],
+      "lifecycle": "active",
+      "release_policy": "none"
+    },
+    "atrinik": {
+      "component_role": [
+        "coordination"
+      ],
+      "provider_set": [
+        "shared"
+      ],
+      "lifecycle": "active",
+      "release_policy": "semantic-release"
+    },
+    "classic": {
+      "component_role": [
+        "aggregate",
+        "client",
+        "editor",
+        "library",
+        "protocol",
+        "server"
+      ],
+      "provider_set": [
+        "classic"
+      ],
+      "lifecycle": "active",
+      "release_policy": "semantic-release"
+    },
+    "client": {
+      "component_role": [
+        "client"
+      ],
+      "provider_set": [
+        "replacement"
+      ],
+      "lifecycle": "seed",
+      "release_policy": "semantic-release"
+    },
+    "content": {
+      "component_role": [
+        "content"
+      ],
+      "provider_set": [
+        "classic",
+        "replacement"
+      ],
+      "lifecycle": "active",
+      "release_policy": "semantic-release"
+    },
+    "content-toolkit": {
+      "component_role": [
+        "tooling"
+      ],
+      "provider_set": [
+        "replacement"
+      ],
+      "lifecycle": "seed",
+      "release_policy": "semantic-release"
+    },
+    "devcontainer": {
+      "component_role": [
+        "infrastructure"
+      ],
+      "provider_set": [
+        "shared"
+      ],
+      "lifecycle": "active",
+      "release_policy": "semantic-release"
+    },
+    "editor": {
+      "component_role": [
+        "editor"
+      ],
+      "provider_set": [
+        "replacement"
+      ],
+      "lifecycle": "seed",
+      "release_policy": "semantic-release"
+    },
+    "github-settings": {
+      "component_role": [
+        "governance"
+      ],
+      "provider_set": [
+        "organization"
+      ],
+      "lifecycle": "active",
+      "release_policy": "semantic-release"
+    },
+    "legacy-client": {
+      "component_role": [
+        "client",
+        "historical"
+      ],
+      "provider_set": [
+        "classic"
+      ],
+      "lifecycle": "archived",
+      "release_policy": "none"
+    },
+    "legacy-editor": {
+      "component_role": [
+        "editor",
+        "historical"
+      ],
+      "provider_set": [
+        "classic"
+      ],
+      "lifecycle": "archived",
+      "release_policy": "none"
+    },
+    "legacy-libatrinik": {
+      "component_role": [
+        "historical",
+        "library"
+      ],
+      "provider_set": [
+        "classic"
+      ],
+      "lifecycle": "archived",
+      "release_policy": "none"
+    },
+    "legacy-protocol": {
+      "component_role": [
+        "historical",
+        "protocol"
+      ],
+      "provider_set": [
+        "classic"
+      ],
+      "lifecycle": "archived",
+      "release_policy": "none"
+    },
+    "legacy-server": {
+      "component_role": [
+        "historical",
+        "server"
+      ],
+      "provider_set": [
+        "classic"
+      ],
+      "lifecycle": "archived",
+      "release_policy": "none"
+    },
+    "metaserver-worker": {
+      "component_role": [
+        "service"
+      ],
+      "provider_set": [
+        "replacement"
+      ],
+      "lifecycle": "active",
+      "release_policy": "semantic-release"
+    },
+    "nawerhals": {
+      "component_role": [
+        "historical",
+        "tooling"
+      ],
+      "provider_set": [
+        "classic"
+      ],
+      "lifecycle": "archived",
+      "release_policy": "none"
+    },
+    "protocol": {
+      "component_role": [
+        "protocol"
+      ],
+      "provider_set": [
+        "replacement"
+      ],
+      "lifecycle": "seed",
+      "release_policy": "semantic-release"
+    },
+    "renderer": {
+      "component_role": [
+        "renderer"
+      ],
+      "provider_set": [
+        "replacement"
+      ],
+      "lifecycle": "seed",
+      "release_policy": "semantic-release"
+    },
+    "resources": {
+      "component_role": [
+        "assets"
+      ],
+      "provider_set": [
+        "shared"
+      ],
+      "lifecycle": "active",
+      "release_policy": "semantic-release"
+    },
+    "server": {
+      "component_role": [
+        "server"
+      ],
+      "provider_set": [
+        "replacement"
+      ],
+      "lifecycle": "seed",
+      "release_policy": "semantic-release"
+    },
+    "sound": {
+      "component_role": [
+        "assets"
+      ],
+      "provider_set": [
+        "shared"
+      ],
+      "lifecycle": "active",
+      "release_policy": "semantic-release"
+    },
+    "tools": {
+      "component_role": [
+        "tooling"
+      ],
+      "provider_set": [
+        "classic"
+      ],
+      "lifecycle": "maintenance",
+      "release_policy": "semantic-release"
+    },
+    "website": {
+      "component_role": [
+        "website"
+      ],
+      "provider_set": [
+        "replacement"
+      ],
+      "lifecycle": "seed",
+      "release_policy": "semantic-release"
+    }
+  }
+}

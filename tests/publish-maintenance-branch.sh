@@ -800,6 +800,7 @@ rollback_root=${temporary}/empty-inventory
 mkdir -p "${rollback_root}/bin"
 cp "${root}/bin/publish" "${root}/bin/validate" "${rollback_root}/bin/"
 cp -R "${root}/config" "${rollback_root}/config"
+cp -R "${root}/community-health" "${rollback_root}/community-health"
 jq '.repositories = []' \
   "${root}/config/codeql-advanced-setup.json" \
   >"${rollback_root}/config/codeql-advanced-setup.json"

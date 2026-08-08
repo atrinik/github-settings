@@ -13,6 +13,7 @@ make_case() {
   mkdir -p "${case_root}/bin"
   cp "${root}/bin/validate" "${case_root}/bin/validate"
   cp -R "${root}/config" "${case_root}/config"
+  cp -R "${root}/community-health" "${case_root}/community-health"
   printf '%s\n' "${case_root}"
 }
 
