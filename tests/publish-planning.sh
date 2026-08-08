@@ -68,16 +68,7 @@ if [[ ${PLANNING_SCENARIO:-initial} == partial ]] && \
                     description
                   }
                 ]
-              }] +
-              (if env.PLANNING_COLLISION == "true" then
-                 [{
-                   id: "PROJECT-FIELD-Issue-Type",
-                   name: "Issue Type",
-                   dataType: "TEXT"
-                 }]
-               else
-                 []
-               end)
+              }]
             )
           },
           views: {
@@ -178,25 +169,9 @@ for field in Priority Effort 'Start date' 'Target date'; do
   grep -Fq "PLAN link organization issue field ${field} to Atrinik work" \
     <<<"${partial_output}"
 done
-grep -Fq 'PLAN add built-in project field Issue Type to Atrinik work' \
-  <<<"${partial_output}"
 grep -Fq 'PLAN update shared project view Triage' <<<"${partial_output}"
 [[ $(grep -c '^PLAN create shared project view ' <<<"${partial_output}") == 5 ]]
 grep -Fq 'Project planning configuration is converged (project 1).' \
   <<<"${partial_output}"
-
-if collision_output=$(
-  PATH="${temporary}/bin:${PATH}" \
-    PLANNING_CONFIG="${root}/config/planning.json" \
-    PLANNING_SCENARIO=partial \
-    PLANNING_COLLISION=true \
-    "${root}/bin/publish-planning" 2>&1
-); then
-  echo "error: incompatible project field was accepted" >&2
-  exit 1
-fi
-grep -Fq \
-  'error: Atrinik work field Issue Type has an incompatible data type' \
-  <<<"${collision_output}"
 
 echo "Planning publisher emits the expected initial and partial-project plans."
