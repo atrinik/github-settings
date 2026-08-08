@@ -38,13 +38,14 @@
 - Keep required workflow job names synchronized with rulesets. Workflow or
   permissions changes also require actionlint, least-privilege review, and
   immutable action references according to policy.
-- Keep default-branch deletion and non-fast-forward rules non-bypassable.
-  Isolate the organization-owner security-advisory exception to linear
-  history, pull-request gates, and required CI, and use pull-request-only
-  bypass mode so direct pushes never inherit the exception.
+- Keep default-branch deletion and non-fast-forward rules non-bypassable during
+  normal operation. Isolate the organization-owner security-advisory exception
+  to the explicitly authorized window, and use pull-request-only bypass mode
+  outside that window so direct pushes never inherit the exception.
 - A specifically authorized Classic advisory merge may temporarily split
   Classic from those shared rules and use organization-owner `always` bypass.
-  Keep that window Classic-only, retain deletion and non-fast-forward rules,
+  Keep that window Classic-only, include the integrity rules only because
+  GitHub requires every reported rule to be bypassable for the advisory merge,
   record it only in `config/advisory-merge-windows.json`, and merge and apply
   the reviewed empty-inventory rollback immediately after the advisory merge.
 - Declare protected non-default lines in `maintenance_branches`. Give each

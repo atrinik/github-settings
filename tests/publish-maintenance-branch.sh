@@ -266,7 +266,7 @@ case "${endpoint}|${jq_filter}" in
   ;;
 "orgs/atrinik/rulesets|"*)
   if [[ ${GH_ADVISORY_RULESETS_PRESENT:-false} == true ]]; then
-    printf '%s\n' '[{"id":900,"name":"05 - Maintenance branch - content - retired"},{"id":901,"name":"01 - Default branch linear history - classic"},{"id":902,"name":"02 - Changes through pull requests - classic"}]'
+    printf '%s\n' '[{"id":900,"name":"05 - Maintenance branch - content - retired"},{"id":901,"name":"01 - Default branch linear history - classic"},{"id":902,"name":"02 - Changes through pull requests - classic"},{"id":903,"name":"01 - Default branch integrity - classic"}]'
   else
     printf '[{"id":900,"name":"05 - Maintenance branch - content - retired"}]\n'
   fi
@@ -351,7 +351,10 @@ case "${endpoint}|${jq_filter}" in
   ;;
 repos/atrinik/*/rulesets\?includes_parents=false\|*)
   if [[ ${GH_ADVISORY_RULESETS_PRESENT:-false} == true ]]; then
-    printf '%s\n' '[{"id":900,"name":"05 - Maintenance branch - content - retired"},{"id":901,"name":"01 - Default branch linear history - classic"},{"id":902,"name":"02 - Changes through pull requests - classic"}]'
+    printf '%s\n' '[{"id":900,"name":"05 - Maintenance branch - content - retired"},{"id":901,"name":"01 - Default branch linear history - classic"},{"id":902,"name":"02 - Changes through pull requests - classic"},{"id":903,"name":"01 - Default branch integrity - classic"}]'
+  elif [[ ${GH_SHARED_RULESETS_PRESENT:-false} == true &&
+    ${endpoint} == repos/atrinik/classic/* ]]; then
+    printf '%s\n' '[{"id":904,"name":"01 - Default branch integrity"},{"id":905,"name":"01 - Default branch linear history"},{"id":906,"name":"02 - Changes through pull requests"}]'
   else
     printf '[{"id":900,"name":"05 - Maintenance branch - content - retired"}]\n'
   fi
@@ -502,7 +505,7 @@ assert_default_branch_policy_payloads() {
           $integrity[0].value.payload.conditions.repository_name.include ==
             ["~ALL"] and
           $integrity[0].value.payload.conditions.repository_name.exclude ==
-            [] and
+            ["classic"] and
           (
             $pull_request[0].value.payload.conditions.repository_name.include |
             index("classic")
@@ -543,11 +546,22 @@ assert_classic_advisory_bypass_payloads() {
         select(
           .value.method == "POST" and
           .value.endpoint == $endpoint and
-          .value.payload.name == "01 - Default branch integrity"
+          .value.payload.name ==
+            "01 - Default branch integrity - classic"
         )
       ] as $integrity |
       ($linear | length) == 1 and
       ($pull_request | length) == 1 and
+      ($integrity | length) == 1 and
+      ($integrity[0].value.payload.bypass_actors == [{
+        actor_id: 1,
+        actor_type: "OrganizationAdmin",
+        bypass_mode: "always"
+      }]) and
+      ([$integrity[0].value.payload.rules[].type] == [
+        "deletion",
+        "non_fast_forward"
+      ]) and
       ($linear[0].value.payload.bypass_actors == [{
         actor_id: 1,
         actor_type: "OrganizationAdmin",
@@ -563,6 +577,10 @@ assert_classic_advisory_bypass_payloads() {
       }]) and
       ([$pull_request[0].value.payload.rules[].type] == ["pull_request"]) and
       (
+        ($integrity[0].value.payload.conditions | has("repository_name")) ==
+          $organization_scope
+      ) and
+      (
         ($linear[0].value.payload.conditions | has("repository_name")) ==
           $organization_scope
       ) and
@@ -572,6 +590,10 @@ assert_classic_advisory_bypass_payloads() {
       ) and
       (
         if $organization_scope then
+          $integrity[0].value.payload.conditions.repository_name.include ==
+            ["classic"] and
+          $integrity[0].value.payload.conditions.repository_name.exclude ==
+            [] and
           $linear[0].value.payload.conditions.repository_name.include ==
             ["classic"] and
           $linear[0].value.payload.conditions.repository_name.exclude == [] and
@@ -579,6 +601,15 @@ assert_classic_advisory_bypass_payloads() {
             ["classic"] and
           $pull_request[0].value.payload.conditions.repository_name.exclude ==
             [] and
+          $integrity[0].key < ([
+            to_entries[] |
+            select(
+              .value.method == "POST" and
+              .value.endpoint == $endpoint and
+              .value.payload.name == "01 - Default branch integrity"
+            ) |
+            .key
+          ][0]) and
           $linear[0].key < ([
             to_entries[] |
             select(
@@ -597,14 +628,7 @@ assert_classic_advisory_bypass_payloads() {
             ) |
             .key
           ][0])
-        else
-          ($integrity | length) == 1 and
-          $integrity[0].value.payload.bypass_actors == [] and
-          ([$integrity[0].value.payload.rules[].type] == [
-            "deletion",
-            "non_fast_forward"
-          ])
-        end
+        else true end
       )
     ' "${log}" >/dev/null
 }
@@ -655,14 +679,15 @@ assert_advisory_window_closed() {
           .value.method == "DELETE" and
           (
             .value.endpoint == "\($delete_prefix)/901" or
-            .value.endpoint == "\($delete_prefix)/902"
+            .value.endpoint == "\($delete_prefix)/902" or
+            .value.endpoint == "\($delete_prefix)/903"
           )
         )
       ] as $deletes |
       ($linear | length) == 1 and
       ($pull_request | length) == 1 and
       ($ci | length) == 1 and
-      ($deletes | length) == 2 and
+      ($deletes | length) == 3 and
       ($linear[0].value.payload.bypass_actors[0].bypass_mode ==
         "pull_request") and
       ($pull_request[0].value.payload.bypass_actors[0].bypass_mode ==
@@ -1179,6 +1204,7 @@ repository_immutable_state=${temporary}/repository-immutable.json
 printf '{"enforced_repositories":"none"}\n' \
   >"${repository_immutable_state}"
 GH_API_LOG=${repository_log} \
+  GH_SHARED_RULESETS_PRESENT=true \
   GH_IMMUTABLE_STATE=${repository_immutable_state} \
   GH_SECURITY_SCENARIO=drifted \
   PATH="${temporary}/bin:${PATH}" \
@@ -1192,6 +1218,19 @@ assert_classic_advisory_bypass_payloads \
   "${repository_log}" "repos/atrinik/classic/rulesets" false
 assert_classic_required_ci_payload \
   "${repository_log}" "repos/atrinik/classic/rulesets" false
+jq -s -e '
+  [
+    .[] |
+    select(
+      .method == "DELETE" and
+      (
+        .endpoint == "repos/atrinik/classic/rulesets/904" or
+        .endpoint == "repos/atrinik/classic/rulesets/905" or
+        .endpoint == "repos/atrinik/classic/rulesets/906"
+      )
+    )
+  ] | length == 3
+' "${repository_log}" >/dev/null
 while IFS=$'\t' read -r repository validation_context; do
   assert_replacement_required_ci_payload \
     "${repository_log}" "repos/atrinik/${repository}/rulesets" false \

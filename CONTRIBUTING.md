@@ -10,18 +10,17 @@ Actions-access grants that lack a documented public API belong in
 only read access to consumer workflows, and preserve the package's existing
 visibility and source-repository association.
 
-Keep default-branch deletion and non-fast-forward rules non-bypassable. Any
-organization-owner exception needed for GitHub's security-advisory lifecycle
-must remain isolated to linear history, pull-request gates, and required CI,
-and must use pull-request-only bypass mode.
+Keep default-branch deletion and non-fast-forward rules non-bypassable during
+normal operation. Any organization-owner exception needed for GitHub's
+security-advisory lifecycle must remain isolated to an explicitly authorized
+window and must use pull-request-only bypass mode outside that window.
 
 GitHub does not classify an advisory-level merge as a pull-request action. A
 specifically authorized Classic advisory merge window may therefore use
-organization-owner `always` bypass only for Classic linear history, the
-Classic pull-request gate, and Classic required CI. The reviewed rollback must
-empty `config/advisory-merge-windows.json` and be applied immediately after
-the advisory merge; deletion and non-fast-forward protections remain
-non-bypassable throughout.
+organization-owner `always` bypass for the five Classic rules GitHub reports:
+deletion, non-fast-forward, linear history, the pull-request gate, and required
+CI. The reviewed rollback must empty `config/advisory-merge-windows.json` and
+be applied immediately after the advisory merge.
 
 An advanced CodeQL inventory change must be coordinated with an open,
 review-ready workflow pull request in the target repository. Validate that the
