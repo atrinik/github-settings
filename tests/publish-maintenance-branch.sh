@@ -233,8 +233,10 @@ case "${endpoint}|${jq_filter}" in
   printf 'false\n'
   ;;
 "orgs/atrinik/repos?per_page=100&type=all|"*)
-  printf 'classic\t%s\ncontent\t101\n' \
+  printf 'classic\t%s\tfalse\tpublic\tfalse\tfalse\ttrue\ttrue\ttrue\n' \
     "${GH_CLASSIC_REPOSITORY_ID:-1327289971}"
+  printf 'content\t101\tfalse\tpublic\tfalse\tfalse\ttrue\ttrue\ttrue\n'
+  printf 'classic-ghsa-8533-3vg8-r287\t999\ttrue\tprivate\tfalse\tfalse\tfalse\tfalse\tfalse\n'
   ;;
 "orgs/atrinik/settings/immutable-releases|"*)
   jq '{enforced_repositories}' "${GH_IMMUTABLE_STATE}"
@@ -723,7 +725,16 @@ GH_API_LOG=${organization_log} \
   GH_SECURITY_SCENARIO=drifted \
   PATH="${temporary}/bin:${PATH}" \
   ATRINIK_POLICY_SCOPE=organization \
-  "${root}/bin/publish" --apply >/dev/null
+  "${root}/bin/publish" --apply >"${temporary}/organization.txt"
+grep -F \
+  'SKIP atrinik/classic-ghsa-8533-3vg8-r287 is a temporary security-advisory workspace' \
+  "${temporary}/organization.txt" >/dev/null
+jq -s -e '
+  all(
+    .[];
+    (.endpoint | contains("classic-ghsa-8533-3vg8-r287") | not)
+  )
+' "${organization_log}" >/dev/null
 assert_immutable_release_apply "${organization_log}"
 assert_maintenance_payload \
   "${organization_log}" "orgs/atrinik/rulesets" true

@@ -70,6 +70,35 @@ repository_uses_advanced_codeql() {
     "${codeql_advanced_config}" >/dev/null
 }
 
+is_temporary_security_advisory_repository() {
+  local repository=$1
+  local private=$2
+  local visibility=$3
+  local disabled=$4
+  local fork=$5
+  local has_issues=$6
+  local has_projects=$7
+  local has_wiki=$8
+  local base_repository
+
+  if [[ ${repository} =~ ^(.+)-ghsa-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}$ ]]; then
+    base_repository=${BASH_REMATCH[1]}
+  else
+    return 1
+  fi
+
+  [[ ${private} == true ]] &&
+    [[ ${visibility} == private ]] &&
+    [[ ${disabled} == false ]] &&
+    [[ ${fork} == false ]] &&
+    [[ ${has_issues} == false ]] &&
+    [[ ${has_projects} == false ]] &&
+    [[ ${has_wiki} == false ]] &&
+    jq -e --arg repository "${base_repository}" \
+      '(.pull_request_gate | index($repository)) != null' \
+      "${repositories_config}" >/dev/null
+}
+
 upsert_repository_ruleset() {
   local repository=$1
   local input=$2
@@ -861,16 +890,38 @@ ${apply} && echo "Mode: apply" || echo "Mode: plan"
 
 declare -a active_repositories=()
 declare -A active_repository_ids=()
-while IFS=$'\t' read -r repository id; do
+while IFS=$'\t' read -r \
+  repository id private visibility disabled fork has_issues has_projects has_wiki; do
   if [[ ! ${id} =~ ^[0-9]+$ ]]; then
     echo "error: invalid repository id for ${repository}: ${id}" >&2
     exit 1
+  fi
+  if is_temporary_security_advisory_repository \
+    "${repository}" "${private}" "${visibility}" "${disabled}" "${fork}" \
+    "${has_issues}" "${has_projects}" "${has_wiki}"; then
+    echo "SKIP ${organization}/${repository} is a temporary security-advisory workspace"
+    continue
   fi
   active_repositories+=("${repository}")
   active_repository_ids["${repository}"]=${id}
 done < <(
   github_api --paginate "orgs/${organization}/repos?per_page=100&type=all" \
-    --jq '.[] | select(.archived == false) | [.name, .id] | @tsv'
+    --jq '
+      .[] |
+      select(.archived == false) |
+      [
+        .name,
+        .id,
+        .private,
+        .visibility,
+        .disabled,
+        .fork,
+        .has_issues,
+        .has_projects,
+        .has_wiki
+      ] |
+      @tsv
+    '
 )
 
 while IFS= read -r repository; do
