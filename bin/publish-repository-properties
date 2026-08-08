@@ -79,14 +79,9 @@ while IFS= read -r definition; do
 
   input=$(mktemp)
   temporary_files+=("${input}")
-  if [[ ${current} == null ]]; then
-    jq . <<<"${desired}" >"${input}"
-    run_api POST "orgs/${organization}/properties/schema" "${input}"
-  else
-    jq 'del(.property_name)' <<<"${desired}" >"${input}"
-    run_api PATCH \
-      "orgs/${organization}/properties/schema/${property_name}" "${input}"
-  fi
+  jq 'del(.property_name)' <<<"${desired}" >"${input}"
+  run_api PUT \
+    "orgs/${organization}/properties/schema/${property_name}" "${input}"
 done < <(jq -c '.definitions[]' "${properties_config}")
 
 declare -A live_repositories=()

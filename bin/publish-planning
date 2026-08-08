@@ -497,7 +497,7 @@ while IFS= read -r desired_view; do
     --argjson fields "${visible_field_ids}" \
     --argjson supportsVisibleFields "${supports_visible_fields}" '
       {name: $name, layout: $layout, filter: $filter} +
-      if $supportsVisibleFields then {fields: $fields} else {} end
+      if $supportsVisibleFields then {fields: ($fields | sort)} else {} end
     ')
   current_view_comparison=null
   if [[ ${current_view} != null ]]; then
@@ -505,7 +505,7 @@ while IFS= read -r desired_view; do
       --argjson supportsVisibleFields "${supports_visible_fields}" '
         {name, layout, filter: (.filter // "")} +
         if $supportsVisibleFields then
-          {fields: [(.fields.nodes // [])[].id]}
+          {fields: ([ (.fields.nodes // [])[].id ] | sort)}
         else
           {}
         end
