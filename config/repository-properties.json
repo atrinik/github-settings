@@ -106,7 +106,7 @@
       "provider_set": [
         "replacement"
       ],
-      "lifecycle": "seed",
+      "lifecycle": "active",
       "release_policy": "semantic-release"
     },
     "content": {
@@ -127,7 +127,7 @@
       "provider_set": [
         "replacement"
       ],
-      "lifecycle": "seed",
+      "lifecycle": "active",
       "release_policy": "semantic-release"
     },
     "devcontainer": {
@@ -147,7 +147,7 @@
       "provider_set": [
         "replacement"
       ],
-      "lifecycle": "seed",
+      "lifecycle": "active",
       "release_policy": "semantic-release"
     },
     "github-settings": {
@@ -243,7 +243,7 @@
       "provider_set": [
         "replacement"
       ],
-      "lifecycle": "seed",
+      "lifecycle": "active",
       "release_policy": "semantic-release"
     },
     "renderer": {
@@ -253,7 +253,7 @@
       "provider_set": [
         "replacement"
       ],
-      "lifecycle": "seed",
+      "lifecycle": "active",
       "release_policy": "semantic-release"
     },
     "resources": {
@@ -273,7 +273,7 @@
       "provider_set": [
         "replacement"
       ],
-      "lifecycle": "seed",
+      "lifecycle": "active",
       "release_policy": "semantic-release"
     },
     "sound": {
@@ -303,7 +303,7 @@
       "provider_set": [
         "replacement"
       ],
-      "lifecycle": "seed",
+      "lifecycle": "active",
       "release_policy": "semantic-release"
     }
   }
