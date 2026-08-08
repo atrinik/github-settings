@@ -322,9 +322,18 @@ read_project() {
 
 project_data=$(read_project)
 while IFS= read -r field_name; do
-  if jq -e --arg name "${field_name}" '
-    any(.fields.nodes[]; .name == $name)
-  ' <<<"${project_data}" >/dev/null; then
+  field_data_type=$(jq -r --arg name "${field_name}" '
+    .issue_fields[] | select(.name == $name) | .data_type
+  ' "${planning_config}")
+  current_field=$(jq -c --arg name "${field_name}" '
+    [.fields.nodes[] | select(.name == $name)][0] // null
+  ' <<<"${project_data}")
+  if [[ ${current_field} != null ]]; then
+    if [[ $(jq -r '.dataType // ""' <<<"${current_field}") != \
+      "${field_data_type}" ]]; then
+      echo "error: ${project_title} field ${field_name} has an incompatible data type" >&2
+      exit 1
+    fi
     echo "KEEP ${project_title} issue field ${field_name}"
     continue
   fi
@@ -349,16 +358,23 @@ done < <(jq -r '.issue_fields[].name' "${planning_config}")
 
 while IFS= read -r builtin_field; do
   field_name=$(jq -r '.name' <<<"${builtin_field}")
-  if jq -e --arg name "${field_name}" '
-    any(.fields.nodes[]; .name == $name)
-  ' <<<"${project_data}" >/dev/null; then
+  field_data_type=$(jq -r '.data_type' <<<"${builtin_field}")
+  current_field=$(jq -c --arg name "${field_name}" '
+    [.fields.nodes[] | select(.name == $name)][0] // null
+  ' <<<"${project_data}")
+  if [[ ${current_field} != null ]]; then
+    if [[ $(jq -r '.dataType // ""' <<<"${current_field}") != \
+      "${field_data_type}" ]]; then
+      echo "error: ${project_title} field ${field_name} has an incompatible data type" >&2
+      exit 1
+    fi
     echo "KEEP ${project_title} built-in field ${field_name}"
     continue
   fi
   variables=$(jq -cn \
     --arg projectId "${project_id}" \
     --arg name "${field_name}" \
-    --arg dataType "$(jq -r '.data_type' <<<"${builtin_field}")" '
+    --arg dataType "${field_data_type}" '
       {input: {
         projectId: $projectId,
         name: $name,

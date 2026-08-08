@@ -203,6 +203,8 @@ jq -e '
   ]) and
   (.project.builtin_fields | type == "array" and length > 0) and
   ([.project.builtin_fields[].name] | length == (unique | length)) and
+  ([.issue_fields[].name, .project.builtin_fields[].name] |
+    length == (unique | length)) and
   all(
     .project.builtin_fields[];
     (keys == ["data_type", "name"]) and
