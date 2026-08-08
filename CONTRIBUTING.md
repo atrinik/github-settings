@@ -10,6 +10,11 @@ Actions-access grants that lack a documented public API belong in
 only read access to consumer workflows, and preserve the package's existing
 visibility and source-repository association.
 
+Keep default-branch deletion and non-fast-forward rules non-bypassable. Any
+organization-owner exception needed for GitHub's security-advisory lifecycle
+must remain isolated to linear history, pull-request gates, and required CI,
+and must use pull-request-only bypass mode.
+
 An advanced CodeQL inventory change must be coordinated with an open,
 review-ready workflow pull request in the target repository. Validate that the
 plan attaches the advanced-allowed security configuration before disabling

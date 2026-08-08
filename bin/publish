@@ -257,6 +257,7 @@ delete_managed_repository_rulesets() {
     id=$(jq -r '.id' <<<"${ruleset}")
     case ${name} in
     "01 - Default branch integrity" | \
+      "01 - Default branch linear history" | \
       "02 - Changes through pull requests" | \
       "03 - Required CI" | \
       "04 - Immutable release tags" | \
@@ -278,6 +279,7 @@ delete_managed_organization_rulesets() {
     id=$(jq -r '.id' <<<"${ruleset}")
     case ${name} in
     "01 - Default branch integrity" | \
+      "01 - Default branch linear history" | \
       "02 - Changes through pull requests" | \
       "04 - Immutable release tags" | \
       "03 - Required CI - "* | \
@@ -290,6 +292,13 @@ delete_managed_organization_rulesets() {
 
 publish_repository_rulesets() {
   local repository ci_payload maintenance branch required_ci input
+
+  # Establish the replacement linear-history protection before removing that
+  # rule from the existing integrity ruleset.
+  for repository in "${active_repositories[@]}"; do
+    upsert_repository_ruleset "${repository}" \
+      "${root}/config/rulesets/default-branch-linear-history.json"
+  done
 
   for repository in "${active_repositories[@]}"; do
     upsert_repository_ruleset "${repository}" \
@@ -343,9 +352,18 @@ publish_organization_rulesets() {
 
   desired_rulesets=(
     "01 - Default branch integrity"
+    "01 - Default branch linear history"
     "02 - Changes through pull requests"
     "04 - Immutable release tags"
   )
+
+  # Establish the replacement linear-history protection before removing that
+  # rule from the existing integrity ruleset.
+  input=$(make_organization_ruleset \
+    "${root}/config/rulesets/default-branch-linear-history.json" \
+    "01 - Default branch linear history" '["~ALL"]')
+  temporary_files+=("${input}")
+  upsert_organization_ruleset "${input}"
 
   input=$(make_organization_ruleset \
     "${root}/config/rulesets/default-branch-integrity.json" \

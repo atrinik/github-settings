@@ -17,9 +17,13 @@ read-only and are skipped on later runs.
 ## Policy
 
 - Every active repository protects its default branch from deletion and
-  non-fast-forward pushes.
+  non-fast-forward pushes without a bypass. A separate linear-history rule
+  permits organization owners to bypass only through a pull request, preserving
+  an audit trail for GitHub's security-advisory merge lifecycle.
 - Every active repository uses `main` as its default branch.
-- Maintained repositories require changes through pull requests.
+- Maintained repositories require changes through pull requests. Organization
+  owners may bypass this gate only through a pull request, including the
+  temporary private pull request GitHub associates with a security advisory.
 - Repositories with reliable CI require checks from the GitHub Actions app.
   Replacement repositories require their proven stable aggregate validation
   job plus `Conventional PR title`; component/platform jobs remain diagnostic
@@ -204,6 +208,10 @@ exception: the publisher recognizes their strict `<governed-repository>-ghsa-`
 name and disabled collaboration-feature signature and leaves them under
 GitHub's advisory lifecycle. A private repository that merely resembles that
 name, or whose base repository is not governed, remains in policy scope.
+Because integrations and status checks cannot access these workspaces, the
+base repository's linear-history, pull-request, and required-CI rules allow
+organization-owner bypass in pull-request-only mode. Deletion and
+non-fast-forward protections remain non-bypassable.
 Add repositories to the appropriate arrays in `config/repositories.json` when
 they also need a pull-request gate, required CI, immutable release tags, or
 archival.

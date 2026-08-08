@@ -417,6 +417,89 @@ assert_maintenance_payload() {
     ' "${log}" >/dev/null
 }
 
+assert_default_branch_policy_payloads() {
+  local log=$1
+  local endpoint=$2
+  local organization_scope=$3
+
+  jq -s -e \
+    --arg endpoint "${endpoint}" \
+    --argjson organization_scope "${organization_scope}" '
+      [
+        to_entries[] |
+        select(
+          .value.method == "POST" and
+          .value.endpoint == $endpoint and
+          .value.payload.name == "01 - Default branch linear history"
+        )
+      ] as $linear |
+      [
+        to_entries[] |
+        select(
+          .value.method == "POST" and
+          .value.endpoint == $endpoint and
+          .value.payload.name == "01 - Default branch integrity"
+        )
+      ] as $integrity |
+      [
+        to_entries[] |
+        select(
+          .value.method == "POST" and
+          .value.endpoint == $endpoint and
+          .value.payload.name == "02 - Changes through pull requests"
+        )
+      ] as $pull_request |
+      ($linear | length) == 1 and
+      ($integrity | length) == 1 and
+      ($pull_request | length) == 1 and
+      $linear[0].key < $integrity[0].key and
+      ($linear[0].value.payload.bypass_actors == [{
+        actor_id: 1,
+        actor_type: "OrganizationAdmin",
+        bypass_mode: "pull_request"
+      }]) and
+      ($linear[0].value.payload.rules == [{
+        type: "required_linear_history"
+      }]) and
+      ($integrity[0].value.payload.bypass_actors == []) and
+      ([$integrity[0].value.payload.rules[].type] == [
+        "deletion",
+        "non_fast_forward"
+      ]) and
+      ($pull_request[0].value.payload.bypass_actors == [{
+        actor_id: 1,
+        actor_type: "OrganizationAdmin",
+        bypass_mode: "pull_request"
+      }]) and
+      ([$pull_request[0].value.payload.rules[].type] == ["pull_request"]) and
+      (
+        ($linear[0].value.payload.conditions | has("repository_name")) ==
+          $organization_scope
+      ) and
+      (
+        ($integrity[0].value.payload.conditions | has("repository_name")) ==
+          $organization_scope
+      ) and
+      (
+        ($pull_request[0].value.payload.conditions | has("repository_name")) ==
+          $organization_scope
+      ) and
+      (
+        ($organization_scope | not) or
+        (
+          $linear[0].value.payload.conditions.repository_name.include ==
+            ["~ALL"] and
+          $integrity[0].value.payload.conditions.repository_name.include ==
+            ["~ALL"] and
+          (
+            $pull_request[0].value.payload.conditions.repository_name.include |
+            index("classic")
+          ) != null
+        )
+      )
+    ' "${log}" >/dev/null
+}
+
 assert_replacement_required_ci_payload() {
   local log=$1
   local endpoint=$2
@@ -775,6 +858,8 @@ jq -s -e '
 assert_immutable_release_apply "${organization_log}"
 assert_maintenance_payload \
   "${organization_log}" "orgs/atrinik/rulesets" true
+assert_default_branch_policy_payloads \
+  "${organization_log}" "orgs/atrinik/rulesets" true
 assert_classic_required_ci_payload \
   "${organization_log}" "orgs/atrinik/rulesets" true
 while IFS=$'\t' read -r repository validation_context; do
@@ -896,6 +981,8 @@ GH_API_LOG=${repository_log} \
   "${root}/bin/publish" --apply >/dev/null
 assert_maintenance_payload \
   "${repository_log}" "repos/atrinik/content/rulesets" false
+assert_default_branch_policy_payloads \
+  "${repository_log}" "repos/atrinik/classic/rulesets" false
 assert_classic_required_ci_payload \
   "${repository_log}" "repos/atrinik/classic/rulesets" false
 while IFS=$'\t' read -r repository validation_context; do
