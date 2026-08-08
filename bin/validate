@@ -337,6 +337,7 @@ jq -e \
     ([$config.definitions[].property_name] | length == (unique | length)) and
     all(
       $config.definitions[];
+      . as $definition |
       (keys == [
         "allowed_values",
         "default_value",
@@ -349,10 +350,23 @@ jq -e \
       (.description | type == "string" and length > 0) and
       (.value_type | IN("multi_select", "single_select")) and
       (.required == true) and
-      (.default_value == null) and
       (.allowed_values | type == "array" and length > 0) and
       (.allowed_values == (.allowed_values | sort | unique)) and
-      all(.allowed_values[]; type == "string" and length > 0)
+      all(.allowed_values[]; type == "string" and length > 0) and
+      if $definition.value_type == "multi_select" then
+        ($definition.default_value | type == "array" and length > 0) and
+        ($definition.default_value ==
+          ($definition.default_value | sort | unique)) and
+        all(
+          $definition.default_value[];
+          . as $value |
+          ($definition.allowed_values | index($value)) != null
+        )
+      else
+        ($definition.default_value | type == "string") and
+        ($definition.default_value as $value |
+          ($definition.allowed_values | index($value)) != null)
+      end
     ) and
     ($config.repositories | keys) == $expected_repositories and
     all(

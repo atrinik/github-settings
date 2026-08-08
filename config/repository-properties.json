@@ -21,9 +21,12 @@
         "server",
         "service",
         "tooling",
+        "unclassified",
         "website"
       ],
-      "default_value": null
+      "default_value": [
+        "unclassified"
+      ]
     },
     {
       "property_name": "provider_set",
@@ -34,9 +37,12 @@
         "classic",
         "organization",
         "replacement",
-        "shared"
+        "shared",
+        "unclassified"
       ],
-      "default_value": null
+      "default_value": [
+        "unclassified"
+      ]
     },
     {
       "property_name": "lifecycle",
@@ -49,7 +55,7 @@
         "maintenance",
         "seed"
       ],
-      "default_value": null
+      "default_value": "seed"
     },
     {
       "property_name": "release_policy",
@@ -60,7 +66,7 @@
         "none",
         "semantic-release"
       ],
-      "default_value": null
+      "default_value": "none"
     }
   ],
   "repositories": {
