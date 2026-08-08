@@ -211,19 +211,28 @@ while IFS= read -r desired; do
             null
           end))
       ')
+    description_drift=$(jq -n \
+      --arg desired "$(jq -r '.description' <<<"${desired}")" \
+      --arg current "$(jq -r '.description // ""' <<<"${current}")" \
+      '$desired != $current')
+    visibility_drift=$(jq -n \
+      --arg desired "$(jq -r '.visibility' <<<"${desired}")" \
+      --arg current "$(jq -r '.visibility' <<<"${current}")" \
+      '$desired != $current')
     variables=$(jq -cn \
       --arg id "${id}" \
-      --arg name "${name}" \
       --arg description "$(jq -r '.description' <<<"${desired}")" \
       --arg visibility "$(jq -r '.visibility' <<<"${desired}")" \
       --argjson options "${options}" \
+      --argjson descriptionDrift "${description_drift}" \
+      --argjson visibilityDrift "${visibility_drift}" \
       --argjson optionsDrift "${options_drift}" '
-        {input: ({
-          id: $id,
-          name: $name,
-          description: $description,
-          visibility: $visibility
-        } + if $optionsDrift then {options: $options} else {} end)}
+        {input: (
+          {id: $id} +
+          if $descriptionDrift then {description: $description} else {} end +
+          if $visibilityDrift then {visibility: $visibility} else {} end +
+          if $optionsDrift then {options: $options} else {} end
+        )}
       ')
     if ${apply}; then
       graphql \
