@@ -410,16 +410,53 @@ assert_maintenance_payload() {
           select(.type == "required_status_checks") |
           .parameters.required_status_checks[]
         ] == [
+          {context: "Content validation", integration_id: 15368},
           {context: "Conventional PR title", integration_id: 15368}
         ]
+      )
+    ' "${log}" >/dev/null
+}
+
+assert_replacement_required_ci_payload() {
+  local log=$1
+  local endpoint=$2
+  local organization_scope=$3
+  local repository=$4
+  local validation_context=$5
+  local ruleset_name="03 - Required CI"
+
+  if [[ ${organization_scope} == true ]]; then
+    ruleset_name="03 - Required CI - ${repository}"
+  fi
+
+  jq -s -e \
+    --arg endpoint "${endpoint}" \
+    --arg ruleset_name "${ruleset_name}" \
+    --arg repository "${repository}" \
+    --arg validation_context "${validation_context}" \
+    --argjson organization_scope "${organization_scope}" '
+      [
+        .[] |
+        select(
+          .method == "POST" and
+          .endpoint == $endpoint and
+          .payload.name == $ruleset_name
+        )
+      ] as $matches |
+      ($matches | length) == 1 and
+      (
+        ($matches[0].payload.conditions | has("repository_name")) ==
+          $organization_scope
       ) and
-      all(
-        .[];
-        .payload.name != "03 - Required CI - client" and
-        .payload.name != "03 - Required CI - editor" and
-        .payload.name != "03 - Required CI - protocol" and
-        .payload.name != "03 - Required CI - renderer" and
-        .payload.name != "03 - Required CI - server"
+      (
+        ($organization_scope | not) or
+        ($matches[0].payload.conditions.repository_name.include == [$repository])
+      ) and
+      (
+        $matches[0].payload.rules[0].parameters.required_status_checks == [
+          {context: $validation_context, integration_id: 15368},
+          {context: "Conventional PR title", integration_id: 15368}
+        ]
       )
     ' "${log}" >/dev/null
 }
@@ -740,6 +777,19 @@ assert_maintenance_payload \
   "${organization_log}" "orgs/atrinik/rulesets" true
 assert_classic_required_ci_payload \
   "${organization_log}" "orgs/atrinik/rulesets" true
+while IFS=$'\t' read -r repository validation_context; do
+  assert_replacement_required_ci_payload \
+    "${organization_log}" "orgs/atrinik/rulesets" true \
+    "${repository}" "${validation_context}"
+done <<'EOF'
+client	Client validation
+content-toolkit	Content toolkit validation
+editor	Editor validation
+protocol	Protocol validation
+renderer	Renderer validation
+server	Server validation
+website	Website validation
+EOF
 assert_organization_codeql_configurations "${organization_log}"
 assert_codeql_default_setup "${organization_log}"
 jq -s -e '
@@ -848,6 +898,19 @@ assert_maintenance_payload \
   "${repository_log}" "repos/atrinik/content/rulesets" false
 assert_classic_required_ci_payload \
   "${repository_log}" "repos/atrinik/classic/rulesets" false
+while IFS=$'\t' read -r repository validation_context; do
+  assert_replacement_required_ci_payload \
+    "${repository_log}" "repos/atrinik/${repository}/rulesets" false \
+    "${repository}" "${validation_context}"
+done <<'EOF'
+client	Client validation
+content-toolkit	Content toolkit validation
+editor	Editor validation
+protocol	Protocol validation
+renderer	Renderer validation
+server	Server validation
+website	Website validation
+EOF
 assert_repository_security_preserved "${repository_log}"
 assert_codeql_default_setup "${repository_log}"
 jq -s -e '
