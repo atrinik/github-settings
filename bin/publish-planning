@@ -302,6 +302,9 @@ if ! ${apply} && [[ ${project} == null ]]; then
   while IFS= read -r field; do
     echo "PLAN link organization issue field ${field} to ${project_title}"
   done < <(jq -r '.issue_fields[].name' "${planning_config}")
+  while IFS= read -r field; do
+    echo "PLAN add built-in project field ${field} to ${project_title}"
+  done < <(jq -r '.project.builtin_fields[].name' "${planning_config}")
   echo "PLAN replace the default Status options for ${project_title}"
   while IFS= read -r view; do
     echo "PLAN create shared project view ${view}"
@@ -331,13 +334,51 @@ while IFS= read -r field_name; do
     ')
   if ${apply}; then
     graphql \
-      'mutation($input:CreateProjectV2IssueFieldInput!){createProjectV2IssueField(input:$input){projectV2Field{id}}}' \
+      'mutation($input:CreateProjectV2IssueFieldInput!){createProjectV2IssueField(input:$input){clientMutationId}}' \
       "${variables}" >/dev/null
     echo "APPLY link organization issue field ${field_name} to ${project_title}"
   else
     echo "PLAN link organization issue field ${field_name} to ${project_title}"
+    project_data=$(jq -c \
+      --arg id "{project-field-${field_name}}" \
+      --arg name "${field_name}" \
+      '.fields.nodes += [{id: $id, name: $name}]' \
+      <<<"${project_data}")
   fi
 done < <(jq -r '.issue_fields[].name' "${planning_config}")
+
+while IFS= read -r builtin_field; do
+  field_name=$(jq -r '.name' <<<"${builtin_field}")
+  if jq -e --arg name "${field_name}" '
+    any(.fields.nodes[]; .name == $name)
+  ' <<<"${project_data}" >/dev/null; then
+    echo "KEEP ${project_title} built-in field ${field_name}"
+    continue
+  fi
+  variables=$(jq -cn \
+    --arg projectId "${project_id}" \
+    --arg name "${field_name}" \
+    --arg dataType "$(jq -r '.data_type' <<<"${builtin_field}")" '
+      {input: {
+        projectId: $projectId,
+        name: $name,
+        dataType: $dataType
+      }}
+    ')
+  if ${apply}; then
+    graphql \
+      'mutation($input:CreateProjectV2FieldInput!){createProjectV2Field(input:$input){clientMutationId}}' \
+      "${variables}" >/dev/null
+    echo "APPLY add built-in project field ${field_name} to ${project_title}"
+  else
+    echo "PLAN add built-in project field ${field_name} to ${project_title}"
+    project_data=$(jq -c \
+      --arg id "{project-field-${field_name}}" \
+      --arg name "${field_name}" \
+      '.fields.nodes += [{id: $id, name: $name}]' \
+      <<<"${project_data}")
+  fi
+done < <(jq -c '.project.builtin_fields[]' "${planning_config}")
 
 if ${apply}; then
   project_data=$(read_project)
@@ -480,9 +521,12 @@ while IFS= read -r desired_view; do
     --arg filter "$(jq -r '.filter' <<<"${desired_view}")" \
     --argjson fields "${visible_field_ids}" \
     '{name: $name, layout: $layout, filter: $filter, fields: $fields}')
-  current_view_comparison=$(jq -c '
-    {name, layout, filter: (.filter // ""), fields: [.fields.nodes[].id]}
-  ' <<<"${current_view}")
+  current_view_comparison=null
+  if [[ ${current_view} != null ]]; then
+    current_view_comparison=$(jq -c '
+      {name, layout, filter: (.filter // ""), fields: [.fields.nodes[].id]}
+    ' <<<"${current_view}")
+  fi
   if [[ ${current_view} != null ]] && \
     [[ ${current_view_comparison} == "${desired_view_comparison}" ]]; then
     echo "KEEP shared project view ${view_name}"

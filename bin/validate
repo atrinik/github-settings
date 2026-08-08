@@ -192,6 +192,7 @@ jq -e '
     "type_inference"
   ]) and
   (.project | keys == [
+    "builtin_fields",
     "public",
     "readme",
     "short_description",
@@ -200,6 +201,14 @@ jq -e '
     "triage_cutover",
     "views"
   ]) and
+  (.project.builtin_fields | type == "array" and length > 0) and
+  ([.project.builtin_fields[].name] | length == (unique | length)) and
+  all(
+    .project.builtin_fields[];
+    (keys == ["data_type", "name"]) and
+    (.name | type == "string" and length > 0) and
+    (.data_type | IN("ISSUE_TYPE"))
+  ) and
   (.project.title | type == "string" and length > 0) and
   (.project.short_description | type == "string" and length > 0) and
   (.project.readme | type == "string" and length > 0) and
