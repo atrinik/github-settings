@@ -239,7 +239,12 @@ jq -e '
     (.name | type == "string" and length > 0) and
     (.layout | IN("BOARD_LAYOUT", "ROADMAP_LAYOUT", "TABLE_LAYOUT")) and
     (.filter | type == "string") and
-    (.visible_fields | type == "array" and length > 0) and
+    (.visible_fields | type == "array") and
+    (if .layout == "ROADMAP_LAYOUT" then
+       (.visible_fields | length == 0)
+     else
+       (.visible_fields | length > 0)
+     end) and
     ((.visible_fields | length) == (.visible_fields | unique | length)) and
     all(.visible_fields[]; type == "string" and length > 0)
   ) and

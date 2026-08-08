@@ -99,15 +99,7 @@
         "name": "Roadmap",
         "layout": "ROADMAP_LAYOUT",
         "filter": "is:open is:issue -status:Inbox",
-        "visible_fields": [
-          "Title",
-          "Repository",
-          "Start date",
-          "Target date",
-          "Status",
-          "Milestone",
-          "Assignees"
-        ]
+        "visible_fields": []
       },
       {
         "name": "Pull requests",
