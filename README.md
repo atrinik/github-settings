@@ -28,11 +28,17 @@ read-only and are skipped on later runs.
 - Release tags in release-producing repositories cannot be moved or deleted.
 - Active repositories allow squash merges only. The squash commit uses the
   pull-request title and description, and merged head branches are deleted.
-- Every repository uses the enforced security baseline in
-  `config/code-security.json`: dependency graph, Dependabot alerts and security
-  updates, CodeQL default setup, secret scanning, push protection, validity
-  checks, and private vulnerability reporting. The same baseline is the
-  default for new repositories.
+- Every repository uses an enforced security baseline: dependency graph,
+  Dependabot alerts and security updates, secret scanning, push protection,
+  validity checks, and private vulnerability reporting remain enabled in both
+  security configurations. Ordinary repositories use CodeQL default setup from
+  `config/code-security.json`. Repositories in
+  `config/codeql-advanced-setup.json` instead receive the otherwise-identical
+  `config/code-security-advanced.json` configuration, whose supported
+  `code_scanning_options.allow_advanced` setting permits their governed
+  component-aware workflow. The publisher explicitly disables default setup
+  for those repositories and configures it everywhere else. The ordinary
+  baseline remains the default for new repositories.
 - Organization members cannot create repositories. Deletion, transfer, and
   visibility changes are recorded as required UI settings because GitHub does
   not expose them through the public API.
@@ -43,9 +49,9 @@ read-only and are skipped on later runs.
   use only Atrinik, GitHub, Codecov coverage, and explicitly allowed Docker
   actions.
 - Historical repositories listed in `config/repositories.json` are archived.
-  The former standalone classic component repositories are archived only after
-  their history, active work, issues, and release metadata have been preserved
-  in `atrinik/classic`.
+  The five former standalone classic component repositories are already
+  archived read-only after their history, active work, issues, and release
+  metadata were preserved for the `atrinik/classic` transition.
 
 The GitHub REST API does not expose every organization control. The desired
 values are recorded in `config/manual-settings.json` and must be confirmed in
@@ -78,9 +84,11 @@ bin/publish-repositories
 bin/publish-repositories --apply
 ```
 
-This applies merge settings, security features, CodeQL default setup, and all
-rulesets repository by repository. It removes the managed organization
-rulesets only after their repository equivalents exist.
+This applies merge settings, security features, the inventory-specific CodeQL
+setup state, and all rulesets repository by repository. It removes the managed
+organization rulesets only after their repository equivalents exist. The
+fallback preserves every non-CodeQL security feature for advanced-setup
+repositories while converging their default setup to `not-configured`.
 
 The manual `Publish settings` workflow provides the same operation in GitHub
 Actions. It requires an `ATRINIK_SETTINGS_TOKEN` repository secret with
@@ -96,6 +104,12 @@ security configuration is also the default for newly created repositories.
 Add repositories to the appropriate arrays in `config/repositories.json` when
 they also need a pull-request gate, required CI, immutable release tags, or
 archival.
+
+Do not add a repository to `config/codeql-advanced-setup.json` merely because
+default setup needs tuning. The inventory is reserved for a reviewed advanced
+CodeQL workflow that needs repository-specific build, component, or path
+coverage. Both security configurations must remain identical except for their
+name, description, and `code_scanning_options.allow_advanced` value.
 
 Moving a repository to `archive` is an executable policy change: the next
 `bin/publish --apply` makes it read-only. Before applying an archival change,
@@ -128,6 +142,44 @@ live plan:
 
 ```sh
 bin/validate
-tests/publish-maintenance-branch.sh
+for test in tests/*.sh; do "$test"; done
 bin/publish
 ```
+
+## Transitioning a repository to advanced CodeQL
+
+The inventory currently contains only `classic`. GitHub's
+[security configuration API](https://docs.github.com/en/rest/code-security/configurations)
+represents its exception as **default setup enabled with advanced setup
+allowed**. The publisher attaches that configuration only to the inventory,
+then uses the
+[repository default-setup API](https://docs.github.com/en/rest/code-scanning/code-scanning#update-a-code-scanning-default-setup-configuration)
+to set it explicitly to `not-configured`. All other active repositories are
+attached to the enforced ordinary baseline and explicitly set to `configured`.
+
+Use this order for the first Classic transition so default and advanced scans
+do not compete and a failed handoff cannot become a silent permanent gap:
+
+1. Open the Classic advanced-workflow pull request and let its non-CodeQL
+   validation complete. Keep the pull request open; do not merge it while
+   repository-wide default setup still controls CodeQL uploads.
+2. Merge this governance policy and, while that Classic pull request is ready,
+   review `bin/publish` in plan mode and run the explicitly authorized
+   `bin/publish --apply`. The plan must attach Classic to the advanced-allowed
+   configuration before setting its default setup to `not-configured`, while
+   attaching every other active repository to the ordinary baseline and
+   setting it to `configured`.
+3. Immediately rerun the Classic pull request's advanced CodeQL workflow.
+   Confirm every intended component/path partition completes and GitHub accepts
+   each CodeQL upload. The short interval after default setup is disabled is an
+   observed transition window, not a state that may be left unattended.
+4. Merge the Classic workflow only after its advanced analysis is green, then
+   confirm a successful advanced analysis on `main` and that no repository-wide
+   default CodeQL workflow is scheduled.
+
+If the advanced workflow cannot upload and pass promptly, do not leave Classic
+without scheduled analysis. Remove Classic from the inventory in a reviewed
+governance change (or revert the exception), run and review the publisher, and
+confirm a successful default-setup analysis before rescheduling the migration.
+Never delete the advanced workflow first and assume a later policy run will
+repair coverage.

@@ -4,6 +4,7 @@ set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 repositories_config=${root}/config/repositories.json
+advanced_codeql_config=${root}/config/codeql-advanced-setup.json
 
 for command in git jq; do
   if ! command -v "${command}" >/dev/null 2>&1; then
@@ -70,6 +71,46 @@ jq -e '
   ([.maintenance_branches[] | [.repository, .branch]] as $branches |
     ($branches | length) == ($branches | unique | length))
 ' "${repositories_config}" >/dev/null
+
+jq -e \
+  --slurpfile repositories "${repositories_config}" '
+    (keys == ["repositories"]) and
+    (.repositories | type == "array") and
+    ((.repositories | length) == (.repositories | unique | length)) and
+    all(
+      .repositories[];
+      type == "string" and length > 0 and
+      (. as $repository |
+        ($repositories[0].pull_request_gate | index($repository)) != null) and
+      (. as $repository |
+        ($repositories[0].archive | index($repository)) == null)
+    )
+  ' "${advanced_codeql_config}" >/dev/null
+
+jq -e '
+  .code_scanning_default_setup == "enabled" and
+  .code_scanning_options == {allow_advanced: false} and
+  .enforcement == "enforced"
+' "${root}/config/code-security.json" >/dev/null
+
+jq -e \
+  --slurpfile baseline "${root}/config/code-security.json" '
+    .name == "Atrinik advanced CodeQL baseline" and
+    (.description | type == "string" and length > 0) and
+    .code_scanning_default_setup == "enabled" and
+    .code_scanning_options == {allow_advanced: true} and
+    .enforcement == "enforced" and
+    (
+      del(.name, .description, .code_scanning_options) ==
+      ($baseline[0] | del(.name, .description, .code_scanning_options))
+    )
+  ' "${root}/config/code-security-advanced.json" >/dev/null
+
+jq -e '. == {state: "configured", query_suite: "default"}' \
+  "${root}/config/codeql-default-setup.json" >/dev/null
+
+jq -e '. == {state: "not-configured"}' \
+  "${root}/config/codeql-default-setup-advanced.json" >/dev/null
 
 while IFS= read -r branch; do
   if ! git check-ref-format --branch "${branch}" >/dev/null; then

@@ -1,6 +1,6 @@
 {
-  "name": "Atrinik security baseline",
-  "description": "Required security features for all Atrinik repositories.",
+  "name": "Atrinik advanced CodeQL baseline",
+  "description": "Atrinik security baseline for repositories with governed CodeQL advanced setup.",
   "code_security": "enabled",
   "secret_protection": "enabled",
   "dependency_graph": "enabled",
@@ -8,7 +8,7 @@
   "dependabot_security_updates": "enabled",
   "code_scanning_default_setup": "enabled",
   "code_scanning_options": {
-    "allow_advanced": false
+    "allow_advanced": true
   },
   "secret_scanning": "enabled",
   "secret_scanning_push_protection": "enabled",
