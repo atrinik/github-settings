@@ -81,6 +81,14 @@ configuration are updated by name and missing policy is created. On Team, the
 publisher creates organization rulesets before removing their repository-level
 equivalents so protection is never absent during migration.
 
+The organization security phase compares GitHub's normalized configuration,
+default, and repository-association state before writing. It updates only
+drifted configurations and attaches only repositories that are not already
+attached or enforced on the intended configuration. This is a correctness
+boundary as well as an optimization: GitHub handles attachment as an
+asynchronous enablement event, including when an already-associated repository
+is submitted again, so a no-op publish must not start a replacement event.
+
 To force the per-repository implementation before or after a downgrade to
 GitHub Free, use the retained fallback publisher:
 
