@@ -14,7 +14,19 @@
     "renderer",
     "server"
   ],
+  "github_packages_actions_access": [
+    {
+      "package_owner": "atrinik",
+      "package_type": "container",
+      "package_name": "windows-build",
+      "package_id": 14204802,
+      "preserve_visibility": "private",
+      "actions_repository": "atrinik/classic",
+      "actions_repository_id": 1327289971,
+      "role": "read"
+    }
+  ],
   "require_two_factor_authentication": true,
   "require_secure_two_factor_methods": true,
-  "reason": "The public GitHub API does not expose supported update parameters for every setting in this file. Confirm them and the Codecov GitHub App repository access in the organization UI."
+  "reason": "The public GitHub API does not expose supported update parameters for every setting in this file. Confirm them, Codecov GitHub App repository access, and GitHub Packages Actions access in the corresponding organization and package settings UI."
 }
