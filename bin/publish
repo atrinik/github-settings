@@ -33,6 +33,7 @@ done
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 repositories_config=${root}/config/repositories.json
+codeql_advanced_config=${root}/config/codeql-advanced-setup.json
 temporary_files=()
 trap 'rm -f "${temporary_files[@]}"' EXIT
 
@@ -58,6 +59,14 @@ run_api() {
   else
     echo "PLAN ${method} /${endpoint}"
   fi
+}
+
+repository_uses_advanced_codeql() {
+  local repository=$1
+
+  jq -e --arg repository "${repository}" \
+    '(.repositories | index($repository)) != null' \
+    "${codeql_advanced_config}" >/dev/null
 }
 
 upsert_repository_ruleset() {
@@ -388,10 +397,12 @@ publish_organization_rulesets() {
   done
 }
 
-publish_organization_security() {
-  local name id defaults_payload attach_payload
+upsert_code_security_configuration() {
+  local input=$1
+  local placeholder=$2
+  local name id
 
-  name=$(jq -r '.name' "${root}/config/code-security.json")
+  name=$(jq -r '.name' "${input}")
   id=$(
     github_api "orgs/${organization}/code-security/configurations" |
       jq -r --arg name "${name}" 'map(select(.name == $name))[0].id // empty'
@@ -399,31 +410,167 @@ publish_organization_security() {
 
   if [[ -n ${id} ]]; then
     run_api PATCH "orgs/${organization}/code-security/configurations/${id}" \
-      "${root}/config/code-security.json"
+      "${input}"
   elif ${apply}; then
     id=$(
       github_api --method POST \
         "orgs/${organization}/code-security/configurations" \
-        --input "${root}/config/code-security.json" | jq -r '.id'
+        --input "${input}" | jq -r '.id'
     )
   else
-    echo "PLAN POST /orgs/${organization}/code-security/configurations <= config/code-security.json"
-    id='{configuration-id}'
+    echo "PLAN POST /orgs/${organization}/code-security/configurations <= ${input#"${root}/"}"
+    id=${placeholder}
   fi
+
+  if ${apply} && [[ ! ${id} =~ ^[0-9]+$ ]]; then
+    echo "error: invalid code security configuration id for ${name}: ${id}" >&2
+    exit 1
+  fi
+
+  upserted_code_security_configuration_id=${id}
+}
+
+make_security_attach_payload() {
+  local advanced=$1
+  local output repository repository_is_advanced id
+  local ids='[]'
+
+  for repository in "${active_repositories[@]}"; do
+    repository_is_advanced=false
+    if repository_uses_advanced_codeql "${repository}"; then
+      repository_is_advanced=true
+    fi
+    if [[ ${repository_is_advanced} != "${advanced}" ]]; then
+      continue
+    fi
+
+    id=${active_repository_ids["${repository}"]}
+    ids=$(jq --argjson id "${id}" '. + [$id]' <<<"${ids}")
+  done
+
+  output=$(mktemp)
+  jq -n --argjson ids "${ids}" \
+    '{scope: "selected", selected_repository_ids: $ids}' >"${output}"
+  echo "${output}"
+}
+
+wait_for_code_security_configuration() {
+  local advanced=$1
+  local expected_id=$2
+  local repository response status id attempt
+  local -r maximum_attempts=30
+
+  for repository in "${active_repositories[@]}"; do
+    if repository_uses_advanced_codeql "${repository}"; then
+      [[ ${advanced} == true ]] || continue
+    else
+      [[ ${advanced} == false ]] || continue
+    fi
+
+    if ! ${apply}; then
+      echo "PLAN WAIT /repos/${organization}/${repository}/code-security-configuration => ${expected_id}"
+      continue
+    fi
+
+    for ((attempt = 1; attempt <= maximum_attempts; attempt++)); do
+      if response=$(github_api \
+        "repos/${organization}/${repository}/code-security-configuration" \
+        2>/dev/null); then
+        status=$(jq -r '.status // empty' <<<"${response}")
+        id=$(jq -r '.configuration.id // empty' <<<"${response}")
+        if [[ ${id} == "${expected_id}" ]] &&
+          [[ ${status} == attached || ${status} == enforced ]]; then
+          break
+        fi
+        if [[ ${status} == failed ]]; then
+          echo "error: security configuration attachment failed for ${organization}/${repository}" >&2
+          exit 1
+        fi
+      fi
+
+      if ((attempt == maximum_attempts)); then
+        echo "error: timed out waiting for security configuration ${expected_id} on ${organization}/${repository}" >&2
+        exit 1
+      fi
+      sleep 2
+    done
+  done
+}
+
+converge_codeql_default_setup() {
+  local repository input desired_state desired_query current
+  local current_state current_query
+
+  for repository in "${active_repositories[@]}"; do
+    input=${root}/config/codeql-default-setup.json
+    if repository_uses_advanced_codeql "${repository}"; then
+      input=${root}/config/codeql-default-setup-advanced.json
+    fi
+
+    desired_state=$(jq -r '.state' "${input}")
+    desired_query=$(jq -r '.query_suite // empty' "${input}")
+    if current=$(github_api \
+      "repos/${organization}/${repository}/code-scanning/default-setup" \
+      2>/dev/null); then
+      current_state=$(jq -r '.state // empty' <<<"${current}")
+      current_query=$(jq -r '.query_suite // empty' <<<"${current}")
+      if [[ ${current_state} == "${desired_state}" ]] &&
+        { [[ -z ${desired_query} ]] || [[ ${current_query} == "${desired_query}" ]]; }; then
+        echo "KEEP /repos/${organization}/${repository}/code-scanning/default-setup is ${desired_state}"
+        continue
+      fi
+    fi
+
+    run_api PATCH \
+      "repos/${organization}/${repository}/code-scanning/default-setup" \
+      "${input}"
+  done
+}
+
+publish_organization_security() {
+  local advanced_id baseline_id defaults_payload
+  local advanced_attach_payload baseline_attach_payload
+  local advanced_repository_count
+
+  # Move governed advanced-setup repositories first. This prevents a baseline
+  # update from temporarily re-enabling default setup during later publishes.
+  upsert_code_security_configuration \
+    "${root}/config/code-security-advanced.json" \
+    '{advanced-codeql-configuration-id}'
+  advanced_id=${upserted_code_security_configuration_id}
+  advanced_repository_count=$(jq '.repositories | length' \
+    "${codeql_advanced_config}")
+  if ((advanced_repository_count > 0)); then
+    advanced_attach_payload=$(make_security_attach_payload true)
+    temporary_files+=("${advanced_attach_payload}")
+    run_api POST \
+      "orgs/${organization}/code-security/configurations/${advanced_id}/attach" \
+      "${advanced_attach_payload}"
+    wait_for_code_security_configuration true "${advanced_id}"
+  else
+    echo "SKIP advanced CodeQL attachment: inventory is empty"
+  fi
+
+  upsert_code_security_configuration \
+    "${root}/config/code-security.json" \
+    '{baseline-configuration-id}'
+  baseline_id=${upserted_code_security_configuration_id}
 
   defaults_payload=$(mktemp)
   temporary_files+=("${defaults_payload}")
   jq -n '{default_for_new_repos: "all"}' >"${defaults_payload}"
   run_api PUT \
-    "orgs/${organization}/code-security/configurations/${id}/defaults" \
+    "orgs/${organization}/code-security/configurations/${baseline_id}/defaults" \
     "${defaults_payload}"
 
-  attach_payload=$(mktemp)
-  temporary_files+=("${attach_payload}")
-  jq -n '{scope: "all"}' >"${attach_payload}"
+  baseline_attach_payload=$(make_security_attach_payload false)
+  temporary_files+=("${baseline_attach_payload}")
   run_api POST \
-    "orgs/${organization}/code-security/configurations/${id}/attach" \
-    "${attach_payload}"
+    "orgs/${organization}/code-security/configurations/${baseline_id}/attach" \
+    "${baseline_attach_payload}"
+  wait_for_code_security_configuration false "${baseline_id}"
+
+  converge_codeql_default_setup
 }
 
 publish_repository_security() {
@@ -435,9 +582,9 @@ publish_repository_security() {
     run_api PUT "repos/${organization}/${repository}/vulnerability-alerts"
     run_api PUT "repos/${organization}/${repository}/automated-security-fixes"
     run_api PUT "repos/${organization}/${repository}/private-vulnerability-reporting"
-    run_api PATCH "repos/${organization}/${repository}/code-scanning/default-setup" \
-      "${root}/config/codeql-default-setup.json"
   done
+
+  converge_codeql_default_setup
 }
 
 organization_plan=$(github_api "orgs/${organization}" --jq '.plan.name')
@@ -461,10 +608,26 @@ run_api PUT "orgs/${organization}/actions/permissions/selected-actions" \
 run_api PUT "orgs/${organization}/actions/permissions/workflow" \
   "${root}/config/actions-workflow.json"
 
-mapfile -t active_repositories < <(
+declare -a active_repositories=()
+declare -A active_repository_ids=()
+while IFS=$'\t' read -r repository id; do
+  if [[ ! ${id} =~ ^[0-9]+$ ]]; then
+    echo "error: invalid repository id for ${repository}: ${id}" >&2
+    exit 1
+  fi
+  active_repositories+=("${repository}")
+  active_repository_ids["${repository}"]=${id}
+done < <(
   github_api --paginate "orgs/${organization}/repos?per_page=100&type=all" \
-    --jq '.[] | select(.archived == false) | .name'
+    --jq '.[] | select(.archived == false) | [.name, .id] | @tsv'
 )
+
+while IFS= read -r repository; do
+  if [[ ! -v active_repository_ids["${repository}"] ]]; then
+    echo "error: advanced CodeQL inventory repository is not active: ${repository}" >&2
+    exit 1
+  fi
+done < <(jq -r '.repositories[]' "${codeql_advanced_config}")
 
 for repository in "${active_repositories[@]}"; do
   run_api PATCH "repos/${organization}/${repository}" \

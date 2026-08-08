@@ -22,6 +22,20 @@
   and the retained repository-level fallback when changing this contract.
 - Preserve the selected-actions entry for Codecov and the manual GitHub App
   repository-access inventory while coverage uploads use OIDC authentication.
+- Treat `config/codeql-advanced-setup.json` as the exhaustive exception
+  inventory for repositories whose component/path-aware CodeQL workflow cannot
+  use repository-wide default setup. Keep the advanced security configuration
+  identical to the ordinary enforced baseline except for its descriptive
+  fields and official `code_scanning_options.allow_advanced` value. The
+  organization publisher must attach exceptions first; both publisher scopes
+  must explicitly converge inventory repositories to default-setup
+  `not-configured` and all other active repositories to `configured` without
+  weakening dependency, secret-scanning, or vulnerability-reporting features.
+- Never deploy a new advanced CodeQL exception without its target workflow pull
+  request open and ready to rerun. After applying policy, immediately rerun and
+  verify the advanced analysis before merging the workflow. If it cannot pass
+  promptly, restore the baseline/default setup through a reviewed inventory
+  rollback; do not leave an unobserved scanning gap.
 - Never print or commit administrative tokens, live secrets, or API responses
   containing credentials.
 - Run `bin/validate`, `bash -n`, ShellCheck on governance scripts, the publisher
