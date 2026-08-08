@@ -212,6 +212,14 @@ Because integrations and status checks cannot access these workspaces, the
 base repository's linear-history, pull-request, and required-CI rules allow
 organization-owner bypass in pull-request-only mode. Deletion and
 non-fast-forward protections remain non-bypassable.
+GitHub does not classify the final advisory-level merge as a pull-request
+action. During a specifically authorized Classic advisory merge window,
+Classic is split from the shared linear-history and pull-request rules and
+organization owners receive `always` bypass only for those Classic rules and
+Classic required CI. The window retains deletion and non-fast-forward
+protection, is recorded exhaustively in
+`config/advisory-merge-windows.json`, and must be rolled back to an empty
+inventory and pull-request-only bypass immediately after the advisory merge.
 Add repositories to the appropriate arrays in `config/repositories.json` when
 they also need a pull-request gate, required CI, immutable release tags, or
 archival.
