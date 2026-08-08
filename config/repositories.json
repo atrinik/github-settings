@@ -27,6 +27,34 @@
       "CodeQL validation",
       "Conventional PR title"
     ],
+    "client": [
+      "Client validation",
+      "Conventional PR title"
+    ],
+    "content-toolkit": [
+      "Content toolkit validation",
+      "Conventional PR title"
+    ],
+    "editor": [
+      "Editor validation",
+      "Conventional PR title"
+    ],
+    "protocol": [
+      "Protocol validation",
+      "Conventional PR title"
+    ],
+    "renderer": [
+      "Renderer validation",
+      "Conventional PR title"
+    ],
+    "server": [
+      "Server validation",
+      "Conventional PR title"
+    ],
+    "website": [
+      "Website validation",
+      "Conventional PR title"
+    ],
     "sound": [
       "Asset validation",
       "Conventional PR title"
@@ -61,6 +89,7 @@
       "repository": "content",
       "branch": "1.x",
       "required_ci": [
+        "Content validation",
         "Conventional PR title"
       ]
     }

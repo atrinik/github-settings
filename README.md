@@ -21,12 +21,11 @@ read-only and are skipped on later runs.
 - Every active repository uses `main` as its default branch.
 - Maintained repositories require changes through pull requests.
 - Repositories with reliable CI require checks from the GitHub Actions app.
-  Replacement repositories receive their required-check rules only after their
-  bootstrap workflows publish stable aggregate job names; renamed repositories
-  retain their established check contracts during the transition. The
-  `classic` monorepo requires its stable aggregate `Classic validation` and
-  `CodeQL validation` jobs plus `Conventional PR title`; its component-specific
-  jobs remain diagnostic and are not independent merge gates.
+  Replacement repositories require their proven stable aggregate validation
+  job plus `Conventional PR title`; component/platform jobs remain diagnostic
+  and are not independent merge gates. The `classic` monorepo requires its
+  stable aggregate `Classic validation` and `CodeQL validation` jobs plus
+  `Conventional PR title`.
 - Declared maintenance branches reject deletion and non-fast-forward updates,
   require linear history and pull requests, and require only checks already
   emitted for that branch.
@@ -200,6 +199,11 @@ Create the repository's `main` branch before applying policy. Default-branch
 integrity, merge settings, and security policy are discovered dynamically and
 apply to every non-archived organization repository. The Team
 security configuration is also the default for newly created repositories.
+GitHub's temporary private security-advisory workspaces are the sole discovery
+exception: the publisher recognizes their strict `<governed-repository>-ghsa-`
+name and disabled collaboration-feature signature and leaves them under
+GitHub's advisory lifecycle. A private repository that merely resembles that
+name, or whose base repository is not governed, remains in policy scope.
 Add repositories to the appropriate arrays in `config/repositories.json` when
 they also need a pull-request gate, required CI, immutable release tags, or
 archival.
@@ -233,11 +237,10 @@ non-fast-forward, linear-history, and pull-request rules. Its `required_ci`
 array may contain only stable checks already declared for that repository and
 emitted by workflows on the maintenance branch.
 
-`content/1.x` initially requires `Conventional PR title`, whose unfiltered
-pull-request policy already runs for that branch. `Content validation` remains
-deliberately absent until the content workflow is enabled and proven on `1.x`;
-add it to this entry in that implementation change before applying the tighter
-policy.
+`content/1.x` requires `Content validation` and `Conventional PR title`. Both
+contexts were emitted successfully by the branch-aware maintenance-line pull
+request before the desired state added them; neither context is inferred from
+the default branch.
 
 On GitHub Team the publisher creates one organization ruleset per maintenance
 branch. The repository-policy fallback creates the equivalent repository
