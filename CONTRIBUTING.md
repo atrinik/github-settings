@@ -16,6 +16,13 @@ plan attaches the advanced-allowed security configuration before disabling
 default setup, and include the immediate workflow rerun and rollback owner in
 the deployment handoff.
 
+An immutable-release inventory change must be coordinated with a merged,
+verified draft-first release workflow in every selected repository. Review the
+repository name and stable numeric ID, the exact organization selected set,
+owner-enforcement verification, and snapshot rollback tests. Merge the policy
+before requesting explicit authorization for `bin/publish --apply`; never
+deploy the setting from an unmerged policy branch.
+
 Security publisher changes must test both real drift convergence and a fully
 converged rerun. The converged case must not update a security configuration,
 replace its default, or re-attach repositories, because attachment starts an

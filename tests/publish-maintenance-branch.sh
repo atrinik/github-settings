@@ -66,6 +66,13 @@ jq -cn \
 
 security_scenario=${GH_SECURITY_SCENARIO:-converged}
 
+if [[ ${method} == PUT ]] &&
+  [[ ${endpoint} == orgs/atrinik/settings/immutable-releases ]]; then
+  jq -c . "${input}" >"${GH_IMMUTABLE_STATE}"
+  printf '{}\n'
+  exit 0
+fi
+
 attachment_was_requested() {
   local configuration_id=$1
   local repository_id=$2
@@ -226,7 +233,29 @@ case "${endpoint}|${jq_filter}" in
   printf 'false\n'
   ;;
 "orgs/atrinik/repos?per_page=100&type=all|"*)
-  printf 'classic\t102\ncontent\t101\n'
+  printf 'classic\t%s\ncontent\t101\n' \
+    "${GH_CLASSIC_REPOSITORY_ID:-1327289971}"
+  ;;
+"orgs/atrinik/settings/immutable-releases|"*)
+  jq '{enforced_repositories}' "${GH_IMMUTABLE_STATE}"
+  ;;
+"orgs/atrinik/settings/immutable-releases/repositories?per_page=100|.[].id")
+  jq -r '.selected_repository_ids[]?' "${GH_IMMUTABLE_STATE}"
+  ;;
+"repos/atrinik/classic/immutable-releases|"*)
+  if [[ ${GH_IMMUTABLE_VERIFY_FAILURE:-false} == true ]]; then
+    printf '{"enabled":false,"enforced_by_owner":false}\n'
+  elif jq -e '
+    .enforced_repositories == "all" or
+    (
+      .enforced_repositories == "selected" and
+      (.selected_repository_ids | index(1327289971)) != null
+    )
+  ' "${GH_IMMUTABLE_STATE}" >/dev/null; then
+    printf '{"enabled":true,"enforced_by_owner":true}\n'
+  else
+    printf '{"enabled":false,"enforced_by_owner":false}\n'
+  fi
   ;;
 "orgs/atrinik/rulesets|"*)
   printf '[{"id":900,"name":"05 - Maintenance branch - content - retired"}]\n'
@@ -253,15 +282,15 @@ case "${endpoint}|${jq_filter}" in
   ;;
 "repos/atrinik/classic/code-security-configuration|"*)
   if [[ ${GH_EMPTY_ADVANCED_INVENTORY:-false} == true ]]; then
-    if attachment_was_requested 265376 102; then
-      print_attachment_progress 265376 102 classic
+    if attachment_was_requested 265376 1327289971; then
+      print_attachment_progress 265376 1327289971 classic
     else
       printf '{"status":"enforced","configuration":{"id":265377}}\n'
     fi
   elif [[ ${security_scenario} == drifted ||
     ${security_scenario} == create ]]; then
-    if attachment_was_requested 265377 102; then
-      print_attachment_progress 265377 102 classic
+    if attachment_was_requested 265377 1327289971; then
+      print_attachment_progress 265377 1327289971 classic
     else
       printf '{"status":"enforced","configuration":{"id":265376}}\n'
     fi
@@ -467,7 +496,10 @@ assert_organization_codeql_configurations() {
       .method == "POST" and
       .endpoint ==
         "orgs/atrinik/code-security/configurations/265377/attach" and
-      .payload == {scope: "selected", selected_repository_ids: [102]}
+      .payload == {
+        scope: "selected",
+        selected_repository_ids: [1327289971]
+      }
     ) and
     any(
       .[];
@@ -577,7 +609,10 @@ assert_advanced_configuration_created() {
       .method == "POST" and
       .endpoint ==
         "orgs/atrinik/code-security/configurations/265377/attach" and
-      .payload == {scope: "selected", selected_repository_ids: [102]}
+      .payload == {
+        scope: "selected",
+        selected_repository_ids: [1327289971]
+      }
     )
   ' "${log}" >/dev/null
 }
@@ -597,13 +632,57 @@ assert_empty_inventory_rollback() {
       .method == "POST" and
       .endpoint ==
         "orgs/atrinik/code-security/configurations/265376/attach" and
-      .payload == {scope: "selected", selected_repository_ids: [102]}
+      .payload == {
+        scope: "selected",
+        selected_repository_ids: [1327289971]
+      }
     ) and
     all(
       .[];
       .method != "PATCH" or
       .endpoint != "repos/atrinik/classic/code-scanning/default-setup" or
       .payload != {state: "not-configured"}
+    )
+  ' "${log}" >/dev/null
+}
+
+assert_immutable_release_apply() {
+  local log=$1
+
+  jq -s -e '
+    . as $calls |
+    [
+      .[] |
+      select(
+        .method == "PUT" and
+        .endpoint == "orgs/atrinik/settings/immutable-releases"
+      )
+    ] == [
+      {
+        method: "PUT",
+        endpoint: "orgs/atrinik/settings/immutable-releases",
+        payload: {
+          enforced_repositories: "selected",
+          selected_repository_ids: [1327289971]
+        }
+      }
+    ] and
+    (
+      [
+        $calls | to_entries[] |
+        select(
+          .value.method == "PUT" and
+          .value.endpoint ==
+            "orgs/atrinik/settings/immutable-releases"
+        ) |
+        .key
+      ][0] as $put |
+      any(
+        $calls | to_entries[];
+        .key > $put and
+        .value.method == "GET" and
+        .value.endpoint == "repos/atrinik/classic/immutable-releases"
+      )
     )
   ' "${log}" >/dev/null
 }
@@ -631,11 +710,16 @@ assert_idempotent_organization_security() {
 }
 
 organization_log=${temporary}/organization.jsonl
+organization_immutable_state=${temporary}/organization-immutable.json
+printf '{"enforced_repositories":"none"}\n' \
+  >"${organization_immutable_state}"
 GH_API_LOG=${organization_log} \
+  GH_IMMUTABLE_STATE=${organization_immutable_state} \
   GH_SECURITY_SCENARIO=drifted \
   PATH="${temporary}/bin:${PATH}" \
   ATRINIK_POLICY_SCOPE=organization \
   "${root}/bin/publish" --apply >/dev/null
+assert_immutable_release_apply "${organization_log}"
 assert_maintenance_payload \
   "${organization_log}" "orgs/atrinik/rulesets" true
 assert_classic_required_ci_payload \
@@ -655,6 +739,7 @@ idempotent_output=${temporary}/organization-idempotent.txt
 enablement_event=${temporary}/enablement-event
 GH_API_LOG=${idempotent_log} \
   GH_ENABLEMENT_EVENT_FILE=${enablement_event} \
+  GH_IMMUTABLE_STATE=${organization_immutable_state} \
   GH_SECURITY_SCENARIO=converged \
   PATH="${temporary}/bin:${PATH}" \
   ATRINIK_POLICY_SCOPE=organization \
@@ -673,6 +758,7 @@ grep -F \
 
 pending_log=${temporary}/organization-pending.jsonl
 GH_API_LOG=${pending_log} \
+  GH_IMMUTABLE_STATE=${organization_immutable_state} \
   GH_SECURITY_SCENARIO=pending \
   PATH="${temporary}/bin:${PATH}" \
   ATRINIK_POLICY_SCOPE=organization \
@@ -692,8 +778,12 @@ jq -s -e '
 ' "${pending_log}" >/dev/null
 
 creation_log=${temporary}/organization-create-codeql.jsonl
+creation_immutable_state=${temporary}/organization-create-codeql-immutable.json
+printf '{"enforced_repositories":"none"}\n' \
+  >"${creation_immutable_state}"
 GH_API_LOG=${creation_log} \
   GH_ADVANCED_CONFIG_MISSING=true \
+  GH_IMMUTABLE_STATE=${creation_immutable_state} \
   GH_SECURITY_SCENARIO=create \
   PATH="${temporary}/bin:${PATH}" \
   ATRINIK_POLICY_SCOPE=organization \
@@ -710,8 +800,12 @@ jq '.repositories = []' \
   >"${rollback_root}/config/codeql-advanced-setup.json"
 rollback_log=${temporary}/empty-inventory.jsonl
 rollback_output=${temporary}/empty-inventory.txt
+empty_inventory_immutable_state=${temporary}/empty-inventory-immutable.json
+printf '{"enforced_repositories":"none"}\n' \
+  >"${empty_inventory_immutable_state}"
 GH_API_LOG=${rollback_log} \
   GH_EMPTY_ADVANCED_INVENTORY=true \
+  GH_IMMUTABLE_STATE=${empty_inventory_immutable_state} \
   GH_SECURITY_SCENARIO=rollback \
   PATH="${temporary}/bin:${PATH}" \
   ATRINIK_POLICY_SCOPE=organization \
@@ -724,7 +818,11 @@ grep -F \
   "${rollback_output}" >/dev/null
 
 repository_log=${temporary}/repository.jsonl
+repository_immutable_state=${temporary}/repository-immutable.json
+printf '{"enforced_repositories":"none"}\n' \
+  >"${repository_immutable_state}"
 GH_API_LOG=${repository_log} \
+  GH_IMMUTABLE_STATE=${repository_immutable_state} \
   GH_SECURITY_SCENARIO=drifted \
   PATH="${temporary}/bin:${PATH}" \
   ATRINIK_POLICY_SCOPE=repository \
@@ -766,7 +864,10 @@ for repository in \
 done
 
 plan_output=${temporary}/plan.txt
+plan_immutable_state=${temporary}/plan-immutable.json
+printf '{"enforced_repositories":"none"}\n' >"${plan_immutable_state}"
 GH_API_LOG=${temporary}/plan.jsonl \
+  GH_IMMUTABLE_STATE=${plan_immutable_state} \
   GH_SECURITY_SCENARIO=drifted \
   PATH="${temporary}/bin:${PATH}" \
   ATRINIK_POLICY_SCOPE=organization \
@@ -789,5 +890,103 @@ grep -F \
 grep -F \
   'PLAN PATCH /repos/atrinik/content/code-scanning/default-setup <= config/codeql-default-setup.json' \
   "${plan_output}" >/dev/null
+grep -F \
+  'PLAN PUT /orgs/atrinik/settings/immutable-releases <= {"enforced_repositories":"selected","selected_repository_ids":[1327289971]}' \
+  "${plan_output}" >/dev/null
+grep -F \
+  'PLAN VERIFY /repos/atrinik/classic/immutable-releases => enabled=true,enforced_by_owner=true' \
+  "${plan_output}" >/dev/null
+jq -e '. == {enforced_repositories: "none"}' \
+  "${plan_immutable_state}" >/dev/null
+jq -s -e '
+  all(
+    .[];
+    .method != "PUT" or
+    .endpoint != "orgs/atrinik/settings/immutable-releases"
+  )
+' "${temporary}/plan.jsonl" >/dev/null
+
+keep_log=${temporary}/immutable-keep.jsonl
+keep_output=${temporary}/immutable-keep.txt
+keep_immutable_state=${temporary}/immutable-keep-state.json
+printf '%s\n' \
+  '{"enforced_repositories":"selected","selected_repository_ids":[1327289971]}' \
+  >"${keep_immutable_state}"
+GH_API_LOG=${keep_log} \
+  GH_IMMUTABLE_STATE=${keep_immutable_state} \
+  PATH="${temporary}/bin:${PATH}" \
+  ATRINIK_POLICY_SCOPE=repository \
+  "${root}/bin/publish" --apply >"${keep_output}"
+grep -F \
+  'KEEP /orgs/atrinik/settings/immutable-releases is {"enforced_repositories":"selected","selected_repository_ids":[1327289971]}' \
+  "${keep_output}" >/dev/null
+jq -s -e '
+  all(
+    .[];
+    .method != "PUT" or
+    .endpoint != "orgs/atrinik/settings/immutable-releases"
+  )
+' "${keep_log}" >/dev/null
+
+immutable_rollback_log=${temporary}/immutable-rollback.jsonl
+immutable_rollback_output=${temporary}/immutable-rollback.txt
+immutable_rollback_state=${temporary}/immutable-rollback-state.json
+printf '%s\n' \
+  '{"enforced_repositories":"selected","selected_repository_ids":[101]}' \
+  >"${immutable_rollback_state}"
+if GH_API_LOG=${immutable_rollback_log} \
+  GH_IMMUTABLE_STATE=${immutable_rollback_state} \
+  GH_IMMUTABLE_VERIFY_FAILURE=true \
+  PATH="${temporary}/bin:${PATH}" \
+  ATRINIK_POLICY_SCOPE=organization \
+  "${root}/bin/publish" --apply \
+  >"${immutable_rollback_output}" 2>&1; then
+  echo "expected immutable-release verification failure" >&2
+  exit 1
+fi
+jq -e '. == {
+  enforced_repositories: "selected",
+  selected_repository_ids: [101]
+}' "${immutable_rollback_state}" >/dev/null
+jq -s -e '
+  [
+    .[] |
+    select(
+      .method == "PUT" and
+      .endpoint == "orgs/atrinik/settings/immutable-releases"
+    ) |
+    .payload
+  ] == [
+    {
+      enforced_repositories: "selected",
+      selected_repository_ids: [1327289971]
+    },
+    {
+      enforced_repositories: "selected",
+      selected_repository_ids: [101]
+    }
+  ]
+' "${immutable_rollback_log}" >/dev/null
+grep -F \
+  'ROLLBACK verified the previous immutable-release policy' \
+  "${immutable_rollback_output}" >/dev/null
+
+identity_drift_log=${temporary}/immutable-identity-drift.jsonl
+identity_drift_output=${temporary}/immutable-identity-drift.txt
+identity_drift_state=${temporary}/immutable-identity-drift-state.json
+printf '{"enforced_repositories":"none"}\n' >"${identity_drift_state}"
+if GH_API_LOG=${identity_drift_log} \
+  GH_IMMUTABLE_STATE=${identity_drift_state} \
+  GH_CLASSIC_REPOSITORY_ID=999 \
+  PATH="${temporary}/bin:${PATH}" \
+  ATRINIK_POLICY_SCOPE=organization \
+  "${root}/bin/publish" --apply >"${identity_drift_output}" 2>&1; then
+  echo "expected immutable-release repository identity failure" >&2
+  exit 1
+fi
+grep -F \
+  'error: immutable-release inventory id for classic is 1327289971, but GitHub reports 999' \
+  "${identity_drift_output}" >/dev/null
+jq -s -e 'all(.[]; .method == "GET")' "${identity_drift_log}" >/dev/null
 
 echo "Publisher policy-scope tests passed."

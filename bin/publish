@@ -34,6 +34,7 @@ done
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 repositories_config=${root}/config/repositories.json
 codeql_advanced_config=${root}/config/codeql-advanced-setup.json
+immutable_releases_config=${root}/config/immutable-releases.json
 temporary_files=()
 trap 'rm -f "${temporary_files[@]}"' EXIT
 
@@ -708,6 +709,143 @@ publish_repository_security() {
   converge_codeql_default_setup
 }
 
+current_immutable_release_payload() {
+  local response mode selected_repository_ids
+
+  if ! response=$(github_api \
+    "orgs/${organization}/settings/immutable-releases"); then
+    echo "error: failed to read the organization immutable-release policy" >&2
+    return 1
+  fi
+  mode=$(jq -r '.enforced_repositories // empty' <<<"${response}")
+  case ${mode} in
+  all | none)
+    jq -cn --arg mode "${mode}" '{enforced_repositories: $mode}'
+    ;;
+  selected)
+    if ! selected_repository_ids=$(
+      github_api --paginate \
+        "orgs/${organization}/settings/immutable-releases/repositories?per_page=100" \
+        --jq '.[].id' | jq -cs 'map(tonumber) | sort | unique'
+    ); then
+      echo "error: failed to read repositories selected for immutable releases" >&2
+      return 1
+    fi
+    jq -cn \
+      --argjson selected_repository_ids "${selected_repository_ids}" \
+      '{
+        enforced_repositories: "selected",
+        selected_repository_ids: $selected_repository_ids
+      }'
+    ;;
+  *)
+    echo "error: unsupported immutable-release policy mode: ${mode:-missing}" >&2
+    return 1
+    ;;
+  esac
+}
+
+immutable_release_policy_matches() {
+  local expected=$1
+  local verify_owner_enforcement=$2
+  local current repository response
+
+  if ! current=$(current_immutable_release_payload); then
+    return 1
+  fi
+  if ! jq -e --argjson expected "${expected}" \
+    '. == $expected' <<<"${current}" >/dev/null; then
+    return 1
+  fi
+
+  if [[ ${verify_owner_enforcement} != true ]]; then
+    return 0
+  fi
+  while IFS= read -r repository; do
+    if ! response=$(github_api \
+      "repos/${organization}/${repository}/immutable-releases"); then
+      return 1
+    fi
+    if ! jq -e \
+      '.enabled == true and .enforced_by_owner == true' \
+      <<<"${response}" >/dev/null; then
+      return 1
+    fi
+  done < <(jq -r '.repositories[].name' "${immutable_releases_config}")
+}
+
+write_immutable_release_payload() {
+  local payload=$1
+  local output
+
+  output=$(mktemp)
+  jq . <<<"${payload}" >"${output}"
+  printf '%s\n' "${output}"
+}
+
+rollback_immutable_release_policy() {
+  local snapshot=$1
+  local input
+
+  input=$(write_immutable_release_payload "${snapshot}")
+  temporary_files+=("${input}")
+  echo "ROLLBACK PUT /orgs/${organization}/settings/immutable-releases <= ${snapshot}" >&2
+  if ! github_api --method PUT \
+    "orgs/${organization}/settings/immutable-releases" \
+    --input "${input}" >/dev/null; then
+    echo "error: immutable-release policy rollback request failed" >&2
+    return 1
+  fi
+  if ! immutable_release_policy_matches "${snapshot}" false; then
+    echo "error: immutable-release policy rollback verification failed" >&2
+    return 1
+  fi
+  echo "ROLLBACK verified the previous immutable-release policy" >&2
+}
+
+converge_immutable_release_policy() {
+  local desired snapshot input
+
+  desired=$(jq -c '
+    {
+      enforced_repositories,
+      selected_repository_ids: ([.repositories[].id] | sort)
+    }
+  ' "${immutable_releases_config}")
+  if immutable_release_policy_matches "${desired}" true; then
+    echo "KEEP /orgs/${organization}/settings/immutable-releases is ${desired}"
+    return 0
+  fi
+
+  if ! snapshot=$(current_immutable_release_payload); then
+    return 1
+  fi
+  if ! ${apply}; then
+    echo "PLAN PUT /orgs/${organization}/settings/immutable-releases <= ${desired}"
+    while IFS= read -r repository; do
+      echo "PLAN VERIFY /repos/${organization}/${repository}/immutable-releases" \
+        "=> enabled=true,enforced_by_owner=true"
+    done < <(jq -r '.repositories[].name' "${immutable_releases_config}")
+    return 0
+  fi
+
+  input=$(write_immutable_release_payload "${desired}")
+  temporary_files+=("${input}")
+  if github_api --method PUT \
+    "orgs/${organization}/settings/immutable-releases" \
+    --input "${input}" >/dev/null &&
+    immutable_release_policy_matches "${desired}" true; then
+    echo "APPLY /orgs/${organization}/settings/immutable-releases <= ${desired}"
+    return 0
+  fi
+
+  echo "error: immutable-release policy apply or verification failed" >&2
+  if ! rollback_immutable_release_policy "${snapshot}"; then
+    echo "error: previous immutable-release policy could not be restored" >&2
+  fi
+  return 1
+}
+
 organization_plan=$(github_api "orgs/${organization}" --jq '.plan.name')
 if [[ ${policy_scope} == auto ]]; then
   case ${organization_plan} in
@@ -720,14 +858,6 @@ echo "Organization: ${organization}"
 echo "Plan: ${organization_plan}"
 echo "Policy scope: ${policy_scope}"
 ${apply} && echo "Mode: apply" || echo "Mode: plan"
-
-run_api PATCH "orgs/${organization}" "${root}/config/organization.json"
-run_api PUT "orgs/${organization}/actions/permissions" \
-  "${root}/config/actions-permissions.json"
-run_api PUT "orgs/${organization}/actions/permissions/selected-actions" \
-  "${root}/config/actions-selected.json"
-run_api PUT "orgs/${organization}/actions/permissions/workflow" \
-  "${root}/config/actions-workflow.json"
 
 declare -a active_repositories=()
 declare -A active_repository_ids=()
@@ -749,6 +879,32 @@ while IFS= read -r repository; do
     exit 1
   fi
 done < <(jq -r '.repositories[]' "${codeql_advanced_config}")
+
+while IFS=$'\t' read -r repository expected_id; do
+  if [[ ! -v active_repository_ids["${repository}"] ]]; then
+    echo "error: immutable-release inventory repository is not active: ${repository}" >&2
+    exit 1
+  fi
+  if [[ ${active_repository_ids["${repository}"]} != "${expected_id}" ]]; then
+    echo "error: immutable-release inventory id for ${repository} is" \
+      "${expected_id}, but GitHub reports" \
+      "${active_repository_ids["${repository}"]}" >&2
+    exit 1
+  fi
+done < <(
+  jq -r '.repositories[] | [.name, .id] | @tsv' \
+    "${immutable_releases_config}"
+)
+
+converge_immutable_release_policy
+
+run_api PATCH "orgs/${organization}" "${root}/config/organization.json"
+run_api PUT "orgs/${organization}/actions/permissions" \
+  "${root}/config/actions-permissions.json"
+run_api PUT "orgs/${organization}/actions/permissions/selected-actions" \
+  "${root}/config/actions-selected.json"
+run_api PUT "orgs/${organization}/actions/permissions/workflow" \
+  "${root}/config/actions-workflow.json"
 
 for repository in "${active_repositories[@]}"; do
   run_api PATCH "repos/${organization}/${repository}" \
