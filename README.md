@@ -19,9 +19,9 @@ read-only and are skipped on later runs.
   Replacement repositories receive their required-check rules only after their
   bootstrap workflows publish stable aggregate job names; renamed repositories
   retain their established check contracts during the transition. The
-  `classic` monorepo requires its stable aggregate `Classic validation` job
-  and `Conventional PR title`; its module-specific jobs remain diagnostic and
-  are not independent merge gates.
+  `classic` monorepo requires its stable aggregate `Classic validation` and
+  `CodeQL validation` jobs plus `Conventional PR title`; its component-specific
+  jobs remain diagnostic and are not independent merge gates.
 - Declared maintenance branches reject deletion and non-fast-forward updates,
   require linear history and pull requests, and require only checks already
   emitted for that branch.
@@ -181,6 +181,11 @@ do not compete and a failed handoff cannot become a silent permanent gap:
 4. Merge the Classic workflow only after its advanced analysis is green, then
    confirm a successful advanced analysis on `main` and that no repository-wide
    default CodeQL workflow is scheduled.
+5. Only after the Classic workflow is merged and its `CodeQL validation`
+   aggregate exists on `main`, merge and apply the governance change that adds
+   that context to Classic's required CI. For the initial release-pipeline
+   rollout, activate this gate after Classic pull request #20 and before the
+   separate phase-two change that enables automatic releases.
 
 If the advanced workflow cannot upload and pass promptly, do not leave Classic
 without scheduled analysis. Remove Classic from the inventory in a reviewed

@@ -24,6 +24,7 @@
     ],
     "classic": [
       "Classic validation",
+      "CodeQL validation",
       "Conventional PR title"
     ],
     "sound": [
