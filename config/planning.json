@@ -174,22 +174,22 @@
         {
           "name": "Urgent",
           "color": "PINK",
-          "description": "Immediate action is required"
+          "description": null
         },
         {
           "name": "High",
           "color": "RED",
-          "description": "Important work for the current planning horizon"
+          "description": null
         },
         {
           "name": "Medium",
           "color": "YELLOW",
-          "description": "Normal priority"
+          "description": null
         },
         {
           "name": "Low",
           "color": "GREEN",
-          "description": "Useful work with no near-term urgency"
+          "description": null
         }
       ]
     },
@@ -202,17 +202,17 @@
         {
           "name": "High",
           "color": "RED",
-          "description": "Large, uncertain, or cross-cutting work"
+          "description": null
         },
         {
           "name": "Medium",
           "color": "YELLOW",
-          "description": "Moderate, bounded work"
+          "description": null
         },
         {
           "name": "Low",
           "color": "GREEN",
-          "description": "Small, well-understood work"
+          "description": null
         }
       ]
     },

@@ -269,7 +269,8 @@ jq -e '
         .options[];
         (keys == ["color", "description", "name"]) and
         (.name | type == "string" and length > 0) and
-        (.description | type == "string" and length > 0) and
+        (.description == null or
+          (.description | type == "string" and length > 0)) and
         (.color | IN("BLUE", "GRAY", "GREEN", "ORANGE", "PINK", "PURPLE", "RED", "YELLOW"))
       )
     else
