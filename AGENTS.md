@@ -36,6 +36,12 @@
   verify the advanced analysis before merging the workflow. If it cannot pass
   promptly, restore the baseline/default setup through a reviewed inventory
   rollback; do not leave an unobserved scanning gap.
+- Treat `config/immutable-releases.json` as the exhaustive owner-enforced
+  organization inventory. Record stable repository IDs as well as names, fail
+  closed on live identity drift, and preserve the exact previous mode and
+  selected-ID set for verified automatic rollback. Add a repository only after
+  its draft-first, complete-before-publication release workflow is merged and
+  proven. Never apply immutable-release policy from an unmerged branch.
 - Never print or commit administrative tokens, live secrets, or API responses
   containing credentials.
 - Run `bin/validate`, `bash -n`, ShellCheck on governance scripts, the publisher

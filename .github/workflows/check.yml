@@ -24,5 +24,8 @@ jobs:
       - name: Check governance scripts
         run: shellcheck bin/publish bin/publish-repositories bin/validate tests/*.sh
 
-      - name: Test publisher policy scopes
-        run: tests/publish-maintenance-branch.sh
+      - name: Test governance policy
+        run: |
+          for test in tests/*.sh; do
+            "$test"
+          done

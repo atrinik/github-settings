@@ -26,6 +26,11 @@ read-only and are skipped on later runs.
   require linear history and pull requests, and require only checks already
   emitted for that branch.
 - Release tags in release-producing repositories cannot be moved or deleted.
+- Published releases in the exhaustive `config/immutable-releases.json`
+  inventory are owner-enforced immutable releases. The inventory initially
+  selects only `atrinik/classic` by its stable repository ID. This organization
+  policy is independent of the release-tag ruleset and applies in both
+  publisher policy scopes.
 - Active repositories allow squash merges only. The squash commit uses the
   pull-request title and description, and merged head branches are deleted.
 - Every repository uses an enforced security baseline: dependency graph,
@@ -71,10 +76,13 @@ bin/publish --apply
 ```
 
 The default invocation prints the operations without changing GitHub. The
-`--apply` form is idempotent: existing Atrinik rulesets and the security
-configuration are updated by name and missing policy is created. On Team, the
-publisher creates organization rulesets before removing their repository-level
-equivalents so protection is never absent during migration.
+`--apply` form is idempotent: existing Atrinik rulesets, immutable-release
+selection, and the security configuration are converged to the declared
+policy. On Team, the publisher creates organization rulesets before removing
+their repository-level equivalents so protection is never absent during
+migration. Before changing immutable releases, it snapshots the exact current
+organization mode and selected repository IDs. A failed update or verification
+automatically restores and verifies that snapshot.
 
 To force the per-repository implementation before or after a downgrade to
 GitHub Free, use the retained fallback publisher:
@@ -104,6 +112,14 @@ security configuration is also the default for newly created repositories.
 Add repositories to the appropriate arrays in `config/repositories.json` when
 they also need a pull-request gate, required CI, immutable release tags, or
 archival.
+
+Immutable releases require a stricter release contract than an immutable tag
+alone. Add a repository to `config/immutable-releases.json` only after its
+release workflow creates a draft, uploads and verifies every intended asset,
+and publishes the draft as its final step. Record both the repository name and
+the ID reported by GitHub. Validation requires every selected repository to be
+active, pull-request governed, and protected by the release-tag ruleset; the
+publisher fails closed if a live repository ID differs from the inventory.
 
 Do not add a repository to `config/codeql-advanced-setup.json` merely because
 default setup needs tuning. The inventory is reserved for a reviewed advanced
@@ -183,3 +199,41 @@ governance change (or revert the exception), run and review the publisher, and
 confirm a successful default-setup analysis before rescheduling the migration.
 Never delete the advanced workflow first and assume a later policy run will
 repair coverage.
+
+## Enabling immutable releases for Classic
+
+The initial desired state is the organization-level `selected` mode with only
+repository ID `1327289971` (`atrinik/classic`). Do not apply it until the
+Classic draft-first release workflow is merged and its build, packaging,
+retry/recovery, and publication paths have passed on `main`. A published
+release must be complete because its tag and assets can no longer be replaced.
+
+Use this rollout order:
+
+1. Merge and verify the Classic release workflow. Confirm it creates or
+   recovers a draft, attaches the complete release payload, and publishes only
+   after all validation succeeds.
+2. Merge this governance policy. Run `bin/publish` and inspect the exact
+   `PUT /orgs/atrinik/settings/immutable-releases` payload. It must select only
+   `[1327289971]`.
+3. With explicit deployment authorization, run `bin/publish --apply`. The
+   publisher verifies the organization selection and the repository's
+   `enabled=true,enforced_by_owner=true` state before continuing.
+4. Confirm the live state independently:
+
+   ```sh
+   gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
+     orgs/atrinik/settings/immutable-releases
+   gh api --paginate -H 'X-GitHub-Api-Version: 2026-03-10' \
+     'orgs/atrinik/settings/immutable-releases/repositories?per_page=100' \
+     --jq '.[] | [.name, .id]'
+   gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
+     repos/atrinik/classic/immutable-releases
+   ```
+
+If the apply or its verification fails, the publisher automatically sends the
+pre-change mode and complete selected-ID set back to GitHub and verifies the
+rollback. Preserve its full error output and stop; do not retry with an ad hoc
+payload. For a later intentional rollback, review and merge a desired-state
+change first, then run the normal plan and explicitly authorized apply flow so
+the previous selection is not guessed or partially overwritten.

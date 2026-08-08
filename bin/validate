@@ -5,6 +5,7 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 repositories_config=${root}/config/repositories.json
 advanced_codeql_config=${root}/config/codeql-advanced-setup.json
+immutable_releases_config=${root}/config/immutable-releases.json
 
 for command in git jq; do
   if ! command -v "${command}" >/dev/null 2>&1; then
@@ -86,6 +87,30 @@ jq -e \
         ($repositories[0].archive | index($repository)) == null)
     )
   ' "${advanced_codeql_config}" >/dev/null
+
+jq -e \
+  --slurpfile repositories "${repositories_config}" '
+    (keys == ["enforced_repositories", "repositories"]) and
+    .enforced_repositories == "selected" and
+    (.repositories | type == "array" and length > 0) and
+    all(
+      .repositories[];
+      (keys == ["id", "name"]) and
+      (.id | type == "number" and floor == . and . > 0) and
+      (.name | type == "string" and length > 0) and
+      (.name as $repository |
+        ($repositories[0].pull_request_gate | index($repository)) != null) and
+      (.name as $repository |
+        ($repositories[0].release_tags | index($repository)) != null) and
+      (.name as $repository |
+        ($repositories[0].archive | index($repository)) == null)
+    ) and
+    ([.repositories[].id] as $ids |
+      ($ids | length) == ($ids | unique | length)) and
+    ([.repositories[].name] as $names |
+      ($names | length) == ($names | unique | length) and
+      $names == ($names | sort))
+  ' "${immutable_releases_config}" >/dev/null
 
 jq -e '
   .code_scanning_default_setup == "enabled" and
