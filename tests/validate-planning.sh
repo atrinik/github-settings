@@ -17,6 +17,14 @@ if "${temporary}/repository/bin/validate" >/dev/null 2>&1; then
   exit 1
 fi
 
+jq '.project.builtin_fields[0].name = .issue_fields[0].name' \
+  "${root}/config/planning.json" \
+  >"${temporary}/repository/config/planning.json"
+if "${temporary}/repository/bin/validate" >/dev/null 2>&1; then
+  echo "error: ambiguous project field name was accepted" >&2
+  exit 1
+fi
+
 cp "${root}/config/planning.json" \
   "${temporary}/repository/config/planning.json"
 jq '.repositories.server.lifecycle = "unknown"' \

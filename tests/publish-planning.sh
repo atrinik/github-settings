@@ -35,6 +35,67 @@ while (($#)); do
 done
 [[ -n ${input} ]] || exit 1
 
+query=$(jq -r '.query' "${input}")
+if [[ ${PLANNING_SCENARIO:-initial} == partial ]] && \
+  [[ ${query} == query\(\$id:ID\!\)* ]]; then
+  jq -n --slurpfile config "${PLANNING_CONFIG:?}" '
+    $config[0] as $config |
+    {
+      data: {
+        node: {
+          fields: {
+            nodes: (
+              (
+                [
+                  "Title",
+                  "Repository",
+                  "Milestone",
+                  "Assignees",
+                  "Reviewers",
+                  "Linked pull requests"
+                ] |
+                map({id: ("PROJECT-FIELD-" + .), name: .})
+              ) + [{
+                id: "PROJECT-FIELD-Status",
+                name: "Status",
+                dataType: "SINGLE_SELECT",
+                options: [
+                  $config.project.statuses[] |
+                  {
+                    id: ("STATUS-" + .name),
+                    name,
+                    color,
+                    description
+                  }
+                ]
+              }] +
+              (if env.PLANNING_COLLISION == "true" then
+                 [{
+                   id: "PROJECT-FIELD-Issue-Type",
+                   name: "Issue Type",
+                   dataType: "TEXT"
+                 }]
+               else
+                 []
+               end)
+            )
+          },
+          views: {
+            nodes: [{
+              id: "DEFAULT-VIEW",
+              name: "View 1",
+              layout: "TABLE_LAYOUT",
+              filter: null,
+              fields: {nodes: []}
+            }]
+          }
+        }
+      }
+    }
+  '
+  exit
+fi
+
 jq -n --slurpfile config "${PLANNING_CONFIG:?}" '
   $config[0] as $config |
   {
@@ -71,7 +132,23 @@ jq -n --slurpfile config "${PLANNING_CONFIG:?}" '
             end
           ]
         },
-        projectsV2: {nodes: []}
+        projectsV2: {
+          nodes: (
+            if env.PLANNING_SCENARIO == "partial" then
+              [{
+                id: "PROJECT",
+                number: 1,
+                title: $config.project.title,
+                shortDescription: $config.project.short_description,
+                readme: $config.project.readme,
+                public: $config.project.public,
+                closed: false
+              }]
+            else
+              []
+            end
+          )
+        }
       }
     }
   }
@@ -90,4 +167,36 @@ grep -Fq 'PLAN update organization issue field Priority' <<<"${output}"
 grep -Fq 'PLAN create organization project Atrinik work' <<<"${output}"
 [[ $(grep -c '^PLAN create shared project view ' <<<"${output}") == 6 ]]
 
-echo "Planning publisher emits the expected initial plan."
+partial_output=$(
+  PATH="${temporary}/bin:${PATH}" \
+    PLANNING_CONFIG="${root}/config/planning.json" \
+    PLANNING_SCENARIO=partial \
+    "${root}/bin/publish-planning"
+)
+
+for field in Priority Effort 'Start date' 'Target date'; do
+  grep -Fq "PLAN link organization issue field ${field} to Atrinik work" \
+    <<<"${partial_output}"
+done
+grep -Fq 'PLAN add built-in project field Issue Type to Atrinik work' \
+  <<<"${partial_output}"
+grep -Fq 'PLAN update shared project view Triage' <<<"${partial_output}"
+[[ $(grep -c '^PLAN create shared project view ' <<<"${partial_output}") == 5 ]]
+grep -Fq 'Project planning configuration is converged (project 1).' \
+  <<<"${partial_output}"
+
+if collision_output=$(
+  PATH="${temporary}/bin:${PATH}" \
+    PLANNING_CONFIG="${root}/config/planning.json" \
+    PLANNING_SCENARIO=partial \
+    PLANNING_COLLISION=true \
+    "${root}/bin/publish-planning" 2>&1
+); then
+  echo "error: incompatible project field was accepted" >&2
+  exit 1
+fi
+grep -Fq \
+  'error: Atrinik work field Issue Type has an incompatible data type' \
+  <<<"${collision_output}"
+
+echo "Planning publisher emits the expected initial and partial-project plans."
