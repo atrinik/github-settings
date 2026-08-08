@@ -261,22 +261,35 @@ delete_stale_repository_maintenance_rulesets() {
 }
 
 delete_stale_repository_advisory_rulesets() {
-  local repository ruleset name id
+  local repository ruleset name id window_active
 
   while IFS= read -r repository; do
+    window_active=false
     if repository_has_advisory_merge_window "${repository}"; then
-      continue
+      window_active=true
     fi
     while IFS= read -r ruleset; do
       name=$(jq -r '.name' <<<"${ruleset}")
       id=$(jq -r '.id' <<<"${ruleset}")
-      case ${name} in
-      "01 - Default branch linear history - ${repository}" | \
-        "02 - Changes through pull requests - ${repository}")
-        run_api DELETE \
-          "repos/${organization}/${repository}/rulesets/${id}"
-        ;;
-      esac
+      if ${window_active}; then
+        case ${name} in
+        "01 - Default branch integrity" | \
+          "01 - Default branch linear history" | \
+          "02 - Changes through pull requests")
+          run_api DELETE \
+            "repos/${organization}/${repository}/rulesets/${id}"
+          ;;
+        esac
+      else
+        case ${name} in
+        "01 - Default branch integrity - ${repository}" | \
+          "01 - Default branch linear history - ${repository}" | \
+          "02 - Changes through pull requests - ${repository}")
+          run_api DELETE \
+            "repos/${organization}/${repository}/rulesets/${id}"
+          ;;
+        esac
+      fi
     done < <(
       github_api \
         "repos/${organization}/${repository}/rulesets?includes_parents=false" |
@@ -294,6 +307,7 @@ delete_managed_repository_rulesets() {
     id=$(jq -r '.id' <<<"${ruleset}")
     case ${name} in
     "01 - Default branch integrity" | \
+      "01 - Default branch integrity - classic" | \
       "01 - Default branch linear history" | \
       "01 - Default branch linear history - classic" | \
       "02 - Changes through pull requests" | \
@@ -318,6 +332,7 @@ delete_managed_organization_rulesets() {
     id=$(jq -r '.id' <<<"${ruleset}")
     case ${name} in
     "01 - Default branch integrity" | \
+      "01 - Default branch integrity - classic" | \
       "01 - Default branch linear history" | \
       "01 - Default branch linear history - classic" | \
       "02 - Changes through pull requests" | \
@@ -346,8 +361,12 @@ publish_repository_rulesets() {
   done
 
   for repository in "${active_repositories[@]}"; do
+    ruleset_config=${root}/config/rulesets/default-branch-integrity.json
+    if repository_has_advisory_merge_window "${repository}"; then
+      ruleset_config=${root}/config/rulesets/default-branch-integrity-classic.json
+    fi
     upsert_repository_ruleset "${repository}" \
-      "${root}/config/rulesets/default-branch-integrity.json"
+      "${ruleset_config}"
   done
 
   while IFS= read -r repository; do
@@ -415,13 +434,19 @@ publish_organization_rulesets() {
     "04 - Immutable release tags"
   )
 
-  # Establish the Classic-specific policy before excluding it from the shared
-  # linear-history policy.
+  # Establish the Classic-specific policies before excluding it from their
+  # shared counterparts.
   if repository_has_advisory_merge_window classic; then
     desired_rulesets+=(
+      "01 - Default branch integrity - classic"
       "01 - Default branch linear history - classic"
       "02 - Changes through pull requests - classic"
     )
+    input=$(make_organization_ruleset \
+      "${root}/config/rulesets/default-branch-integrity-classic.json" \
+      "01 - Default branch integrity - classic" '["classic"]')
+    temporary_files+=("${input}")
+    upsert_organization_ruleset "${input}"
     input=$(make_organization_ruleset \
       "${root}/config/rulesets/default-branch-linear-history-classic.json" \
       "01 - Default branch linear history - classic" '["classic"]')
@@ -439,7 +464,7 @@ publish_organization_rulesets() {
 
   input=$(make_organization_ruleset \
     "${root}/config/rulesets/default-branch-integrity.json" \
-    "01 - Default branch integrity" '["~ALL"]')
+    "01 - Default branch integrity" '["~ALL"]' "${repositories}")
   temporary_files+=("${input}")
   upsert_organization_ruleset "${input}"
 
@@ -516,7 +541,8 @@ publish_organization_rulesets() {
     name=$(jq -r '.name' <<<"${ruleset}")
     id=$(jq -r '.id' <<<"${ruleset}")
     case ${name} in
-    "01 - Default branch linear history - "* | \
+    "01 - Default branch integrity - "* | \
+      "01 - Default branch linear history - "* | \
       "02 - Changes through pull requests - "* | \
       "03 - Required CI - "* | \
       "05 - Maintenance branch - "*) ;;
