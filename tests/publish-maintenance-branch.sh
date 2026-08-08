@@ -88,6 +88,13 @@ case "${endpoint}|${jq_filter}" in
 "repos/atrinik/nawerhals|.archived")
   printf 'true\n'
   ;;
+"repos/atrinik/legacy-client|.archived" | \
+"repos/atrinik/legacy-editor|.archived" | \
+"repos/atrinik/legacy-libatrinik|.archived" | \
+"repos/atrinik/legacy-protocol|.archived" | \
+"repos/atrinik/legacy-server|.archived")
+  printf 'false\n'
+  ;;
 repos/atrinik/*/rulesets\?includes_parents=false\|*)
   printf '[{"id":900,"name":"05 - Maintenance branch - content - retired"}]\n'
   ;;
@@ -189,5 +196,22 @@ jq -s -e '
     .endpoint == "orgs/atrinik/rulesets/900"
   )
 ' "${repository_log}" >/dev/null
+
+for repository in \
+  legacy-client \
+  legacy-editor \
+  legacy-libatrinik \
+  legacy-protocol \
+  legacy-server; do
+  jq -s -e \
+    --arg endpoint "repos/atrinik/${repository}" '
+      any(
+        .[];
+        .method == "PATCH" and
+        .endpoint == $endpoint and
+        .payload == {archived: true}
+      )
+    ' "${organization_log}" >/dev/null
+done
 
 echo "Maintenance branch publisher tests passed."

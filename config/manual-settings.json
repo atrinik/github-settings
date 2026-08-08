@@ -6,12 +6,10 @@
   "members_can_request_github_apps": true,
   "codecov_github_app_repositories": [
     "atrinik",
+    "classic",
     "client",
     "content-toolkit",
     "editor",
-    "legacy-client",
-    "legacy-libatrinik",
-    "legacy-server",
     "protocol",
     "renderer",
     "server"
