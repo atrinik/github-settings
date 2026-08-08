@@ -6,6 +6,7 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 repositories_config=${root}/config/repositories.json
 advanced_codeql_config=${root}/config/codeql-advanced-setup.json
 immutable_releases_config=${root}/config/immutable-releases.json
+manual_settings_config=${root}/config/manual-settings.json
 
 for command in git jq; do
   if ! command -v "${command}" >/dev/null 2>&1; then
@@ -136,6 +137,48 @@ jq -e '. == {state: "configured", query_suite: "default"}' \
 
 jq -e '. == {state: "not-configured"}' \
   "${root}/config/codeql-default-setup-advanced.json" >/dev/null
+
+jq -e '
+  .github_packages_actions_access as $access |
+  ($access | type == "array") and
+  (
+    [$access[] |
+      [.package_owner, .package_type, .package_name, .actions_repository]] |
+    length
+  ) == (
+    [$access[] |
+      [.package_owner, .package_type, .package_name, .actions_repository]] |
+    unique | length
+  ) and
+  all(
+    $access[];
+    (keys == [
+      "actions_repository",
+      "actions_repository_id",
+      "package_id",
+      "package_name",
+      "package_owner",
+      "package_type",
+      "preserve_visibility",
+      "role"
+    ]) and
+    (.package_owner | type == "string" and length > 0) and
+    (.package_type | type == "string" and length > 0) and
+    (.package_name | type == "string" and length > 0) and
+    (.package_id | type == "number" and . > 0 and floor == .) and
+    (.preserve_visibility | IN("private", "internal", "public")) and
+    (
+      .actions_repository |
+      type == "string" and
+      test("^[^/[:space:]]+/[^/[:space:]]+$")
+    ) and
+    (
+      .actions_repository_id |
+      type == "number" and . > 0 and floor == .
+    ) and
+    (.role == "read")
+  )
+' "${manual_settings_config}" >/dev/null
 
 while IFS= read -r branch; do
   if ! git check-ref-format --branch "${branch}" >/dev/null; then

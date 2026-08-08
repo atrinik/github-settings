@@ -27,5 +27,5 @@ jobs:
       - name: Test governance policy
         run: |
           for test in tests/*.sh; do
-            "$test"
+            "${test}"
           done
