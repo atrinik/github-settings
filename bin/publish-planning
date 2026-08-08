@@ -418,6 +418,22 @@ default_view_id=$(jq -r '
 ' <<<"${project_data}")
 while IFS= read -r desired_view; do
   view_name=$(jq -r '.name' <<<"${desired_view}")
+  view_layout=$(jq -r '.layout' <<<"${desired_view}")
+  supports_visible_fields=true
+  if [[ ${view_layout} == ROADMAP_LAYOUT ]]; then
+    supports_visible_fields=false
+  fi
+  visible_field_ids=$(jq -cn \
+    --argjson view "${desired_view}" \
+    --argjson project "${project_data}" '
+      [$view.visible_fields[] as $name |
+        $project.fields.nodes[] | select(.name == $name) | .id]
+    ')
+  if [[ $(jq 'length' <<<"${visible_field_ids}") != \
+    "$(jq '.visible_fields | length' <<<"${desired_view}")" ]]; then
+    echo "error: a visible field for ${view_name} is unavailable" >&2
+    exit 1
+  fi
   current_view=$(jq -c --arg name "${view_name}" '
     .views.nodes | map(select(.name == $name))[0] // null
   ' <<<"${project_data}")
@@ -427,28 +443,21 @@ while IFS= read -r desired_view; do
   elif [[ ${view_name} == Triage ]] && [[ -n ${default_view_id} ]]; then
     view_id=${default_view_id}
   else
-    visible_field_ids=$(jq -cn \
-      --argjson view "${desired_view}" \
-      --argjson project "${project_data}" '
-        [$view.visible_fields[] as $name |
-          $project.fields.nodes[] | select(.name == $name) | .id]
-      ')
-    if [[ $(jq 'length' <<<"${visible_field_ids}") != \
-      "$(jq '.visible_fields | length' <<<"${desired_view}")" ]]; then
-      echo "error: a visible field for ${view_name} is unavailable" >&2
-      exit 1
-    fi
     variables=$(jq -cn \
       --arg projectId "${project_id}" \
       --arg name "${view_name}" \
-      --arg layout "$(jq -r '.layout' <<<"${desired_view}")" \
-      --argjson visibleFieldIds "${visible_field_ids}" '
-        {input: {
+      --arg layout "${view_layout}" \
+      --argjson visibleFieldIds "${visible_field_ids}" \
+      --argjson supportsVisibleFields "${supports_visible_fields}" '
+        {input: ({
           projectId: $projectId,
           name: $name,
-          layout: $layout,
-          configuration: {visibleFieldIds: $visibleFieldIds}
-        }}
+          layout: $layout
+        } + if $supportsVisibleFields then
+          {configuration: {visibleFieldIds: $visibleFieldIds}}
+        else
+          {}
+        end)}
       ')
     if ${apply}; then
       response=$(graphql \
@@ -463,42 +472,44 @@ while IFS= read -r desired_view; do
     fi
   fi
 
-  visible_field_ids=$(jq -cn \
-    --argjson view "${desired_view}" \
-    --argjson project "${project_data}" '
-      [$view.visible_fields[] as $name |
-        $project.fields.nodes[] | select(.name == $name) | .id]
-    ')
-  if [[ $(jq 'length' <<<"${visible_field_ids}") != \
-    "$(jq '.visible_fields | length' <<<"${desired_view}")" ]]; then
-    echo "error: a visible field for ${view_name} is unavailable" >&2
-    exit 1
-  fi
   variables=$(jq -cn \
     --arg viewId "${view_id}" \
     --arg name "${view_name}" \
-    --arg layout "$(jq -r '.layout' <<<"${desired_view}")" \
+    --arg layout "${view_layout}" \
     --arg filter "$(jq -r '.filter' <<<"${desired_view}")" \
-    --argjson visibleFieldIds "${visible_field_ids}" '
-      {input: {
+    --argjson visibleFieldIds "${visible_field_ids}" \
+    --argjson supportsVisibleFields "${supports_visible_fields}" '
+      {input: ({
         viewId: $viewId,
         name: $name,
         layout: $layout,
-        filter: $filter,
-        configuration: {visibleFieldIds: $visibleFieldIds}
-      }}
+        filter: $filter
+      } + if $supportsVisibleFields then
+        {configuration: {visibleFieldIds: $visibleFieldIds}}
+      else
+        {}
+      end)}
     ')
   desired_view_comparison=$(jq -cn \
     --arg name "${view_name}" \
-    --arg layout "$(jq -r '.layout' <<<"${desired_view}")" \
+    --arg layout "${view_layout}" \
     --arg filter "$(jq -r '.filter' <<<"${desired_view}")" \
     --argjson fields "${visible_field_ids}" \
-    '{name: $name, layout: $layout, filter: $filter, fields: $fields}')
+    --argjson supportsVisibleFields "${supports_visible_fields}" '
+      {name: $name, layout: $layout, filter: $filter} +
+      if $supportsVisibleFields then {fields: $fields} else {} end
+    ')
   current_view_comparison=null
   if [[ ${current_view} != null ]]; then
-    current_view_comparison=$(jq -c '
-      {name, layout, filter: (.filter // ""), fields: [.fields.nodes[].id]}
-    ' <<<"${current_view}")
+    current_view_comparison=$(jq -c \
+      --argjson supportsVisibleFields "${supports_visible_fields}" '
+        {name, layout, filter: (.filter // "")} +
+        if $supportsVisibleFields then
+          {fields: [(.fields.nodes // [])[].id]}
+        else
+          {}
+        end
+      ' <<<"${current_view}")
   fi
   if [[ ${current_view} != null ]] && \
     [[ ${current_view_comparison} == "${desired_view_comparison}" ]]; then
