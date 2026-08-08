@@ -38,6 +38,10 @@
 - Keep required workflow job names synchronized with rulesets. Workflow or
   permissions changes also require actionlint, least-privilege review, and
   immutable action references according to policy.
+- Keep default-branch deletion and non-fast-forward rules non-bypassable.
+  Isolate the organization-owner security-advisory exception to linear
+  history, pull-request gates, and required CI, and use pull-request-only
+  bypass mode so direct pushes never inherit the exception.
 - Declare protected non-default lines in `maintenance_branches`. Give each
   repository/branch pair a unique entry, and require only status checks that
   the branch's workflows already emit. Validate both Team organization rulesets

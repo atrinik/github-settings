@@ -23,6 +23,29 @@ while IFS= read -r -d '' config; do
 done < <(find "${root}/config" -name '*.json' -print0 | sort -z)
 
 jq -e '
+  .bypass_actors == [] and
+  [.rules[].type] == ["deletion", "non_fast_forward"]
+' "${root}/config/rulesets/default-branch-integrity.json" >/dev/null
+
+jq -e '
+  .bypass_actors == [{
+    actor_id: 1,
+    actor_type: "OrganizationAdmin",
+    bypass_mode: "pull_request"
+  }] and
+  [.rules[].type] == ["required_linear_history"]
+' "${root}/config/rulesets/default-branch-linear-history.json" >/dev/null
+
+jq -e '
+  .bypass_actors == [{
+    actor_id: 1,
+    actor_type: "OrganizationAdmin",
+    bypass_mode: "pull_request"
+  }] and
+  [.rules[].type] == ["pull_request"]
+' "${root}/config/rulesets/pull-request-gate.json" >/dev/null
+
+jq -e '
   . as $config |
   (.pull_request_gate | type == "array") and
   ((.pull_request_gate | length) == (.pull_request_gate | unique | length)) and
