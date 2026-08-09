@@ -257,7 +257,7 @@ jq -e '
 jq -e \
   --slurpfile repositories "${repositories_config}" '
   .github_actions_environments as $environments |
-  ($environments | type == "array" and length > 0) and
+  ($environments | type == "array") and
   (
     [$environments[] | [.repository, .environment]] |
     length == (unique | length)
