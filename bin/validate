@@ -575,17 +575,68 @@ while IFS= read -r community_file; do
   fi
 done < <(jq -r '.files[].source' "${community_health_config}")
 
-while IFS= read -r issue_type; do
-  if ! jq -e --arg issue_type "${issue_type}" \
-    'any(.issue_types[]; .name == $issue_type and .enabled)' \
-    "${planning_config}" >/dev/null; then
-    echo "error: issue form references an unavailable issue type: ${issue_type}" >&2
+validate_issue_form() {
+  local form_name=$1
+  local inference_key=$2
+  local inferred_type=$3
+  local form_file labels_json
+
+  form_file=${root}/community-health/.github/ISSUE_TEMPLATE/${form_name}.yml
+  if grep -Eq '^(title|type)[[:space:]]*:' "${form_file}"; then
+    echo "error: ${form_name} issue form uses live-validator-incompatible title or type metadata" >&2
     exit 1
   fi
-done < <(
-  sed -n 's/^type: \(.*\)$/\1/p' \
-    "${root}"/community-health/.github/ISSUE_TEMPLATE/*.yml
-)
+
+  if [[ -z ${inference_key} ]]; then
+    if grep -Eq '^labels[[:space:]]*:' "${form_file}"; then
+      echo "error: ${form_name} issue form must remain unlabeled for default type inference" >&2
+      exit 1
+    fi
+    if ! jq -e --arg inferred_type "${inferred_type}" '
+      .type_inference.default == $inferred_type and
+      any(.issue_types[]; .name == $inferred_type and .enabled)
+    ' "${planning_config}" >/dev/null; then
+      echo "error: ${form_name} issue form default type inference is unavailable" >&2
+      exit 1
+    fi
+    return
+  fi
+
+  if [[ $(grep -Ec '^labels[[:space:]]*:' "${form_file}") -ne 1 ]]; then
+    echo "error: ${form_name} issue form must declare one inline labels array" >&2
+    exit 1
+  fi
+  labels_json=$(sed -n 's/^labels[[:space:]]*:[[:space:]]*//p' "${form_file}")
+  if ! jq -e '
+    type == "array" and
+    length > 0 and
+    length == (unique | length) and
+    all(.[]; type == "string" and length > 0)
+  ' <<<"${labels_json}" >/dev/null; then
+    echo "error: ${form_name} issue form labels must be a non-empty JSON-style array" >&2
+    exit 1
+  fi
+  if ! jq -e \
+    --arg inference_key "${inference_key}" \
+    --arg inferred_type "${inferred_type}" \
+    --argjson form_labels "${labels_json}" '
+      any(.issue_types[]; .name == $inferred_type and .enabled) and
+      (
+        ($form_labels | map(ascii_downcase)) as $labels |
+        (.type_inference[$inference_key] | map(ascii_downcase)) as $inference_labels |
+        any($labels[]; . as $label | ($inference_labels | index($label)) != null)
+      )
+    ' "${planning_config}" >/dev/null; then
+    echo "error: ${form_name} issue form labels do not infer enabled type ${inferred_type}" >&2
+    exit 1
+  fi
+}
+
+# GitHub's live community-health renderer currently rejects direct issue-form
+# type metadata. Labels retain Bug and Feature inference; Task is the fallback.
+validate_issue_form bug bug_labels Bug
+validate_issue_form feature feature_labels Feature
+validate_issue_form task "" Task
 
 while IFS= read -r branch; do
   if ! git check-ref-format --branch "${branch}" >/dev/null; then

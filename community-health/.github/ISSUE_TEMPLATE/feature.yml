@@ -1,8 +1,6 @@
 name: Feature request
 description: Propose a user-visible capability or improvement
-title: ""
-labels: []
-type: Feature
+labels: ["enhancement"]
 body:
   - type: textarea
     id: outcome

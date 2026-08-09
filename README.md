@@ -79,10 +79,12 @@ read-only and are skipped on later runs.
   fields. New issues enter **Inbox**, pull requests enter **Review**, and the
   pre-existing portfolio enters **Backlog**. Human status changes on open work
   are preserved; closed work converges to **Done**.
-- Unset issue types are inferred conservatively: parent issues become
-  **Initiative**, `bug` becomes **Bug**, `enhancement` or `new feature` becomes
-  **Feature**, and everything else becomes **Task**. Existing issue types are
-  never overwritten.
+- Organization-wide issue forms omit empty optional metadata and the top-level
+  `type` key so they pass GitHub's live validator. The Bug and Feature forms
+  apply `bug` and `enhancement`; the synchronizer maps those labels to **Bug**
+  and **Feature**, while the unlabeled Task form uses the **Task** fallback.
+  Parent issues still become **Initiative**, `new feature` remains a recognized
+  Feature alias, and existing issue types are never overwritten.
 - `config/repository-properties.json` declares a complete taxonomy for active
   and archived repositories: component role, provider set, lifecycle, and
   release policy.
