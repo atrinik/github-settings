@@ -197,6 +197,22 @@ jq -e '. == {state: "not-configured"}' \
   "${root}/config/codeql-default-setup-advanced.json" >/dev/null
 
 jq -e '
+  (keys == [
+    "codecov_github_app_repositories",
+    "github_actions_environments",
+    "github_packages_actions_access",
+    "members_can_change_repository_visibility",
+    "members_can_create_teams",
+    "members_can_delete_or_transfer_repositories",
+    "members_can_request_github_apps",
+    "reason",
+    "repository_admins_can_install_github_apps",
+    "require_secure_two_factor_methods",
+    "require_two_factor_authentication"
+  ])
+' "${manual_settings_config}" >/dev/null
+
+jq -e '
   .github_packages_actions_access as $access |
   ($access | type == "array") and
   (

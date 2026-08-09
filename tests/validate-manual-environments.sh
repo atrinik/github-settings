@@ -98,6 +98,11 @@ rewrite_manual_settings \
 assert_invalid 'an environment secret-value field'
 reset_manual_settings
 
+rewrite_manual_settings \
+  '.github_actions_environment_secret_values = {CLOUDFLARE_PREVIEW_TOKEN: "secret"}'
+assert_invalid 'a top-level environment secret-value field'
+reset_manual_settings
+
 rewrite_manual_settings '
   .github_actions_environments[0].variable_names +=
     [.github_actions_environments[0].variable_names[0]]
