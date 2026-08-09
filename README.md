@@ -62,6 +62,11 @@ read-only and are skipped on later runs.
   read-only workflow grants recorded in `config/manual-settings.json`. The
   package's visibility, permission inheritance, and source-repository link are
   not changed by these grants.
+- GitHub Actions environments that depend on externally issued credentials
+  have name-only contracts in `config/manual-settings.json`. The inventory
+  records the stable repository identity, exact deployment branch policy and
+  reviewer set, and variable and secret names; credential values remain manual
+  and are never committed.
 - GitHub Actions defaults to read-only, cannot approve pull requests, and may
   use only Atrinik, GitHub, Codecov coverage, and explicitly allowed Docker
   actions.
@@ -90,9 +95,10 @@ read-only and are skipped on later runs.
 The GitHub REST API does not expose every organization control. The desired
 values are recorded in `config/manual-settings.json` and must be confirmed in
 the organization UI under **Member privileges**, **Authentication security**,
-**GitHub Apps**, and each listed package's **Manage Actions access** section.
-Codecov must be installed for the listed repositories so their
-OIDC-authenticated coverage uploads and badges remain available.
+**GitHub Apps**, each listed repository's **Environments** settings, and each
+listed package's **Manage Actions access** section. Codecov must be installed
+for the listed repositories so their OIDC-authenticated coverage uploads and
+badges remain available.
 
 ## Usage
 
@@ -353,6 +359,80 @@ rollback. Preserve its full error output and stop; do not retry with an ad hoc
 payload. For a later intentional rollback, review and merge a desired-state
 change first, then run the normal plan and explicitly authorized apply flow so
 the previous selection is not guessed or partially overwritten.
+
+## Provisioning the website preview-domain environment
+
+The public `atrinik/website` repository (repository ID `1327107093`) uses the
+`cloudflare-preview-domains` environment for its reviewed preview-domain
+automation. That workflow uses `pull_request_target`, for which GitHub resolves
+the workflow, `GITHUB_REF`, and `GITHUB_SHA` from the base repository's default
+branch rather than from the pull-request head. Restricting this environment to
+the exact `main` branch therefore admits the trusted default-branch workflow
+without admitting ordinary pull-request merge or head refs. This remains a
+valid security boundary only while the website workflow never checks out,
+downloads, or executes pull-request-controlled code or artifacts.
+
+The environment deliberately has no required reviewers. Its custom deployment
+branch policy allows only the `main` branch and no tags. The inventory records
+only names: the environment variables are `CLOUDFLARE_ACCOUNT_ID` and
+`CLOUDFLARE_ZONE_ID`, and the environment secret is
+`CLOUDFLARE_PREVIEW_TOKEN`. The external values are never stored in this
+repository, fixtures, commands, or logs, and `bin/publish` does not create,
+update, or delete this environment.
+
+Do not provision any value until the exact website workflow that references
+this environment has been merged to `atrinik/website@main` and reviewed for
+the `pull_request_target` trust boundary. Then an organization owner or
+repository administrator must:
+
+1. Confirm the repository identity without reading any credential value:
+
+   ```sh
+   gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
+     repos/atrinik/website \
+     --jq '{id, full_name, visibility, archived, default_branch}'
+   ```
+
+2. Open **atrinik/website → Settings → Environments**, create
+   `cloudflare-preview-domains`, select custom deployment branches and tags,
+   add only the `main` branch pattern, add no tag pattern, and leave required
+   reviewers disabled.
+3. Add the two exact environment variable names and the one exact environment
+   secret name from `config/manual-settings.json`, entering their values only
+   through the protected GitHub settings UI from the owning Cloudflare account.
+
+The identity check must report ID `1327107093`, `atrinik/website`, `public`,
+`archived: false`, and default branch `main`. Verify the resulting environment
+without printing variable values or attempting to retrieve the secret value:
+
+```sh
+gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
+  repos/atrinik/website/environments/cloudflare-preview-domains \
+  --jq '{name, deployment_branch_policy, protection_rule_types: [.protection_rules[].type]}'
+gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
+  repos/atrinik/website/environments/cloudflare-preview-domains/deployment-branch-policies \
+  --jq '[.branch_policies[] | {name, type}]'
+gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
+  repos/atrinik/website/environments/cloudflare-preview-domains/variables \
+  --jq '[.variables[].name] | sort'
+gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
+  repos/atrinik/website/environments/cloudflare-preview-domains/secrets \
+  --jq '[.secrets[].name] | sort'
+```
+
+The environment must report custom branch policies enabled, protected-branch
+mode disabled, no `required_reviewers` protection rule, exactly one branch
+policy named `main`, exactly the two recorded variable names, and exactly the
+recorded secret name. If any identity or name differs, stop and reconcile it in
+a reviewed desired-state change; never copy a live credential into an issue,
+pull request, log, or configuration file.
+
+To retire the environment, first merge a reviewed website change that removes
+all workflow references to it and a reviewed governance change that removes
+its manual inventory entry. Then delete only
+`cloudflare-preview-domains` through the website's Environment settings and
+confirm that no other repository environment, variable, or secret changed. No
+`bin/publish --apply` run is involved in provisioning or rollback.
 
 ## Granting Classic access to the Windows build image
 

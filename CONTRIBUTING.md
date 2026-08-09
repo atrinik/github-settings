@@ -8,7 +8,11 @@ administrative token required by the manual publishing workflow. Package
 Actions-access grants that lack a documented public API belong in
 `config/manual-settings.json`; record stable package and repository IDs, grant
 only read access to consumer workflows, and preserve the package's existing
-visibility and source-repository association.
+visibility and source-repository association. Manually provisioned GitHub
+Actions environments belong in the same inventory with a stable repository
+ID, exact branch policy and reviewer set, and variable and secret names only.
+Never commit their values, and provision them only after the workflow that uses
+them is merged and reviewed.
 
 Keep default-branch deletion and non-fast-forward rules non-bypassable during
 normal operation. Any organization-owner exception needed for GitHub's
