@@ -1,8 +1,5 @@
 name: Task
 description: Propose a bounded maintenance, documentation, or engineering task
-title: ""
-labels: []
-type: Task
 body:
   - type: textarea
     id: objective

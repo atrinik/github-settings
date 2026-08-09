@@ -14,6 +14,12 @@ ID, exact branch policy and reviewer set, and variable and secret names only.
 Never commit their values, and provision them only after the workflow that uses
 them is merged and reviewed.
 
+When changing organization issue forms, keep them compatible with GitHub's
+live validator: omit empty optional metadata and do not add a top-level `type`
+key while the live renderer rejects it. Keep form labels synchronized with
+`config/planning.json` type inference, and validate the Bug, Feature, and Task
+mappings before publishing.
+
 Keep default-branch deletion and non-fast-forward rules non-bypassable during
 normal operation. Any organization-owner exception needed for GitHub's
 security-advisory lifecycle must remain isolated to an explicitly authorized
