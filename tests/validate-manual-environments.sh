@@ -21,8 +21,24 @@ assert_invalid() {
 }
 
 reset_manual_settings() {
-  cp "${root}/config/manual-settings.json" \
-    "${temporary}/config/manual-settings.json"
+  jq '
+    .github_actions_environments = [
+      {
+        deployment_branch_policy: {
+          custom_branch_policies: true,
+          patterns: [{name: "main", type: "branch"}],
+          protected_branches: false
+        },
+        environment: "test-deployment",
+        repository: "atrinik/classic",
+        repository_id: 1327289971,
+        required_reviewers: [],
+        secret_names: ["EXTERNAL_TOKEN"],
+        variable_names: ["EXTERNAL_ACCOUNT_ID"]
+      }
+    ]
+  ' "${root}/config/manual-settings.json" \
+    >"${temporary}/config/manual-settings.json"
 }
 
 rewrite_manual_settings() {
@@ -36,22 +52,12 @@ rewrite_manual_settings() {
 }
 
 jq -e '
-  .github_actions_environments == [
-    {
-      deployment_branch_policy: {
-        custom_branch_policies: true,
-        patterns: [{name: "main", type: "branch"}],
-        protected_branches: false
-      },
-      environment: "cloudflare-preview-domains",
-      repository: "atrinik/website",
-      repository_id: 1327107093,
-      required_reviewers: [],
-      secret_names: ["CLOUDFLARE_PREVIEW_TOKEN"],
-      variable_names: ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_ZONE_ID"]
-    }
-  ]
+  .github_actions_environments == []
 ' "${root}/config/manual-settings.json" >/dev/null
+
+"${temporary}/bin/validate" >/dev/null
+reset_manual_settings
+"${temporary}/bin/validate" >/dev/null
 
 rewrite_manual_settings \
   '.github_actions_environments += [.github_actions_environments[0]]'
@@ -99,7 +105,7 @@ assert_invalid 'an environment secret-value field'
 reset_manual_settings
 
 rewrite_manual_settings \
-  '.github_actions_environment_secret_values = {CLOUDFLARE_PREVIEW_TOKEN: "secret"}'
+  '.github_actions_environment_secret_values = {EXTERNAL_TOKEN: "secret"}'
 assert_invalid 'a top-level environment secret-value field'
 reset_manual_settings
 
@@ -118,7 +124,7 @@ assert_invalid 'a name declared as both a variable and a secret'
 reset_manual_settings
 
 rewrite_manual_settings \
-  '.github_actions_environments[0].secret_names = ["cloudflare_preview_token"]'
+  '.github_actions_environments[0].secret_names = ["external_token"]'
 assert_invalid 'a malformed environment secret name'
 
 echo "Manual GitHub Actions environment validation tests passed."

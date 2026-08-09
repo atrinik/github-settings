@@ -360,79 +360,26 @@ payload. For a later intentional rollback, review and merge a desired-state
 change first, then run the normal plan and explicitly authorized apply flow so
 the previous selection is not guessed or partially overwritten.
 
-## Provisioning the website preview-domain environment
+## Retiring a manually inventoried Actions environment
 
-The public `atrinik/website` repository (repository ID `1327107093`) uses the
-`cloudflare-preview-domains` environment for its reviewed preview-domain
-automation. That workflow uses `pull_request_target`, for which GitHub resolves
-the workflow, `GITHUB_REF`, and `GITHUB_SHA` from the base repository's default
-branch rather than from the pull-request head. Restricting this environment to
-the exact `main` branch therefore admits the trusted default-branch workflow
-without admitting ordinary pull-request merge or head refs. This remains a
-valid security boundary only while the website workflow never checks out,
-downloads, or executes pull-request-controlled code or artifacts.
+Removing an entry from `github_actions_environments` records the desired
+absence but does not delete the live environment or revoke credentials held by
+an external provider. Complete every retirement in this order:
 
-The environment deliberately has no required reviewers. Its custom deployment
-branch policy allows only the `main` branch and no tags. The inventory records
-only names: the environment variables are `CLOUDFLARE_ACCOUNT_ID` and
-`CLOUDFLARE_ZONE_ID`, and the environment secret is
-`CLOUDFLARE_PREVIEW_TOKEN`. The external values are never stored in this
-repository, fixtures, commands, or logs, and `bin/publish` does not create,
-update, or delete this environment.
+1. Merge the reviewed desired-state removal only after the consuming workflow
+   has been removed from its default branch.
+2. Record the repository's other environment names, delete only the exact
+   retired environment through **Settings → Environments**, confirm its API
+   lookup returns `404`, and confirm the other environments are unchanged.
+3. Remove any exact external DNS, domain, or deployment resource owned solely
+   by that environment, preserving unrelated production resources.
+4. Revoke the dedicated external-provider token separately and clear retained
+   local copies. Deleting a GitHub environment removes its stored secret but
+   does not revoke the underlying credential.
 
-Do not provision any value until the exact website workflow that references
-this environment has been merged to `atrinik/website@main` and reviewed for
-the `pull_request_target` trust boundary. Then an organization owner or
-repository administrator must:
-
-1. Confirm the repository identity without reading any credential value:
-
-   ```sh
-   gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
-     repos/atrinik/website \
-     --jq '{id, full_name, visibility, archived, default_branch}'
-   ```
-
-2. Open **atrinik/website → Settings → Environments**, create
-   `cloudflare-preview-domains`, select custom deployment branches and tags,
-   add only the `main` branch pattern, add no tag pattern, and leave required
-   reviewers disabled.
-3. Add the two exact environment variable names and the one exact environment
-   secret name from `config/manual-settings.json`, entering their values only
-   through the protected GitHub settings UI from the owning Cloudflare account.
-
-The identity check must report ID `1327107093`, `atrinik/website`, `public`,
-`archived: false`, and default branch `main`. Verify the resulting environment
-without printing variable values or attempting to retrieve the secret value:
-
-```sh
-gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
-  repos/atrinik/website/environments/cloudflare-preview-domains \
-  --jq '{name, deployment_branch_policy, protection_rule_types: [.protection_rules[].type]}'
-gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
-  repos/atrinik/website/environments/cloudflare-preview-domains/deployment-branch-policies \
-  --jq '[.branch_policies[] | {name, type}]'
-gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
-  repos/atrinik/website/environments/cloudflare-preview-domains/variables \
-  --jq '[.variables[].name] | sort'
-gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
-  repos/atrinik/website/environments/cloudflare-preview-domains/secrets \
-  --jq '[.secrets[].name] | sort'
-```
-
-The environment must report custom branch policies enabled, protected-branch
-mode disabled, no `required_reviewers` protection rule, exactly one branch
-policy named `main`, exactly the two recorded variable names, and exactly the
-recorded secret name. If any identity or name differs, stop and reconcile it in
-a reviewed desired-state change; never copy a live credential into an issue,
-pull request, log, or configuration file.
-
-To retire the environment, first merge a reviewed website change that removes
-all workflow references to it and a reviewed governance change that removes
-its manual inventory entry. Then delete only
-`cloudflare-preview-domains` through the website's Environment settings and
-confirm that no other repository environment, variable, or secret changed. No
-`bin/publish --apply` run is involved in provisioning or rollback.
+`bin/publish --apply` does not provision or delete these manual environments.
+Record the exact environment and external-token names in the retirement pull
+request handoff without recording their values.
 
 ## Granting Classic access to the Windows build image
 
