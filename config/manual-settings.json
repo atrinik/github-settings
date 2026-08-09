@@ -14,6 +14,31 @@
     "renderer",
     "server"
   ],
+  "github_actions_environments": [
+    {
+      "deployment_branch_policy": {
+        "custom_branch_policies": true,
+        "patterns": [
+          {
+            "name": "main",
+            "type": "branch"
+          }
+        ],
+        "protected_branches": false
+      },
+      "environment": "cloudflare-preview-domains",
+      "repository": "atrinik/website",
+      "repository_id": 1327107093,
+      "required_reviewers": [],
+      "secret_names": [
+        "CLOUDFLARE_PREVIEW_TOKEN"
+      ],
+      "variable_names": [
+        "CLOUDFLARE_ACCOUNT_ID",
+        "CLOUDFLARE_ZONE_ID"
+      ]
+    }
+  ],
   "github_packages_actions_access": [
     {
       "package_owner": "atrinik",
@@ -28,5 +53,5 @@
   ],
   "require_two_factor_authentication": true,
   "require_secure_two_factor_methods": true,
-  "reason": "The public GitHub API does not expose supported update parameters for every setting in this file. Confirm them, Codecov GitHub App repository access, and GitHub Packages Actions access in the corresponding organization and package settings UI."
+  "reason": "The public GitHub API does not expose supported update parameters for every setting in this file, and external credential values must never be stored here. Confirm these settings, Codecov GitHub App repository access, GitHub Actions environments, and GitHub Packages Actions access in the corresponding organization, repository, and package settings UI."
 }

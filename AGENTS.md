@@ -60,6 +60,11 @@
   Actions access** UI. Do not change package visibility, permission
   inheritance, or source-repository association, and do not automate the grant
   through an undocumented API.
+- Record manually provisioned GitHub Actions environments in
+  `config/manual-settings.json` with stable repository IDs, exact deployment
+  branch policies and reviewer sets, and variable and secret names only. Never
+  record credential values. Provision them only after the owning workflow is
+  merged and reviewed, and do not imply that `bin/publish` applies them.
 - Treat `config/codeql-advanced-setup.json` as the exhaustive exception
   inventory for repositories whose component/path-aware CodeQL workflow cannot
   use repository-wide default setup. Keep the advanced security configuration
