@@ -28,6 +28,9 @@ while (($#)); do
     ;;
   -f)
     field_names+=("${2%%=*}")
+    if [[ ${2%%=*} == body ]]; then
+      printf '%s\n' "${2#*=}" >"${FAKE_GH_BODY}"
+    fi
     shift 2
     ;;
   *)
@@ -42,7 +45,7 @@ printf '%s\t%s\t%s\n' "${method}" "${endpoint}" "${field_names[*]:-}" \
 case ${endpoint} in
 "repos/atrinik/github-settings/actions/workflows/sync-project.yml/runs?per_page=100")
   case ${FAKE_GH_SCENARIO} in
-  healthy | missing-settings | recovery)
+  healthy | missing-settings | recovery | recurrence-before | reopen)
     jq -n '{workflow_runs: [{
       status: "completed", conclusion: "success",
       created_at: "2026-08-10T04:49:00Z",
@@ -76,7 +79,7 @@ case ${endpoint} in
       }
     ]}'
     ;;
-  stale | sync-failure)
+  stale | sync-failure | foreign | multiple-managed)
     jq -n '{workflow_runs: [{
       status: "completed", conclusion: "success",
       created_at: "2026-08-10T01:59:00Z",
@@ -94,17 +97,117 @@ case ${endpoint} in
       head_sha: "FAIL"
     }]}'
     ;;
+  never-ran)
+    jq -n '{workflow_runs: []}'
+    ;;
+  recurrence-after)
+    jq -n '{workflow_runs: [{
+      status: "completed", conclusion: "success",
+      created_at: "2026-08-10T04:57:00Z",
+      updated_at: "2026-08-10T04:58:00Z",
+      html_url: "https://github.com/atrinik/github-settings/actions/runs/104",
+      head_sha: "NEW-SUCCESS"
+    }]}'
+    ;;
+  old-success)
+    jq -n '{workflow_runs: [range(0; 100) | {
+      status: "completed", conclusion: "failure",
+      created_at: "2026-08-10T04:00:00Z",
+      updated_at: "2026-08-10T04:01:00Z",
+      html_url: ("https://github.com/atrinik/github-settings/actions/runs/" + tostring),
+      head_sha: "FAIL"
+    }]}'
+    ;;
+  *) exit 1 ;;
+  esac
+  ;;
+"repos/atrinik/github-settings/actions/workflows/sync-project.yml/runs?status=success&per_page=1")
+  case ${FAKE_GH_SCENARIO} in
+  healthy | missing-settings | recovery | recurrence-before | reopen)
+    jq -n '{workflow_runs: [{
+      status: "completed", conclusion: "success",
+      created_at: "2026-08-10T04:49:00Z",
+      updated_at: "2026-08-10T04:50:00Z",
+      html_url: "https://github.com/atrinik/github-settings/actions/runs/100",
+      head_sha: "SUCCESS"
+    }]}'
+    ;;
+  repeated-failure)
+    jq -n '{workflow_runs: [{
+      status: "completed", conclusion: "success",
+      created_at: "2026-08-10T04:39:00Z",
+      updated_at: "2026-08-10T04:40:00Z",
+      html_url: "https://github.com/atrinik/github-settings/actions/runs/100",
+      head_sha: "SUCCESS"
+    }]}'
+    ;;
+  stale | sync-failure | foreign | multiple-managed)
+    jq -n '{workflow_runs: [{
+      status: "completed", conclusion: "success",
+      created_at: "2026-08-10T01:59:00Z",
+      updated_at: "2026-08-10T02:00:00Z",
+      html_url: "https://github.com/atrinik/github-settings/actions/runs/90",
+      head_sha: "STALE"
+    }]}'
+    ;;
+  recurrence-after)
+    jq -n '{workflow_runs: [{
+      status: "completed", conclusion: "success",
+      created_at: "2026-08-10T04:57:00Z",
+      updated_at: "2026-08-10T04:58:00Z",
+      html_url: "https://github.com/atrinik/github-settings/actions/runs/104",
+      head_sha: "NEW-SUCCESS"
+    }]}'
+    ;;
+  old-success)
+    jq -n '{workflow_runs: [{
+      status: "completed", conclusion: "success",
+      created_at: "2026-08-07T00:59:00Z",
+      updated_at: "2026-08-07T01:00:00Z",
+      html_url: "https://github.com/atrinik/github-settings/actions/runs/1",
+      head_sha: "OLD-SUCCESS"
+    }]}'
+    ;;
+  no-success | never-ran) jq -n '{workflow_runs: []}' ;;
   *) exit 1 ;;
   esac
   ;;
 "repos/atrinik/github-settings/issues?state=all&per_page=100&page=1")
   case ${FAKE_GH_SCENARIO} in
-  recovery | stale)
+  recovery | stale | recurrence-before | recurrence-after)
     jq -n '[range(0; 100) | {
       number: (. + 1000),
       state: "closed",
       created_at: "2026-08-09T04:00:00Z",
-      body: "unmanaged"
+      body: "unmanaged",
+      user: {login: "someone"}
+    }]'
+    ;;
+  reopen)
+    jq -n '[{
+      number: 70,
+      state: "closed",
+      created_at: "2026-08-01T04:00:00Z",
+      body: "<!-- atrinik-project-sync-health -->\n<!-- atrinik-project-sync-health-episode: 2026-08-01T04:00:00Z -->",
+      user: {login: "github-actions[bot]"}
+    }]'
+    ;;
+  foreign)
+    jq -n '[range(0; 2) | {
+      number: (. + 80),
+      state: "open",
+      created_at: "2026-08-10T04:00:00Z",
+      body: "<!-- atrinik-project-sync-health -->",
+      user: {login: ("attacker-" + tostring)}
+    }]'
+    ;;
+  multiple-managed)
+    jq -n '[range(0; 2) | {
+      number: (. + 90),
+      state: "open",
+      created_at: "2026-08-10T04:00:00Z",
+      body: "<!-- atrinik-project-sync-health -->\n<!-- atrinik-project-sync-health-episode: 2026-08-10T04:00:00Z -->",
+      user: {login: "github-actions[bot]"}
     }]'
     ;;
   *) jq -n '[]' ;;
@@ -112,12 +215,17 @@ case ${endpoint} in
   ;;
 "repos/atrinik/github-settings/issues?state=all&per_page=100&page=2")
   case ${FAKE_GH_SCENARIO} in
-  recovery | stale)
-    jq -n '{
+  recovery | stale | recurrence-before | recurrence-after)
+    episode="2026-08-10T04:00:00Z"
+    [[ ${FAKE_GH_SCENARIO} == recurrence-before || \
+      ${FAKE_GH_SCENARIO} == recurrence-after ]] && \
+      episode="2026-08-10T04:55:00Z"
+    jq -n --arg episode "${episode}" '{
       number: 70,
       state: "open",
       created_at: "2026-08-10T04:00:00Z",
-      body: "<!-- atrinik-project-sync-health -->"
+      body: ("<!-- atrinik-project-sync-health -->\n<!-- atrinik-project-sync-health-episode: " + $episode + " -->"),
+      user: {login: "github-actions[bot]"}
     } | [.]'
     ;;
   *) jq -n '[]' ;;
@@ -136,11 +244,20 @@ esac
 EOF
 chmod +x "${temporary}/bin/gh"
 
+cat >"${temporary}/bin/env" <<'EOF'
+#!/usr/bin/env bash
+
+echo "error: health check exposed the settings token through env arguments" >&2
+exit 99
+EOF
+chmod +x "${temporary}/bin/env"
+
 cat >"${temporary}/bin/sync-plan" <<'EOF'
 #!/usr/bin/env bash
 
 set -euo pipefail
 
+[[ ${GH_TOKEN:-} == settings-token ]]
 printf '%s\n' "${FAKE_SYNC_SCENARIO}" >>"${FAKE_SYNC_LOG}"
 if [[ ${FAKE_SYNC_SCENARIO} == failure ]]; then
   echo "error: Project authorization denied" >&2
@@ -168,6 +285,7 @@ run_health() {
 
   PATH="${temporary}/bin:${PATH}" \
     FAKE_GH_LOG="${temporary}/gh.log" \
+    FAKE_GH_BODY="${temporary}/gh-body" \
     FAKE_GH_SCENARIO="${gh_scenario}" \
     FAKE_SYNC_LOG="${temporary}/sync.log" \
     FAKE_SYNC_SCENARIO="${sync_scenario}" \
@@ -189,7 +307,7 @@ output=$(run_health healthy zero)
 grep -Fq 'State: **healthy**' <<<"${output}"
 grep -Fq 'Convergence: converged; mutations 0' <<<"${output}"
 grep -Fq 'State: **healthy**' "${temporary}/step-summary"
-[[ $(wc -l <"${temporary}/gh.log") == 1 ]]
+[[ $(wc -l <"${temporary}/gh.log") == 2 ]]
 
 : >"${temporary}/gh.log"
 : >"${temporary}/sync.log"
@@ -228,6 +346,7 @@ grep -Fq $'PATCH\trepos/atrinik/github-settings/issues/70\t' \
 : >"${temporary}/sync.log"
 if PATH="${temporary}/bin:${PATH}" \
   FAKE_GH_LOG="${temporary}/gh.log" FAKE_GH_SCENARIO=missing-settings \
+  FAKE_GH_BODY="${temporary}/gh-body" \
   FAKE_SYNC_LOG="${temporary}/sync.log" FAKE_SYNC_SCENARIO=zero \
   GITHUB_ACTIONS=true GITHUB_REPOSITORY=atrinik/github-settings \
   GH_TOKEN=health-token ATRINIK_SETTINGS_TOKEN='' \
@@ -255,6 +374,70 @@ grep -Fq $'PATCH\trepos/atrinik/github-settings/issues/70\tbody state state_reas
 
 : >"${temporary}/gh.log"
 : >"${temporary}/sync.log"
+if run_health recurrence-before zero --apply \
+  >"${temporary}/recurrence-before.out" \
+  2>"${temporary}/recurrence-before.err"; then
+  echo "error: health check resolved an incident with a pre-episode success" >&2
+  exit 1
+fi
+grep -Fq 'remains open until a newer successful run' \
+  "${temporary}/recurrence-before.out"
+grep -Fq 'ALERT updated managed Project health incident #70' \
+  "${temporary}/recurrence-before.out"
+if grep -Fq 'RECOVERED' "${temporary}/recurrence-before.out"; then
+  echo "error: pre-episode success produced a recovery message" >&2
+  exit 1
+fi
+
+: >"${temporary}/gh.log"
+: >"${temporary}/sync.log"
+output=$(run_health recurrence-after zero --apply)
+grep -Fq 'RECOVERED managed Project health incident #70' <<<"${output}"
+
+: >"${temporary}/gh.log"
+: >"${temporary}/sync.log"
+if run_health foreign pending --apply \
+  >"${temporary}/foreign.out" 2>"${temporary}/foreign.err"; then
+  echo "error: health check accepted stale synchronization" >&2
+  exit 1
+fi
+grep -Fq 'ALERT created managed Project health incident' \
+  "${temporary}/foreign.out"
+grep -Fq $'POST\trepos/atrinik/github-settings/issues\t' \
+  "${temporary}/gh.log"
+
+: >"${temporary}/gh.log"
+: >"${temporary}/sync.log"
+if run_health multiple-managed pending --apply \
+  >"${temporary}/multiple.out" 2>"${temporary}/multiple.err"; then
+  echo "error: health check accepted multiple genuine managed incidents" >&2
+  exit 1
+fi
+grep -Fq 'multiple managed Project health incidents exist' \
+  "${temporary}/multiple.err"
+
+: >"${temporary}/gh.log"
+: >"${temporary}/sync.log"
+: >"${temporary}/gh-body"
+if PATH="${temporary}/bin:${PATH}" \
+  FAKE_GH_LOG="${temporary}/gh.log" FAKE_GH_SCENARIO=reopen \
+  FAKE_GH_BODY="${temporary}/gh-body" \
+  FAKE_SYNC_LOG="${temporary}/sync.log" FAKE_SYNC_SCENARIO=zero \
+  GITHUB_ACTIONS=true GITHUB_REPOSITORY=atrinik/github-settings \
+  GH_TOKEN=health-token ATRINIK_SETTINGS_TOKEN='' \
+  ATRINIK_PROJECT_HEALTH_NOW=2026-08-10T05:00:00Z \
+  ATRINIK_PROJECT_HEALTH_SYNC_COMMAND="${temporary}/bin/sync-plan" \
+  ATRINIK_VALIDATION_TODAY=2026-08-10 \
+  "${root}/bin/check-project-health" --apply \
+  >"${temporary}/reopen.out" 2>"${temporary}/reopen.err"; then
+  echo "error: health check accepted a missing credential during recurrence" >&2
+  exit 1
+fi
+grep -Fq '<!-- atrinik-project-sync-health-episode: 2026-08-10T05:00:00Z -->' \
+  "${temporary}/gh-body"
+
+: >"${temporary}/gh.log"
+: >"${temporary}/sync.log"
 if run_health sync-failure failure --apply \
   >"${temporary}/sync-failure.out" 2>"${temporary}/sync-failure.err"; then
   echo "error: health check accepted a failed convergence preflight" >&2
@@ -274,6 +457,26 @@ if run_health no-success zero \
 fi
 grep -Fq 'No successful sync-project.yml run exists' \
   "${temporary}/no-success.out"
+
+: >"${temporary}/gh.log"
+: >"${temporary}/sync.log"
+if run_health never-ran zero \
+  >"${temporary}/never-ran.out" 2>"${temporary}/never-ran.err"; then
+  echo "error: health check accepted a workflow that never ran" >&2
+  exit 1
+fi
+grep -Fq 'No successful sync-project.yml run exists' \
+  "${temporary}/never-ran.out"
+
+: >"${temporary}/gh.log"
+: >"${temporary}/sync.log"
+if run_health old-success zero \
+  >"${temporary}/old-success.out" 2>"${temporary}/old-success.err"; then
+  echo "error: health check accepted more than 100 failures" >&2
+  exit 1
+fi
+grep -Fq '2026-08-07T01:00:00Z' "${temporary}/old-success.out"
+grep -Fq 'actions/runs/1' "${temporary}/old-success.out"
 
 if rg -n 'health-token|settings-token' "${temporary}"/*.out \
   "${temporary}"/*.err "${temporary}/step-summary" >/dev/null; then

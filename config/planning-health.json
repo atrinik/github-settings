@@ -1,6 +1,7 @@
 {
   "consecutive_failure_threshold": 2,
   "freshness_threshold_minutes": 90,
+  "incident_actor": "github-actions[bot]",
   "incident_marker": "<!-- atrinik-project-sync-health -->",
   "incident_title": "Atrinik work synchronization is stale",
   "monitor_workflow": "check-project-health.yml",

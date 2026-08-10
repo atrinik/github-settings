@@ -26,9 +26,10 @@ post-rotation checks.
 Project synchronization health changes must preserve the separate monitoring
 path, the 90-minute freshness/failure contract, one marker-owned incident, and
 least-privilege alerting through `GITHUB_TOKEN`. Test fresh, stale, repeated
-failure, missing administration credential, deduplication, and recovery paths.
-Do not imply that GitHub's best-effort cron is an exact 30-minute guarantee or
-that a monitor on GitHub Actions is external to GitHub's scheduler.
+failure, missing administration credential, trusted ownership, deduplication,
+recurrent-outage boundaries, and recovery paths. Do not imply that GitHub's
+best-effort cron is an exact 30-minute guarantee or that a monitor on GitHub
+Actions is external to GitHub's scheduler.
 
 When changing organization issue forms, keep them compatible with GitHub's
 live validator: omit empty optional metadata and do not add a top-level `type`

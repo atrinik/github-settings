@@ -33,20 +33,52 @@ done
 [[ -n ${input} ]]
 query=$(jq -r '.query' "${input}")
 variables=$(jq -c '.variables' "${input}")
+cursor=$(jq -r '.endCursor // empty' <<<"${variables}")
 printf '%s\n' "${query}" >>"${FAKE_GH_LOG}"
 
 case ${FAKE_GH_SCENARIO} in
 api-failure)
   echo "gh: authentication failed" >&2
-  exit 1
+  exit 42
   ;;
 graphql-error)
   jq -n '{errors: [{message: "Resource not accessible by personal access token"}]}'
   exit 0
   ;;
-happy | idempotent) ;;
+invalid-response)
+  jq -n '{}'
+  exit 0
+  ;;
+page2-api-failure)
+  if [[ ${cursor} == CURSOR ]]; then
+    echo "gh: pagination transport failed" >&2
+    exit 43
+  fi
+  ;;
+page2-graphql-error)
+  if [[ ${cursor} == CURSOR ]]; then
+    jq -n '{errors: [{message: "Pagination authorization denied"}]}'
+    exit 0
+  fi
+  ;;
+happy | idempotent | paginated | page2-shape-error | repeated-cursor | \
+  mutation-empty-add | mutation-empty-status | mutation-empty-type) ;;
 *) exit 1 ;;
 esac
+
+if [[ ${FAKE_GH_SCENARIO} == mutation-empty-add && \
+  ${query} == *'addProjectV2ItemById'* ]]; then
+  jq -n '{data: {addProjectV2ItemById: {item: null}}}'
+  exit 0
+elif [[ ${FAKE_GH_SCENARIO} == mutation-empty-status && \
+  ${query} == *'updateProjectV2ItemFieldValue'* ]]; then
+  jq -n '{data: {updateProjectV2ItemFieldValue: {projectV2Item: null}}}'
+  exit 0
+elif [[ ${FAKE_GH_SCENARIO} == mutation-empty-type && \
+  ${query} == *'updateIssue(input:'* ]]; then
+  jq -n '{data: {updateIssue: {issue: null}}}'
+  exit 0
+fi
 
 if [[ ${query} == *'addProjectV2ItemById'* ]]; then
   jq -n --arg id "ITEM-$(jq -r '.input.contentId' <<<"${variables}")" \
@@ -92,13 +124,41 @@ elif [[ ${query} == *'organization(login:'* ]]; then
     }
   }'
 elif [[ ${query} == *'search(query:'* ]]; then
+  if [[ ${cursor} == CURSOR ]]; then
+    case ${FAKE_GH_SCENARIO} in
+    page2-shape-error)
+      jq -n '{data: {search: null}}'
+      ;;
+    repeated-cursor)
+      jq -n '{data: {search: {
+        nodes: [],
+        pageInfo: {hasNextPage: true, endCursor: "CURSOR"}
+      }}}'
+      ;;
+    *)
+      jq -n '{data: {search: {
+        nodes: [],
+        pageInfo: {hasNextPage: false, endCursor: null}
+      }}}'
+      ;;
+    esac
+    exit 0
+  fi
+  page_info='{"hasNextPage":false,"endCursor":null}'
+  case ${FAKE_GH_SCENARIO} in
+  paginated | page2-api-failure | page2-graphql-error | page2-shape-error | \
+    repeated-cursor)
+    page_info='{"hasNextPage":true,"endCursor":"CURSOR"}'
+    ;;
+  esac
   query_string=$(jq -r '.queryString' <<<"${variables}")
   if [[ ${query_string} == *'is:issue'* ]]; then
     issue_type=null
     if [[ ${FAKE_GH_SCENARIO} == idempotent ]]; then
       issue_type='{"name":"Initiative"}'
     fi
-    jq -n --argjson issue_type "${issue_type}" '{
+    jq -n --argjson issue_type "${issue_type}" \
+      --argjson page_info "${page_info}" '{
       data: {search: {
         nodes: [{
           __typename: "Issue",
@@ -111,11 +171,11 @@ elif [[ ${query} == *'search(query:'* ]]; then
           labels: {nodes: []},
           subIssues: {totalCount: 1}
         }],
-        pageInfo: {hasNextPage: false, endCursor: null}
+        pageInfo: $page_info
       }}
     }'
   else
-    jq -n '{
+    jq -n --argjson page_info "${page_info}" '{
       data: {search: {
         nodes: [{
           __typename: "PullRequest",
@@ -126,7 +186,7 @@ elif [[ ${query} == *'search(query:'* ]]; then
           isDraft: false,
           repository: {name: "server", isArchived: false}
         }],
-        pageInfo: {hasNextPage: false, endCursor: null}
+        pageInfo: $page_info
       }}
     }'
   fi
@@ -160,6 +220,13 @@ elif [[ ${query} == *'... on ProjectV2{items('* ]]; then
           }
         ],
         pageInfo: {hasNextPage: false, endCursor: null}
+      }}}
+    }'
+  elif [[ ${FAKE_GH_SCENARIO} == paginated && -z ${cursor} ]]; then
+    jq -n '{
+      data: {node: {items: {
+        nodes: [],
+        pageInfo: {hasNextPage: true, endCursor: "CURSOR"}
       }}}
     }'
   else
@@ -215,6 +282,13 @@ if grep -Eq 'addProjectV2ItemById|updateProjectV2ItemFieldValue|updateIssue\(inp
 fi
 
 : >"${temporary}/gh.log"
+output=$(run_sync paginated --apply)
+grep -Fq 'APPLY project 1 (Atrinik work)' <<<"${output}"
+grep -Fq 'Total mutations: 5' <<<"${output}"
+[[ $(grep -c 'search(query:' "${temporary}/gh.log") == 4 ]]
+[[ $(grep -c '... on ProjectV2{items(' "${temporary}/gh.log") == 2 ]]
+
+: >"${temporary}/gh.log"
 if PATH="${temporary}/bin:${PATH}" \
   FAKE_GH_LOG="${temporary}/gh.log" FAKE_GH_SCENARIO=happy \
   GITHUB_ACTIONS=true GH_TOKEN='' "${root}/bin/sync-project" \
@@ -225,15 +299,21 @@ fi
 grep -Fq 'ATRINIK_SETTINGS_TOKEN is unavailable' "${temporary}/empty.err"
 [[ ! -s ${temporary}/gh.log ]]
 
-for scenario in api-failure graphql-error; do
+assert_preflight_failure() {
+  local expected_status=$1
+  local scenario=$2
+  local status
+
   : >"${temporary}/gh.log"
-  if run_sync "${scenario}" --apply \
-    >"${temporary}/${scenario}.out" 2>"${temporary}/${scenario}.err"; then
-    echo "error: synchronization accepted ${scenario}" >&2
+  set +e
+  run_sync "${scenario}" --apply \
+    >"${temporary}/${scenario}.out" 2>"${temporary}/${scenario}.err"
+  status=$?
+  set -e
+  if ((status != expected_status)); then
+    echo "error: ${scenario} exited ${status}, expected ${expected_status}" >&2
     exit 1
   fi
-  grep -Fq 'read organization planning metadata' \
-    "${temporary}/${scenario}.err"
   if grep -Fq 'project Status option is missing' \
     "${temporary}/${scenario}.err"; then
     echo "error: ${scenario} fell through to a schema error" >&2
@@ -248,9 +328,52 @@ for scenario in api-failure graphql-error; do
     echo "error: ${scenario} attempted a mutation" >&2
     exit 1
   fi
-done
+}
+
+assert_preflight_failure 42 api-failure
+grep -Fq 'read organization planning metadata' \
+  "${temporary}/api-failure.err"
+assert_preflight_failure 1 graphql-error
+grep -Fq 'read organization planning metadata' \
+  "${temporary}/graphql-error.err"
+assert_preflight_failure 1 invalid-response
+grep -Fq 'invalid response: read organization planning metadata' \
+  "${temporary}/invalid-response.err"
+assert_preflight_failure 43 page2-api-failure
+grep -Fq 'search open is:issue work (page 2)' \
+  "${temporary}/page2-api-failure.err"
+assert_preflight_failure 1 page2-graphql-error
+grep -Fq 'Pagination authorization denied' \
+  "${temporary}/page2-graphql-error.err"
+assert_preflight_failure 1 page2-shape-error
+grep -Fq 'missing the expected connection: search open is:issue work' \
+  "${temporary}/page2-shape-error.err"
+assert_preflight_failure 1 repeated-cursor
+grep -Fq 'repeated the next cursor: search open is:issue work' \
+  "${temporary}/repeated-cursor.err"
+
 grep -Fq 'gh: authentication failed' "${temporary}/api-failure.err"
 grep -Fq 'Resource not accessible by personal access token' \
   "${temporary}/graphql-error.err"
+
+for scenario in mutation-empty-add mutation-empty-status mutation-empty-type; do
+  : >"${temporary}/gh.log"
+  if run_sync "${scenario}" --apply \
+    >"${temporary}/${scenario}.out" 2>"${temporary}/${scenario}.err"; then
+    echo "error: synchronization accepted ${scenario}" >&2
+    exit 1
+  fi
+  grep -Fq 'GitHub GraphQL operation returned an invalid' \
+    "${temporary}/${scenario}.err"
+  if grep -Fq 'APPLY project' "${temporary}/${scenario}.out"; then
+    echo "error: ${scenario} printed a success summary" >&2
+    exit 1
+  fi
+done
+grep -Fq 'add ISSUE to project' "${temporary}/mutation-empty-add.err"
+grep -Fq 'set project item ITEM-ISSUE status to Backlog' \
+  "${temporary}/mutation-empty-status.err"
+grep -Fq 'set issue ISSUE type to Initiative' \
+  "${temporary}/mutation-empty-type.err"
 
 echo "Project synchronization validates authentication, API failures, mutations, and idempotence."

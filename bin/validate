@@ -266,10 +266,7 @@ jq -e \
     (.secret_name | type == "string" and test("^[A-Z][A-Z0-9_]*$")) and
     (
       .required_scopes |
-      type == "array" and
-      length > 0 and
-      . == (sort | unique) and
-      all(.[]; IN("admin:org", "project", "repo"))
+      . == ["admin:org", "project", "repo"]
     ) and
     (
       .consumers |
@@ -587,6 +584,7 @@ jq -e '
   (keys == [
     "consecutive_failure_threshold",
     "freshness_threshold_minutes",
+    "incident_actor",
     "incident_marker",
     "incident_title",
     "monitor_workflow",
@@ -602,6 +600,7 @@ jq -e '
     .freshness_threshold_minutes |
     type == "number" and floor == . and . >= 60 and . <= 1440
   ) and
+  .incident_actor == "github-actions[bot]" and
   .incident_marker == "<!-- atrinik-project-sync-health -->" and
   (.incident_title | type == "string" and length > 0 and length <= 120) and
   (

@@ -40,9 +40,35 @@ repos/atrinik/github-settings)
     jq -n '{id: 1324382941}'
   fi
   ;;
-repos/atrinik/github-settings/actions/secrets)
+"repos/atrinik/github-settings/actions/secrets?per_page=100&page=1")
   if [[ ${FAKE_GH_SCENARIO} == missing ]]; then
     jq -n '{total_count: 0, secrets: []}'
+  elif [[ ${FAKE_GH_SCENARIO} == page2 || \
+    ${FAKE_GH_SCENARIO} == page2-failure ]]; then
+    jq -n '{
+      total_count: 101,
+      secrets: [range(0; 100) | {
+        name: ("UNRELATED_" + tostring),
+        created_at: "2026-08-01T00:00:00Z",
+        updated_at: "2026-08-01T00:00:00Z"
+      }]
+    }'
+  elif [[ ${FAKE_GH_SCENARIO} == shared-repository ]]; then
+    jq -n '{
+      total_count: 2,
+      secrets: [
+        {
+          name: "ATRINIK_SETTINGS_TOKEN",
+          created_at: "2026-08-10T02:13:48Z",
+          updated_at: "2026-08-10T02:13:48Z"
+        },
+        {
+          name: "SECOND_SETTINGS_TOKEN",
+          created_at: "2026-08-10T02:13:48Z",
+          updated_at: "2026-08-10T02:13:48Z"
+        }
+      ]
+    }'
   else
     jq -n '{
       total_count: 1,
@@ -53,6 +79,21 @@ repos/atrinik/github-settings/actions/secrets)
       }]
     }'
   fi
+  ;;
+"repos/atrinik/github-settings/actions/secrets?per_page=100&page=2")
+  if [[ ${FAKE_GH_SCENARIO} == page2-failure ]]; then
+    echo "gh: second secret page failed" >&2
+    exit 42
+  fi
+  [[ ${FAKE_GH_SCENARIO} == page2 ]]
+  jq -n '{
+    total_count: 101,
+    secrets: [{
+      name: "ATRINIK_SETTINGS_TOKEN",
+      created_at: "2026-08-10T02:13:48Z",
+      updated_at: "2026-08-10T02:13:48Z"
+    }]
+  }'
   ;;
 *) exit 1 ;;
 esac
@@ -76,7 +117,37 @@ grep -Fq 'KEEP atrinik/github-settings repository Actions secret ATRINIK_SETTING
   <<<"${output}"
 grep -Fq 'Manual settings live credential metadata is present.' <<<"${output}"
 
-for scenario in missing identity-drift api-failure; do
+: >"${temporary}/gh.log"
+output=$(run_verify page2)
+grep -Fq 'KEEP atrinik/github-settings repository Actions secret ATRINIK_SETTINGS_TOKEN' \
+  <<<"${output}"
+grep -Fq 'page=2' "${temporary}/gh.log"
+
+shared_root=${temporary}/shared-repository
+mkdir -p "${shared_root}/bin"
+cp "${root}/bin/validate" "${root}/bin/verify-manual-settings" \
+  "${shared_root}/bin/"
+cp -R "${root}/config" "${shared_root}/config"
+cp -R "${root}/community-health" "${shared_root}/community-health"
+cp -R "${root}/.github" "${shared_root}/.github"
+jq '
+  .github_actions_credentials += [
+    .github_actions_credentials[0] |
+    .secret_name = "SECOND_SETTINGS_TOKEN"
+  ]
+' "${root}/config/manual-settings.json" \
+  >"${shared_root}/config/manual-settings.json"
+: >"${temporary}/gh.log"
+output=$(PATH="${temporary}/bin:${PATH}" \
+  FAKE_GH_LOG="${temporary}/gh.log" \
+  FAKE_GH_SCENARIO=shared-repository \
+  GITHUB_ACTIONS=true GH_TOKEN=test-token \
+  ATRINIK_VALIDATION_TODAY=2026-08-10 \
+  "${shared_root}/bin/verify-manual-settings")
+grep -Fq 'SECOND_SETTINGS_TOKEN' <<<"${output}"
+[[ $(grep -Fc 'repos/atrinik/github-settings' "${temporary}/gh.log") == 2 ]]
+
+for scenario in missing identity-drift api-failure page2-failure; do
   : >"${temporary}/gh.log"
   if run_verify "${scenario}" \
     >"${temporary}/${scenario}.out" 2>"${temporary}/${scenario}.err"; then
@@ -89,6 +160,8 @@ grep -Fq 'MISSING atrinik/github-settings repository Actions secret ATRINIK_SETT
 grep -Fq 'repository identity drift' "${temporary}/identity-drift.err"
 grep -Fq 'gh: repository administration denied' "${temporary}/api-failure.err"
 grep -Fq 'read atrinik/github-settings identity' "${temporary}/api-failure.err"
+grep -Fq 'gh: second secret page failed' "${temporary}/page2-failure.err"
+grep -Fq 'page 2' "${temporary}/page2-failure.err"
 
 : >"${temporary}/gh.log"
 if PATH="${temporary}/bin:${PATH}" \

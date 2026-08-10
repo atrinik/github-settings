@@ -39,9 +39,10 @@
   never claim the metadata API verifies a value, expiry, or effective scope.
 - Treat GitHub cron as best-effort. Preserve the separate Project health
   workflow, its configured freshness and consecutive-failure thresholds, and
-  its single marker-owned incident. Alert with the ordinary least-privilege
-  `GITHUB_TOKEN` so an absent administration PAT remains reportable; resolve
-  only after a newer successful sync and a converged zero-mutation plan.
+  its single bot-authored, marker-owned incident and outage-episode timestamp.
+  Alert with the ordinary least-privilege `GITHUB_TOKEN` so an absent
+  administration PAT remains reportable; resolve only after a newer successful
+  sync in the current episode and a converged zero-mutation plan.
 - `community-health/` is authoritative; `atrinik/.github` is a generated
   deployment target. Never hand-edit that repository, add independent release
   automation to it, or add its issue forms' `projects:` key: public

@@ -239,8 +239,10 @@ after two consecutive failed synchronization runs. The separate
 completed synchronization, and on manual dispatch. It uses the ordinary
 least-privilege `GITHUB_TOKEN` to read Actions and maintain one deduplicated
 health incident, so a missing `ATRINIK_SETTINGS_TOKEN` cannot suppress the
-alert. The administration PAT is used only for the optional read-only
-convergence plan.
+alert. It recognizes only marker-bearing incidents authored by
+`github-actions[bot]`, ignores foreign copies of the public marker, and records
+a hidden timestamp for each new or reopened outage episode. The administration
+PAT is used only for the optional read-only convergence plan.
 
 Inspect health without changing GitHub:
 
@@ -253,13 +255,14 @@ gh run list --repo atrinik/github-settings \
 The health summary reports the last run, last successful run and revision,
 age, consecutive failures, and pending Project mutations. A managed incident
 opens or updates after the threshold is crossed. It closes only after a newer
-successful synchronization and a zero-mutation plan. Do not remove its hidden
-marker, create one incident per missed window, or use the administration PAT
-for alert publication. The monitoring owner is the Atrinik organization-owner
-role. If organization-wide GitHub scheduling itself becomes an unacceptable
-single point of failure, provision an external dispatcher/monitor under a
-separately reviewed owner and lifecycle contract; the repository workflow does
-not pretend to provide that external guarantee.
+successful synchronization in the current outage episode and a zero-mutation
+plan. Do not remove its hidden marker or episode timestamp, create one incident
+per missed window, or use the administration PAT for alert publication. The
+monitoring owner is the Atrinik organization-owner role. If organization-wide
+GitHub scheduling itself becomes an unacceptable single point of failure,
+provision an external dispatcher/monitor under a separately reviewed owner and
+lifecycle contract; the repository workflow does not pretend to provide that
+external guarantee.
 
 Retire or replace this monitor only through a reviewed governance change.
 Establish and prove the replacement signal first, remove the health workflow's

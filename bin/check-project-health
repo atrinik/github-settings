@@ -41,9 +41,11 @@ repository=$(jq -r '.repository' "${health_config}")
 sync_workflow=$(jq -r '.sync_workflow' "${health_config}")
 freshness_threshold=$(jq -r '.freshness_threshold_minutes' "${health_config}")
 failure_threshold=$(jq -r '.consecutive_failure_threshold' "${health_config}")
+incident_actor=$(jq -r '.incident_actor' "${health_config}")
 incident_marker=$(jq -r '.incident_marker' "${health_config}")
 incident_title=$(jq -r '.incident_title' "${health_config}")
 monitoring_owner=$(jq -r '.monitoring_owner' "${health_config}")
+episode_marker_prefix='<!-- atrinik-project-sync-health-episode: '
 now=${ATRINIK_PROJECT_HEALTH_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
 
 if ! now_epoch=$(jq -ner --arg value "${now}" '$value | fromdateiso8601'); then
@@ -75,16 +77,22 @@ if ! runs=$(github_api "read ${sync_workflow} workflow runs" \
   "repos/${repository}/actions/workflows/${sync_workflow}/runs?per_page=100"); then
   exit 1
 fi
+if ! successful_runs=$(github_api "read latest successful ${sync_workflow} run" \
+  "repos/${repository}/actions/workflows/${sync_workflow}/runs?status=success&per_page=1"); then
+  exit 1
+fi
 if ! jq -e '.workflow_runs | type == "array"' <<<"${runs}" >/dev/null; then
   echo "error: workflow-runs response omitted workflow_runs" >&2
   exit 1
 fi
+if ! jq -e '.workflow_runs | type == "array"' \
+  <<<"${successful_runs}" >/dev/null; then
+  echo "error: successful workflow-runs response omitted workflow_runs" >&2
+  exit 1
+fi
 
 latest_run=$(jq -c '.workflow_runs[0] // null' <<<"${runs}")
-last_success=$(jq -c '
-  [.workflow_runs[] |
-    select(.status == "completed" and .conclusion == "success")][0] // null
-' <<<"${runs}")
+last_success=$(jq -c '.workflow_runs[0] // null' <<<"${successful_runs}")
 consecutive_failures=$(jq -r '
   reduce .workflow_runs[] as $run (
     {count: 0, stopped: false};
@@ -138,15 +146,18 @@ sync_output=
 sync_error=${temporary}/sync-error
 settings_token=${ATRINIK_SETTINGS_TOKEN:-}
 
+run_sync_plan() {
+  if [[ -n ${settings_token} ]]; then
+    GITHUB_ACTIONS=false GH_TOKEN="${settings_token}" "${sync_command}"
+  else
+    GITHUB_ACTIONS=false "${sync_command}"
+  fi
+}
+
 if [[ ${GITHUB_ACTIONS:-false} == true && -z ${settings_token} ]]; then
   reasons+=("ATRINIK_SETTINGS_TOKEN is unavailable to the health workflow; Project convergence cannot be verified.")
 else
-  if [[ -n ${settings_token} ]]; then
-    sync_environment=(env GITHUB_ACTIONS=false GH_TOKEN="${settings_token}")
-  else
-    sync_environment=(env GITHUB_ACTIONS=false)
-  fi
-  if sync_output=$("${sync_environment[@]}" "${sync_command}" 2>"${sync_error}"); then
+  if sync_output=$(run_sync_plan 2>"${sync_error}"); then
     total_mutations=$(sed -n 's/^Total mutations: //p' <<<"${sync_output}")
     items_to_add=$(sed -n 's/^Items to add: //p' <<<"${sync_output}")
     open_status_changes=$(sed -n 's/^Open-item status changes: //p' \
@@ -193,9 +204,14 @@ if ${apply}; then
     ((issue_page_size == 100)) || break
     ((issue_page += 1))
   done
-  matching_incidents=$(jq -sc --arg marker "${incident_marker}" '
+  matching_incidents=$(jq -sc --arg actor "${incident_actor}" \
+    --arg marker "${incident_marker}" '
     [.[] |
-      select(.pull_request == null and ((.body // "") | contains($marker)))]
+      select(
+        .pull_request == null and
+        .user.login == $actor and
+        ((.body // "") | contains($marker))
+      )]
   ' "${issues_file}")
   incident_count=$(jq -r 'length' <<<"${matching_incidents}")
   if ((incident_count > 1)); then
@@ -207,22 +223,40 @@ fi
 
 incident_open=false
 incident_number=
-incident_created_epoch=
+incident_episode_at=${now}
+incident_episode_epoch=${now_epoch}
 if [[ ${existing_incident} != null ]]; then
   incident_number=$(jq -r '.number' <<<"${existing_incident}")
   [[ $(jq -r '.state' <<<"${existing_incident}") == open ]] && incident_open=true
-  incident_created_at=$(jq -r '.created_at' <<<"${existing_incident}")
-  if ! incident_created_epoch=$(jq -ner --arg value "${incident_created_at}" \
-    '$value | fromdateiso8601'); then
-    echo "error: managed Project health incident has an invalid created_at timestamp" >&2
-    exit 1
+  if ${incident_open}; then
+    mapfile -t incident_episodes < <(jq -r --arg prefix "${episode_marker_prefix}" '
+      (.body // "") | split("\n")[] |
+      select(startswith($prefix) and endswith(" -->")) |
+      ltrimstr($prefix) | rtrimstr(" -->")
+    ' <<<"${existing_incident}")
+    if ((${#incident_episodes[@]} > 1)); then
+      echo "error: managed Project health incident has multiple episode markers" >&2
+      exit 1
+    fi
+    if ((${#incident_episodes[@]} == 1)); then
+      incident_episode_at=${incident_episodes[0]}
+      if ! incident_episode_epoch=$(jq -ner \
+        --arg value "${incident_episode_at}" '$value | fromdateiso8601'); then
+        echo "error: managed Project health incident has an invalid episode timestamp" >&2
+        exit 1
+      fi
+      if ((incident_episode_epoch > now_epoch)); then
+        echo "error: managed Project health incident episode is newer than the health-check clock" >&2
+        exit 1
+      fi
+    fi
   fi
 fi
 
 can_resolve=false
 if ${incident_open} && [[ ${convergence} == converged ]] && \
   [[ -n ${last_success_epoch} ]] && \
-  ((last_success_epoch > incident_created_epoch)) && ((${#reasons[@]} == 0)); then
+  ((last_success_epoch > incident_episode_epoch)) && ((${#reasons[@]} == 0)); then
   can_resolve=true
 elif ${incident_open} && ((${#reasons[@]} == 0)); then
   reasons+=("The existing health incident remains open until a newer successful run is followed by a converged plan.")
@@ -258,8 +292,8 @@ if [[ -n ${GITHUB_STEP_SUMMARY:-} ]]; then
   cat "${summary}" >>"${GITHUB_STEP_SUMMARY}"
 fi
 
-incident_body=$(printf '%s\n\n%s\n\n%s\n' \
-  "${incident_marker}" \
+incident_body=$(printf '%s\n%s%s -->\n\n%s\n\n%s\n' \
+  "${incident_marker}" "${episode_marker_prefix}" "${incident_episode_at}" \
   "$(cat "${summary}")" \
   "Managed by \`bin/check-project-health\`. Recovery: restore the settings credential if needed, run \`bin/sync-project --apply\` through the governed workflow, then require a newer successful run and a zero-mutation plan. Do not remove the marker or record credential values here.")
 
@@ -278,8 +312,9 @@ if ${apply}; then
       echo "ALERT updated managed Project health incident #${incident_number}"
     fi
   elif ${can_resolve}; then
-    recovery_body=$(printf '%s\n\n%s\n\n%s\n' \
-      "${incident_marker}" \
+    recovery_body=$(printf '%s\n%s%s -->\n\n%s\n\n%s\n' \
+      "${incident_marker}" "${episode_marker_prefix}" \
+      "${incident_episode_at}" \
       "$(cat "${summary}")" \
       "Recovered after a newer successful synchronization run and a converged zero-mutation plan. Managed by \`bin/check-project-health\`; do not remove the marker or record credential values here.")
     github_api "resolve Project health incident ${incident_number}" \

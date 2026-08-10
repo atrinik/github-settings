@@ -23,6 +23,8 @@ fi
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 manual_settings=${root}/config/manual-settings.json
+temporary=$(mktemp -d)
+trap 'rm -rf "${temporary}"' EXIT
 
 "${root}/bin/validate" >/dev/null
 
@@ -42,11 +44,71 @@ github_api() {
   printf '%s\n' "${response}"
 }
 
+declare -A repository_data_files=()
+declare -A repository_secret_files=()
+
+load_repository_metadata() {
+  local repository=$1
+  local collected expected page page_size repository_key response
+
+  if [[ -v repository_data_files["${repository}"] ]]; then
+    return
+  fi
+
+  repository_key=${repository//\//-}
+  repository_data_files["${repository}"]=${temporary}/${repository_key}.json
+  repository_secret_files["${repository}"]=${temporary}/${repository_key}-secrets.jsonl
+  if ! github_api "read ${repository} identity" "repos/${repository}" \
+    >"${repository_data_files["${repository}"]}"; then
+    return 1
+  fi
+
+  : >"${repository_secret_files["${repository}"]}"
+  expected=
+  collected=0
+  page=1
+  while true; do
+    if ! response=$(github_api \
+      "list ${repository} Actions secrets (page ${page})" \
+      "repos/${repository}/actions/secrets?per_page=100&page=${page}"); then
+      return 1
+    fi
+    if ! jq -e '
+      (.total_count | type == "number" and floor == . and . >= 0) and
+      (.secrets | type == "array")
+    ' <<<"${response}" >/dev/null; then
+      echo "error: Actions secret metadata response is invalid for ${repository} (page ${page})" >&2
+      return 1
+    fi
+    if [[ -z ${expected} ]]; then
+      expected=$(jq -r '.total_count' <<<"${response}")
+    elif [[ $(jq -r '.total_count' <<<"${response}") != "${expected}" ]]; then
+      echo "error: Actions secret metadata changed while listing ${repository}" >&2
+      return 1
+    fi
+    jq -c '.secrets[]' <<<"${response}" \
+      >>"${repository_secret_files["${repository}"]}"
+    page_size=$(jq -r '.secrets | length' <<<"${response}")
+    ((collected += page_size))
+    if ((collected >= expected)); then
+      break
+    fi
+    if ((page_size == 0)); then
+      echo "error: Actions secret metadata ended before total_count for ${repository}" >&2
+      return 1
+    fi
+    ((page += 1))
+  done
+  if ((collected != expected)); then
+    echo "error: Actions secret metadata count mismatch for ${repository}: expected ${expected}, got ${collected}" >&2
+    return 1
+  fi
+}
+
 missing=0
 while IFS= read -r credential; do
   repository=$(jq -r '.repository' <<<"${credential}")
   repository_owner=${repository%%/*}
-  repository_name=${repository#*/}
   repository_id=$(jq -r '.repository_id' <<<"${credential}")
   secret_name=$(jq -r '.secret_name' <<<"${credential}")
   secret_scope=$(jq -r '.secret_scope' <<<"${credential}")
@@ -55,10 +117,10 @@ while IFS= read -r credential; do
     echo "error: credential repository owner does not match ${organization}: ${repository}" >&2
     exit 1
   fi
-  if ! repository_data=$(github_api "read ${repository} identity" \
-    "repos/${repository}"); then
+  if ! load_repository_metadata "${repository}"; then
     exit 1
   fi
+  repository_data=$(<"${repository_data_files["${repository}"]}")
   live_repository_id=$(jq -r '.id // empty' <<<"${repository_data}")
   if [[ ${live_repository_id} != "${repository_id}" ]]; then
     echo "error: repository identity drift for ${repository}: expected ${repository_id}, got ${live_repository_id:-missing}" >&2
@@ -67,10 +129,7 @@ while IFS= read -r credential; do
 
   case ${secret_scope} in
   repository)
-    if ! secrets=$(github_api "list ${repository} Actions secrets" \
-      "repos/${repository_owner}/${repository_name}/actions/secrets"); then
-      exit 1
-    fi
+    secrets_file=${repository_secret_files["${repository}"]}
     ;;
   *)
     echo "error: unsupported Actions secret scope for ${repository}: ${secret_scope}" >&2
@@ -78,10 +137,10 @@ while IFS= read -r credential; do
     ;;
   esac
 
-  updated_at=$(jq -r --arg name "${secret_name}" '
-    [.secrets[]? | select(.name == $name) | .updated_at] |
+  updated_at=$(jq -sr --arg name "${secret_name}" '
+    [.[] | select(.name == $name) | .updated_at] |
     if length == 1 then .[0] else empty end
-  ' <<<"${secrets}")
+  ' "${secrets_file}")
   if [[ -z ${updated_at} ]]; then
     echo "MISSING ${repository} ${secret_scope} Actions secret ${secret_name}" >&2
     ((missing += 1))

@@ -92,6 +92,13 @@ rewrite_manual_settings \
 assert_invalid 'a duplicate credential scope'
 reset_manual_settings
 
+for scope in admin:org project repo; do
+  rewrite_manual_settings \
+    ".github_actions_credentials[0].required_scopes -= [\"${scope}\"]"
+  assert_invalid "a credential missing the required ${scope} scope"
+  reset_manual_settings
+done
+
 rewrite_manual_settings \
   '.github_actions_credentials[0].secret_name = "settings-token"'
 assert_invalid 'a malformed Actions secret name'

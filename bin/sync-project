@@ -44,11 +44,15 @@ trap 'rm -rf "${temporary}"' EXIT
 github_api() {
   local operation=$1
   local response
+  local status
 
   shift
-  if ! response=$(gh api -H "X-GitHub-Api-Version: ${api_version}" "$@"); then
+  if response=$(gh api -H "X-GitHub-Api-Version: ${api_version}" "$@"); then
+    :
+  else
+    status=$?
     echo "error: GitHub API operation failed: ${operation}" >&2
-    return 1
+    return "${status}"
   fi
   printf '%s\n' "${response}"
 }
@@ -57,13 +61,16 @@ graphql() {
   local operation=$1
   local query=$2
   local variables=$3
-  local input response
+  local input response status
 
   input=${temporary}/graphql-$RANDOM.json
   jq -n --arg query "${query}" --argjson variables "${variables}" \
     '{query: $query, variables: $variables}' >"${input}"
-  if ! response=$(github_api "${operation}" graphql --input "${input}"); then
-    return 1
+  if response=$(github_api "${operation}" graphql --input "${input}"); then
+    :
+  else
+    status=$?
+    return "${status}"
   fi
   if ! jq -e 'type == "object"' <<<"${response}" >/dev/null; then
     echo "error: GitHub GraphQL operation returned invalid JSON: ${operation}" >&2
@@ -72,6 +79,10 @@ graphql() {
   if jq -e '(.errors // []) | length > 0' <<<"${response}" >/dev/null; then
     jq -r '.errors[] | .message // tostring' <<<"${response}" >&2
     echo "error: GitHub GraphQL operation failed: ${operation}" >&2
+    return 1
+  fi
+  if ! jq -e '.data | type == "object"' <<<"${response}" >/dev/null; then
+    echo "error: GitHub GraphQL operation returned an invalid response: ${operation}" >&2
     return 1
   fi
   printf '%s\n' "${response}"
@@ -83,13 +94,17 @@ graphql_paginate() {
   local variables=$3
   local connection_filter=$4
   local nodes_filter=$5
-  local connection cursor has_next page response
+  local connection cursor has_next page response status
+  local -A seen_cursors=()
 
   page=1
   while true; do
-    if ! response=$(graphql "${operation} (page ${page})" \
+    if response=$(graphql "${operation} (page ${page})" \
       "${query}" "${variables}"); then
-      return 1
+      :
+    else
+      status=$?
+      return "${status}"
     fi
     if ! connection=$(jq -ce "${connection_filter}" <<<"${response}"); then
       echo "error: GitHub GraphQL response is missing the expected connection: ${operation}" >&2
@@ -115,6 +130,11 @@ graphql_paginate() {
       echo "error: GitHub GraphQL response omitted the next cursor: ${operation}" >&2
       return 1
     fi
+    if [[ -v seen_cursors["${cursor}"] ]]; then
+      echo "error: GitHub GraphQL response repeated the next cursor: ${operation}" >&2
+      return 1
+    fi
+    seen_cursors["${cursor}"]=1
     variables=$(jq -c --arg cursor "${cursor}" \
       '. + {endCursor: $cursor}' <<<"${variables}")
     ((page += 1))
@@ -124,9 +144,12 @@ graphql_paginate() {
 project_title=$(jq -r '.project.title' "${planning_config}")
 organization_query='query($login:String!){organization(login:$login){issueTypes(first:25){nodes{id name isEnabled}} projectsV2(first:50){nodes{id number title fields(first:100){nodes{... on ProjectV2Field{id name} ... on ProjectV2IterationField{id name} ... on ProjectV2MultiSelectField{id name} ... on ProjectV2SingleSelectField{id name options{id name}}}}}}}}'
 organization_variables=$(jq -cn --arg login "${organization}" '{login: $login}')
-if ! organization_response=$(graphql "read organization planning metadata" \
+if organization_response=$(graphql "read organization planning metadata" \
   "${organization_query}" "${organization_variables}"); then
-  exit 1
+  :
+else
+  status=$?
+  exit "${status}"
 fi
 if ! organization_data=$(jq -ce \
   '.data.organization | select(type == "object")' \
@@ -183,10 +206,13 @@ for qualifier in is:issue is:pr; do
   search_variables=$(jq -cn \
     --arg queryString "org:${organization} is:open ${qualifier} archived:false" \
     '{queryString: $queryString, endCursor: null}')
-  if ! graphql_paginate "search open ${qualifier} work" \
+  if graphql_paginate "search open ${qualifier} work" \
     "${search_query}" "${search_variables}" '.data.search' \
     '.nodes[] | select(.repository.isArchived == false)' >>"${open_items}"; then
-    exit 1
+    :
+  else
+    status=$?
+    exit "${status}"
   fi
 done
 
@@ -194,10 +220,13 @@ project_items_query='query($id:ID!,$endCursor:String){node(id:$id){... on Projec
 project_items=${temporary}/project-items.jsonl
 project_items_variables=$(jq -cn --arg id "${project_id}" \
   '{id: $id, endCursor: null}')
-if ! graphql_paginate "read project items" "${project_items_query}" \
+if graphql_paginate "read project items" "${project_items_query}" \
   "${project_items_variables}" '.data.node.items' '.nodes[]' \
   >"${project_items}"; then
-  exit 1
+  :
+else
+  status=$?
+  exit "${status}"
 fi
 
 declare -A project_item_ids=()
@@ -228,25 +257,35 @@ pause_after_mutation() {
 
 add_project_item() {
   local content_id=$1
-  local response
+  local item_id response status
   local variables
 
   variables=$(jq -cn --arg projectId "${project_id}" \
     --arg contentId "${content_id}" \
     '{input: {projectId: $projectId, contentId: $contentId}}')
-  if ! response=$(graphql "add ${content_id} to project" \
+  if response=$(graphql "add ${content_id} to project" \
     'mutation($input:AddProjectV2ItemByIdInput!){addProjectV2ItemById(input:$input){item{id}}}' \
     "${variables}"); then
+    :
+  else
+    status=$?
+    return "${status}"
+  fi
+  if ! item_id=$(jq -er '
+    .data.addProjectV2ItemById.item.id |
+    select(type == "string" and length > 0)
+  ' <<<"${response}"); then
+    echo "error: GitHub GraphQL operation returned an invalid item: add ${content_id} to project" >&2
     return 1
   fi
-  jq -r '.data.addProjectV2ItemById.item.id' <<<"${response}"
+  printf '%s\n' "${item_id}"
   pause_after_mutation
 }
 
 set_project_status() {
   local item_id=$1
   local status=$2
-  local variables
+  local graphql_status response variables
 
   variables=$(jq -cn \
     --arg projectId "${project_id}" \
@@ -260,9 +299,19 @@ set_project_status() {
         value: {singleSelectOptionId: $optionId}
       }}
     ')
-  if ! graphql "set project item ${item_id} status to ${status}" \
+  if response=$(graphql "set project item ${item_id} status to ${status}" \
     'mutation($input:UpdateProjectV2ItemFieldValueInput!){updateProjectV2ItemFieldValue(input:$input){projectV2Item{id}}}' \
-    "${variables}" >/dev/null; then
+    "${variables}"); then
+    :
+  else
+    graphql_status=$?
+    return "${graphql_status}"
+  fi
+  if ! jq -e '
+    .data.updateProjectV2ItemFieldValue.projectV2Item.id |
+    type == "string" and length > 0
+  ' <<<"${response}" >/dev/null; then
+    echo "error: GitHub GraphQL operation returned an invalid project item: set project item ${item_id} status to ${status}" >&2
     return 1
   fi
   pause_after_mutation
@@ -271,14 +320,23 @@ set_project_status() {
 set_issue_type() {
   local issue_id=$1
   local issue_type=$2
-  local variables
+  local graphql_status response variables
 
   variables=$(jq -cn --arg id "${issue_id}" \
     --arg issueTypeId "${issue_type_ids["${issue_type}"]}" \
     '{input: {id: $id, issueTypeId: $issueTypeId}}')
-  if ! graphql "set issue ${issue_id} type to ${issue_type}" \
+  if response=$(graphql "set issue ${issue_id} type to ${issue_type}" \
     'mutation($input:UpdateIssueInput!){updateIssue(input:$input){issue{id}}}' \
-    "${variables}" >/dev/null; then
+    "${variables}"); then
+    :
+  else
+    graphql_status=$?
+    return "${graphql_status}"
+  fi
+  if ! jq -e '
+    .data.updateIssue.issue.id | type == "string" and length > 0
+  ' <<<"${response}" >/dev/null; then
+    echo "error: GitHub GraphQL operation returned an invalid issue: set issue ${issue_id} type to ${issue_type}" >&2
     return 1
   fi
   pause_after_mutation

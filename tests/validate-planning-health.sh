@@ -29,6 +29,8 @@ assert_invalid '.consecutive_failure_threshold = 1' \
   'an alert on the first synchronization failure'
 assert_invalid '.incident_marker = "<!-- changed -->"' \
   'an unstable managed-incident marker'
+assert_invalid '.incident_actor = "untrusted-user"' \
+  'an untrusted managed-incident actor'
 assert_invalid '.monitoring_owner = ""' \
   'planning health without an accountable owner'
 assert_invalid '.monitor_workflow = "missing.yml"' \
