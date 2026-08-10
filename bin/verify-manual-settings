@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+organization=${ATRINIK_ORGANIZATION:-atrinik}
+api_version=2026-03-10
+
+if (($#)); then
+  echo "usage: $0" >&2
+  exit 2
+fi
+
+for command in gh jq; do
+  if ! command -v "${command}" >/dev/null 2>&1; then
+    echo "error: ${command} is required" >&2
+    exit 1
+  fi
+done
+if [[ ${GITHUB_ACTIONS:-false} == true && -z ${GH_TOKEN:-} ]]; then
+  echo "error: ATRINIK_SETTINGS_TOKEN is unavailable: GH_TOKEN is empty in GitHub Actions" >&2
+  exit 1
+fi
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+manual_settings=${root}/config/manual-settings.json
+temporary=$(mktemp -d)
+trap 'rm -rf "${temporary}"' EXIT
+
+"${root}/bin/validate" >/dev/null
+
+github_api() {
+  local operation=$1
+  local response
+  local status
+
+  shift
+  if response=$(gh api -H "X-GitHub-Api-Version: ${api_version}" "$@"); then
+    :
+  else
+    status=$?
+    echo "error: GitHub API operation failed: ${operation}" >&2
+    return "${status}"
+  fi
+  if ! jq -e 'type == "object"' <<<"${response}" >/dev/null; then
+    echo "error: GitHub API operation returned invalid JSON: ${operation}" >&2
+    return 1
+  fi
+  printf '%s\n' "${response}"
+}
+
+declare -A repository_data_files=()
+declare -A repository_secret_files=()
+
+load_repository_metadata() {
+  local repository=$1
+  local collected expected page page_size repository_key response status
+
+  if [[ -v repository_data_files["${repository}"] ]]; then
+    return
+  fi
+
+  repository_key=${repository//\//-}
+  repository_data_files["${repository}"]=${temporary}/${repository_key}.json
+  repository_secret_files["${repository}"]=${temporary}/${repository_key}-secrets.jsonl
+  if github_api "read ${repository} identity" "repos/${repository}" \
+    >"${repository_data_files["${repository}"]}"; then
+    :
+  else
+    status=$?
+    return "${status}"
+  fi
+
+  : >"${repository_secret_files["${repository}"]}"
+  expected=
+  collected=0
+  page=1
+  while true; do
+    if response=$(github_api \
+      "list ${repository} Actions secrets (page ${page})" \
+      "repos/${repository}/actions/secrets?per_page=100&page=${page}"); then
+      :
+    else
+      status=$?
+      return "${status}"
+    fi
+    if ! jq -e '
+      (.total_count | type == "number" and floor == . and . >= 0) and
+      (.secrets | type == "array")
+    ' <<<"${response}" >/dev/null; then
+      echo "error: Actions secret metadata response is invalid for ${repository} (page ${page})" >&2
+      return 1
+    fi
+    if [[ -z ${expected} ]]; then
+      expected=$(jq -r '.total_count' <<<"${response}")
+    elif [[ $(jq -r '.total_count' <<<"${response}") != "${expected}" ]]; then
+      echo "error: Actions secret metadata changed while listing ${repository}" >&2
+      return 1
+    fi
+    jq -c '.secrets[]' <<<"${response}" \
+      >>"${repository_secret_files["${repository}"]}"
+    page_size=$(jq -r '.secrets | length' <<<"${response}")
+    ((collected += page_size))
+    if ((collected >= expected)); then
+      break
+    fi
+    if ((page_size == 0)); then
+      echo "error: Actions secret metadata ended before total_count for ${repository}" >&2
+      return 1
+    fi
+    ((page += 1))
+  done
+  if ((collected != expected)); then
+    echo "error: Actions secret metadata count mismatch for ${repository}: expected ${expected}, got ${collected}" >&2
+    return 1
+  fi
+}
+
+missing=0
+while IFS= read -r credential; do
+  repository=$(jq -r '.repository' <<<"${credential}")
+  repository_owner=${repository%%/*}
+  repository_id=$(jq -r '.repository_id' <<<"${credential}")
+  secret_name=$(jq -r '.secret_name' <<<"${credential}")
+  secret_scope=$(jq -r '.secret_scope' <<<"${credential}")
+
+  if [[ ${repository_owner} != "${organization}" ]]; then
+    echo "error: credential repository owner does not match ${organization}: ${repository}" >&2
+    exit 1
+  fi
+  if load_repository_metadata "${repository}"; then
+    :
+  else
+    status=$?
+    exit "${status}"
+  fi
+  repository_data=$(<"${repository_data_files["${repository}"]}")
+  live_repository_id=$(jq -r '.id // empty' <<<"${repository_data}")
+  if [[ ${live_repository_id} != "${repository_id}" ]]; then
+    echo "error: repository identity drift for ${repository}: expected ${repository_id}, got ${live_repository_id:-missing}" >&2
+    exit 1
+  fi
+
+  case ${secret_scope} in
+  repository)
+    secrets_file=${repository_secret_files["${repository}"]}
+    ;;
+  *)
+    echo "error: unsupported Actions secret scope for ${repository}: ${secret_scope}" >&2
+    exit 1
+    ;;
+  esac
+
+  updated_at=$(jq -sr --arg name "${secret_name}" '
+    [.[] | select(.name == $name) | .updated_at] |
+    if length == 1 then .[0] else empty end
+  ' "${secrets_file}")
+  if [[ -z ${updated_at} ]]; then
+    echo "MISSING ${repository} ${secret_scope} Actions secret ${secret_name}" >&2
+    ((missing += 1))
+    continue
+  fi
+  echo "KEEP ${repository} ${secret_scope} Actions secret ${secret_name} (updated ${updated_at})"
+done < <(jq -c '.github_actions_credentials[]' "${manual_settings}")
+
+if ((missing > 0)); then
+  echo "error: ${missing} required Actions credential record(s) are missing live secret metadata" >&2
+  exit 1
+fi
+
+echo "Manual settings live credential metadata is present."

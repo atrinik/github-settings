@@ -31,6 +31,23 @@
   the existing organization and repository administration scopes. Personal
   issue-dashboard saved views remain documented manual state because GitHub
   exposes no public API for them.
+- Keep every administrative Actions credential value out of Git. Inventory its
+  stable repository, secret placement, scopes, consumers, accountable owner,
+  verification date, rotate-by deadline, cadence, and runbook in
+  `config/manual-settings.json`. Run `bin/verify-manual-settings` to check only
+  live name/identity metadata, then prove permissions with the owning workflow;
+  never claim the metadata API verifies a value, expiry, or effective scope.
+- Keep Project apply preflight ahead of every mutation: require the advertised
+  classic-PAT scopes, Project update capability, repository write access for
+  issue-type changes, and a stable result count exactly matching unique nodes
+  within GitHub's 1,000-item search window. Exceeding a capability or inventory
+  boundary fails closed.
+- Treat GitHub cron as best-effort. Preserve the separate Project health
+  workflow, its configured freshness and consecutive-failure thresholds, and
+  its single bot-authored, marker-owned incident and outage-episode timestamp.
+  Alert with the ordinary least-privilege `GITHUB_TOKEN` so an absent
+  administration PAT remains reportable; resolve only after a newer successful
+  sync in the current episode and a converged zero-mutation plan.
 - `community-health/` is authoritative; `atrinik/.github` is a generated
   deployment target. Never hand-edit that repository, add independent release
   automation to it, or add its issue forms' `projects:` key: public

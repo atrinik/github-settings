@@ -20,6 +20,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Verify settings credential inventory
+        env:
+          GH_TOKEN: ${{ secrets.ATRINIK_SETTINGS_TOKEN }}
+        run: bin/verify-manual-settings
+
       - name: Add and update project items
         env:
           GH_TOKEN: ${{ secrets.ATRINIK_SETTINGS_TOKEN }}

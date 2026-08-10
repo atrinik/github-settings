@@ -10,6 +10,7 @@ mkdir -p "${temporary}/bin"
 cp "${root}/bin/validate" "${temporary}/bin/validate"
 cp -R "${root}/config" "${temporary}/config"
 cp -R "${root}/community-health" "${temporary}/community-health"
+cp -R "${root}/.github" "${temporary}/.github"
 
 assert_invalid() {
   local description=$1

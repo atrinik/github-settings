@@ -19,7 +19,7 @@ case ${1:-} in
   ;;
 esac
 
-for command in gh jq sleep; do
+for command in cat gh jq sleep tr wc; do
   if ! command -v "${command}" >/dev/null 2>&1; then
     echo "error: ${command} is required" >&2
     exit 1
@@ -28,6 +28,10 @@ done
 if [[ ! ${pause_seconds} =~ ^[0-9]+([.][0-9]+)?$ ]]; then
   echo "error: ATRINIK_PROJECT_SYNC_PAUSE_SECONDS must be numeric" >&2
   exit 2
+fi
+if [[ ${GITHUB_ACTIONS:-false} == true && -z ${GH_TOKEN:-} ]]; then
+  echo "error: ATRINIK_SETTINGS_TOKEN is unavailable: GH_TOKEN is empty in GitHub Actions" >&2
+  exit 1
 fi
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -38,30 +42,208 @@ trap 'rm -rf "${temporary}"' EXIT
 "${root}/bin/validate" >/dev/null
 
 github_api() {
-  gh api -H "X-GitHub-Api-Version: ${api_version}" "$@"
+  local operation=$1
+  local response
+  local status
+
+  shift
+  if response=$(gh api -H "X-GitHub-Api-Version: ${api_version}" "$@"); then
+    :
+  else
+    status=$?
+    echo "error: GitHub API operation failed: ${operation}" >&2
+    return "${status}"
+  fi
+  printf '%s\n' "${response}"
 }
 
+verify_token_scopes() {
+  local advertised_scopes header header_name response scope status
+  local -A advertised=()
+
+  if response=$(gh api --include \
+    -H "X-GitHub-Api-Version: ${api_version}" user); then
+    :
+  else
+    status=$?
+    echo "error: GitHub API operation failed: verify settings credential scopes" >&2
+    return "${status}"
+  fi
+  advertised_scopes=
+  while IFS= read -r header; do
+    header=${header%$'\r'}
+    header_name=${header%%:*}
+    if [[ ${header_name,,} == x-oauth-scopes ]]; then
+      advertised_scopes=${header#*:}
+    fi
+  done <<<"${response}"
+  if [[ -z ${advertised_scopes//[[:space:]]/} ]]; then
+    echo "error: settings credential scope metadata is unavailable; ATRINIK_SETTINGS_TOKEN must be a classic PAT" >&2
+    return 1
+  fi
+  while IFS= read -r scope; do
+    scope=${scope#"${scope%%[![:space:]]*}"}
+    scope=${scope%"${scope##*[![:space:]]}"}
+    [[ -n ${scope} ]] && advertised["${scope}"]=1
+  done < <(tr ',' '\n' <<<"${advertised_scopes}")
+  for scope in admin:org project repo; do
+    if [[ ! -v advertised["${scope}"] ]]; then
+      echo "error: ATRINIK_SETTINGS_TOKEN is missing required classic PAT scope: ${scope}" >&2
+      return 1
+    fi
+  done
+}
+
+if ${apply}; then
+  if verify_token_scopes; then
+    :
+  else
+    status=$?
+    exit "${status}"
+  fi
+fi
+
 graphql() {
-  local query=$1
-  local variables=$2
-  local input response
+  local operation=$1
+  local query=$2
+  local variables=$3
+  local input response status
 
   input=${temporary}/graphql-$RANDOM.json
   jq -n --arg query "${query}" --argjson variables "${variables}" \
     '{query: $query, variables: $variables}' >"${input}"
-  response=$(github_api graphql --input "${input}")
-  if jq -e '.errors | length > 0' <<<"${response}" >/dev/null; then
-    jq -r '.errors[].message' <<<"${response}" >&2
+  if response=$(github_api "${operation}" graphql --input "${input}"); then
+    :
+  else
+    status=$?
+    return "${status}"
+  fi
+  if ! jq -e 'type == "object"' <<<"${response}" >/dev/null; then
+    echo "error: GitHub GraphQL operation returned invalid JSON: ${operation}" >&2
+    return 1
+  fi
+  if jq -e '(.errors // []) | length > 0' <<<"${response}" >/dev/null; then
+    jq -r '.errors[] | .message // tostring' <<<"${response}" >&2
+    echo "error: GitHub GraphQL operation failed: ${operation}" >&2
+    return 1
+  fi
+  if ! jq -e '.data | type == "object"' <<<"${response}" >/dev/null; then
+    echo "error: GitHub GraphQL operation returned an invalid response: ${operation}" >&2
     return 1
   fi
   printf '%s\n' "${response}"
 }
 
+graphql_paginate() {
+  local operation=$1
+  local query=$2
+  local variables=$3
+  local connection_filter=$4
+  local nodes_filter=$5
+  local connection cursor emitted_count expected_count has_next output page
+  local response status unique_count
+  local -A seen_cursors=()
+
+  output=${temporary}/pagination-$RANDOM.jsonl
+  : >"${output}"
+  expected_count=
+  page=1
+  while true; do
+    if response=$(graphql "${operation} (page ${page})" \
+      "${query}" "${variables}"); then
+      :
+    else
+      status=$?
+      return "${status}"
+    fi
+    if ! connection=$(jq -ce "${connection_filter}" <<<"${response}"); then
+      echo "error: GitHub GraphQL response is missing the expected connection: ${operation}" >&2
+      return 1
+    fi
+    if ! jq -e '
+      (.nodes | type == "array") and
+      (.pageInfo | type == "object") and
+      (.pageInfo.hasNextPage | type == "boolean")
+    ' <<<"${connection}" >/dev/null; then
+      echo "error: GitHub GraphQL response has invalid pagination data: ${operation}" >&2
+      return 1
+    fi
+    if [[ ${connection_filter} == .data.search ]]; then
+      if ! jq -e '
+        .issueCount | type == "number" and floor == . and . >= 0
+      ' <<<"${connection}" >/dev/null; then
+        echo "error: GitHub GraphQL search response omitted a valid result count: ${operation}" >&2
+        return 1
+      fi
+      if (( $(jq -r '.issueCount' <<<"${connection}") > 1000 )); then
+        echo "error: GitHub GraphQL search exceeds the 1000-result API window: ${operation}" >&2
+        return 1
+      fi
+      if [[ -z ${expected_count} ]]; then
+        expected_count=$(jq -r '.issueCount' <<<"${connection}")
+      elif [[ $(jq -r '.issueCount' <<<"${connection}") != "${expected_count}" ]]; then
+        echo "error: GitHub GraphQL search result count changed during pagination: ${operation}" >&2
+        return 1
+      fi
+    fi
+    if ! jq -c "${nodes_filter}" <<<"${connection}" >>"${output}"; then
+      echo "error: GitHub GraphQL response has invalid nodes: ${operation}" >&2
+      return 1
+    fi
+
+    has_next=$(jq -r '.pageInfo.hasNextPage' <<<"${connection}")
+    [[ ${has_next} == true ]] || break
+    cursor=$(jq -r '.pageInfo.endCursor // empty' <<<"${connection}")
+    if [[ -z ${cursor} ]]; then
+      echo "error: GitHub GraphQL response omitted the next cursor: ${operation}" >&2
+      return 1
+    fi
+    if [[ -v seen_cursors["${cursor}"] ]]; then
+      echo "error: GitHub GraphQL response repeated the next cursor: ${operation}" >&2
+      return 1
+    fi
+    seen_cursors["${cursor}"]=1
+    variables=$(jq -c --arg cursor "${cursor}" \
+      '. + {endCursor: $cursor}' <<<"${variables}")
+    ((page += 1))
+  done
+
+  if [[ ${connection_filter} == .data.search ]]; then
+    emitted_count=$(wc -l <"${output}")
+    if ! unique_count=$(jq -sr '
+      if all(.[]; .id | type == "string" and length > 0) then
+        [.[].id] | unique | length
+      else
+        error("search node ID is missing")
+      end
+    ' "${output}"); then
+      echo "error: GitHub GraphQL search returned a node without an ID: ${operation}" >&2
+      return 1
+    fi
+    if ((emitted_count != expected_count || unique_count != expected_count)); then
+      echo "error: GitHub GraphQL search result count does not match unique nodes: ${operation}" >&2
+      return 1
+    fi
+  fi
+  cat "${output}"
+}
+
 project_title=$(jq -r '.project.title' "${planning_config}")
-organization_query='query($login:String!){organization(login:$login){issueTypes(first:25){nodes{id name isEnabled}} projectsV2(first:50){nodes{id number title fields(first:100){nodes{... on ProjectV2Field{id name} ... on ProjectV2IterationField{id name} ... on ProjectV2MultiSelectField{id name} ... on ProjectV2SingleSelectField{id name options{id name}}}}}}}}'
-organization_data=$(graphql "${organization_query}" \
-  "$(jq -cn --arg login "${organization}" '{login: $login}')" |
-  jq -c '.data.organization')
+organization_query='query($login:String!){organization(login:$login){issueTypes(first:25){nodes{id name isEnabled}} projectsV2(first:50){nodes{id number title viewerCanUpdate fields(first:100){nodes{... on ProjectV2Field{id name} ... on ProjectV2IterationField{id name} ... on ProjectV2MultiSelectField{id name} ... on ProjectV2SingleSelectField{id name options{id name}}}}}}}}'
+organization_variables=$(jq -cn --arg login "${organization}" '{login: $login}')
+if organization_response=$(graphql "read organization planning metadata" \
+  "${organization_query}" "${organization_variables}"); then
+  :
+else
+  status=$?
+  exit "${status}"
+fi
+if ! organization_data=$(jq -ce \
+  '.data.organization | select(type == "object")' \
+  <<<"${organization_response}"); then
+  echo "error: GitHub GraphQL response omitted organization planning metadata" >&2
+  exit 1
+fi
 project=$(jq -c --arg title "${project_title}" '
   .projectsV2.nodes | map(select(.title == $title))[0] // null
 ' <<<"${organization_data}")
@@ -72,6 +254,10 @@ if [[ ${project} == null ]]; then
 fi
 project_id=$(jq -r '.id' <<<"${project}")
 project_number=$(jq -r '.number' <<<"${project}")
+if ${apply} && ! jq -e '.viewerCanUpdate == true' <<<"${project}" >/dev/null; then
+  echo "error: ATRINIK_SETTINGS_TOKEN cannot update organization project: ${project_title}" >&2
+  exit 1
+fi
 status_field=$(jq -c '
   .fields.nodes | map(select(.name == "Status"))[0] // null
 ' <<<"${project}")
@@ -104,23 +290,53 @@ for issue_type in Task Bug Feature Initiative; do
   fi
 done
 
-search_query='query($queryString:String!,$endCursor:String){search(query:$queryString,type:ISSUE,first:100,after:$endCursor){nodes{... on Issue{__typename id url createdAt state issueType{name} repository{name isArchived} labels(first:50){nodes{name}} subIssues(first:1){totalCount}} ... on PullRequest{__typename id url createdAt state isDraft repository{name isArchived}}} pageInfo{hasNextPage endCursor}}}'
+search_query='query($queryString:String!,$endCursor:String){search(query:$queryString,type:ISSUE,first:100,after:$endCursor){issueCount nodes{... on Issue{__typename id url createdAt state issueType{name} repository{name isArchived viewerPermission} labels(first:50){nodes{name}} subIssues(first:1){totalCount}} ... on PullRequest{__typename id url createdAt state isDraft repository{name isArchived viewerPermission}}} pageInfo{hasNextPage endCursor}}}'
 open_items=${temporary}/open-items.jsonl
 : >"${open_items}"
 for qualifier in is:issue is:pr; do
-  github_api graphql --paginate \
-    -f query="${search_query}" \
-    -F queryString="org:${organization} is:open ${qualifier} archived:false" \
-    --jq '.data.search.nodes[] | select(.repository.isArchived == false)' \
-    >>"${open_items}"
+  search_variables=$(jq -cn \
+    --arg queryString "org:${organization} is:open ${qualifier} archived:false" \
+    '{queryString: $queryString, endCursor: null}')
+  if graphql_paginate "search open ${qualifier} work" \
+    "${search_query}" "${search_variables}" '.data.search' \
+    '.nodes[] | select(.repository.isArchived == false)' >>"${open_items}"; then
+    :
+  else
+    status=$?
+    exit "${status}"
+  fi
 done
+
+if ${apply}; then
+  unauthorized_repositories=$(jq -sr '
+    [
+      .[] |
+      select(
+        .__typename == "Issue" and
+        (.issueType.name // "") == "" and
+        (.repository.viewerPermission | IN("ADMIN", "MAINTAIN", "WRITE") | not)
+      ) |
+      .repository.name
+    ] | unique | join(", ")
+  ' "${open_items}")
+  if [[ -n ${unauthorized_repositories} ]]; then
+    echo "error: ATRINIK_SETTINGS_TOKEN cannot set issue types in repositories: ${unauthorized_repositories}" >&2
+    exit 1
+  fi
+fi
 
 project_items_query='query($id:ID!,$endCursor:String){node(id:$id){... on ProjectV2{items(first:100,after:$endCursor){nodes{id fieldValueByName(name:"Status"){... on ProjectV2ItemFieldSingleSelectValue{name optionId}} content{... on Issue{__typename id url createdAt state issueType{name} repository{name isArchived} labels(first:50){nodes{name}} subIssues(first:1){totalCount}} ... on PullRequest{__typename id url createdAt state isDraft repository{name isArchived}}}} pageInfo{hasNextPage endCursor}}}}}'
 project_items=${temporary}/project-items.jsonl
-github_api graphql --paginate \
-  -f query="${project_items_query}" \
-  -F id="${project_id}" \
-  --jq '.data.node.items.nodes[]' >"${project_items}"
+project_items_variables=$(jq -cn --arg id "${project_id}" \
+  '{id: $id, endCursor: null}')
+if graphql_paginate "read project items" "${project_items_query}" \
+  "${project_items_variables}" '.data.node.items' '.nodes[]' \
+  >"${project_items}"; then
+  :
+else
+  status=$?
+  exit "${status}"
+fi
 
 declare -A project_item_ids=()
 declare -A project_item_statuses=()
@@ -150,23 +366,35 @@ pause_after_mutation() {
 
 add_project_item() {
   local content_id=$1
-  local response
+  local item_id response status
   local variables
 
   variables=$(jq -cn --arg projectId "${project_id}" \
     --arg contentId "${content_id}" \
     '{input: {projectId: $projectId, contentId: $contentId}}')
-  response=$(graphql \
+  if response=$(graphql "add ${content_id} to project" \
     'mutation($input:AddProjectV2ItemByIdInput!){addProjectV2ItemById(input:$input){item{id}}}' \
-    "${variables}")
-  jq -r '.data.addProjectV2ItemById.item.id' <<<"${response}"
+    "${variables}"); then
+    :
+  else
+    status=$?
+    return "${status}"
+  fi
+  if ! item_id=$(jq -er '
+    .data.addProjectV2ItemById.item.id |
+    select(type == "string" and length > 0)
+  ' <<<"${response}"); then
+    echo "error: GitHub GraphQL operation returned an invalid item: add ${content_id} to project" >&2
+    return 1
+  fi
+  printf '%s\n' "${item_id}"
   pause_after_mutation
 }
 
 set_project_status() {
   local item_id=$1
   local status=$2
-  local variables
+  local graphql_status response variables
 
   variables=$(jq -cn \
     --arg projectId "${project_id}" \
@@ -180,23 +408,46 @@ set_project_status() {
         value: {singleSelectOptionId: $optionId}
       }}
     ')
-  graphql \
+  if response=$(graphql "set project item ${item_id} status to ${status}" \
     'mutation($input:UpdateProjectV2ItemFieldValueInput!){updateProjectV2ItemFieldValue(input:$input){projectV2Item{id}}}' \
-    "${variables}" >/dev/null
+    "${variables}"); then
+    :
+  else
+    graphql_status=$?
+    return "${graphql_status}"
+  fi
+  if ! jq -e '
+    .data.updateProjectV2ItemFieldValue.projectV2Item.id |
+    type == "string" and length > 0
+  ' <<<"${response}" >/dev/null; then
+    echo "error: GitHub GraphQL operation returned an invalid project item: set project item ${item_id} status to ${status}" >&2
+    return 1
+  fi
   pause_after_mutation
 }
 
 set_issue_type() {
   local issue_id=$1
   local issue_type=$2
-  local variables
+  local graphql_status response variables
 
   variables=$(jq -cn --arg id "${issue_id}" \
     --arg issueTypeId "${issue_type_ids["${issue_type}"]}" \
     '{input: {id: $id, issueTypeId: $issueTypeId}}')
-  graphql \
+  if response=$(graphql "set issue ${issue_id} type to ${issue_type}" \
     'mutation($input:UpdateIssueInput!){updateIssue(input:$input){issue{id}}}' \
-    "${variables}" >/dev/null
+    "${variables}"); then
+    :
+  else
+    graphql_status=$?
+    return "${graphql_status}"
+  fi
+  if ! jq -e '
+    .data.updateIssue.issue.id | type == "string" and length > 0
+  ' <<<"${response}" >/dev/null; then
+    echo "error: GitHub GraphQL operation returned an invalid issue: set issue ${issue_id} type to ${issue_type}" >&2
+    return 1
+  fi
   pause_after_mutation
 }
 

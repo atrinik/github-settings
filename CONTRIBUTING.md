@@ -14,6 +14,28 @@ ID, exact branch policy and reviewer set, and variable and secret names only.
 Never commit their values, and provision them only after the workflow that uses
 them is merged and reviewed.
 
+Administrative Actions credentials require a value-free lifecycle entry in
+`config/manual-settings.json`. Record stable repository identity, secret scope
+and name, credential type and required scopes, consumers, accountable owner,
+verification and rotate-by dates, cadence, and the runbook. Never add value,
+token ID, authorization header, fixture secret, or recoverable credential
+material. Changes require credential-schema negative tests, the read-only
+`bin/verify-manual-settings` plan, and the documented manual and scheduled
+post-rotation checks.
+
+Synchronization authentication tests must distinguish readable from writable
+credentials, preserve exact CLI failure statuses, reject missing advertised
+classic-PAT scopes and write capabilities before mutation, and fail closed on
+GraphQL searches beyond GitHub's 1,000-result window.
+
+Project synchronization health changes must preserve the separate monitoring
+path, the 90-minute freshness/failure contract, one marker-owned incident, and
+least-privilege alerting through `GITHUB_TOKEN`. Test fresh, stale, repeated
+failure, missing administration credential, trusted ownership, deduplication,
+recurrent-outage boundaries, and recovery paths. Do not imply that GitHub's
+best-effort cron is an exact 30-minute guarantee or that a monitor on GitHub
+Actions is external to GitHub's scheduler.
+
 When changing organization issue forms, keep them compatible with GitHub's
 live validator: omit empty optional metadata and do not add a top-level `type`
 key while the live renderer rejects it. Keep form labels synchronized with

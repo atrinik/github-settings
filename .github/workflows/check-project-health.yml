@@ -1,0 +1,34 @@
+name: Project synchronization health
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "5,35 * * * *"
+  workflow_run:
+    workflows:
+      - Synchronize project
+    types:
+      - completed
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
+concurrency:
+  group: project-synchronization-health
+  cancel-in-progress: false
+
+jobs:
+  health:
+    name: Check Project synchronization health
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check freshness and convergence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ATRINIK_SETTINGS_TOKEN: ${{ secrets.ATRINIK_SETTINGS_TOKEN }}
+        run: bin/check-project-health --apply
