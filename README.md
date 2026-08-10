@@ -236,10 +236,11 @@ dropped. The first apply intentionally performs a large one-time backfill;
 later runs are incremental and idempotent.
 
 GitHub caps each GraphQL search at 1,000 results. The synchronizer reads the
-reported count and fails before mutation or a success summary if either the
-open-issue or open-pull-request search exceeds that window; it must be changed
-to enumerate or partition the inventory before a larger organization can be
-safely synchronized.
+reported count, requires it to remain stable across pages, and reconciles it
+with the exact number of unique returned node IDs. It fails before mutation or
+a success summary if either search is inconsistent or exceeds that window; it
+must be changed to enumerate or partition the inventory before a larger
+organization can be safely synchronized.
 
 `config/planning-health.json` sets a 90-minute maximum freshness age and alerts
 after two consecutive failed synchronization runs. The separate

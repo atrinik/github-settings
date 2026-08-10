@@ -84,7 +84,8 @@ page2-graphql-error)
   ;;
 happy | idempotent | paginated | page2-shape-error | repeated-cursor | \
   mutation-empty-add | mutation-empty-status | mutation-empty-type | \
-  project-read-only | repository-read-only | search-overflow) ;;
+  project-read-only | repository-read-only | search-overflow | count-short | \
+  count-change | duplicate-node) ;;
 *) exit 1 ;;
 esac
 
@@ -151,6 +152,12 @@ elif [[ ${query} == *'organization(login:'* ]]; then
 elif [[ ${query} == *'search(query:'* ]]; then
   issue_count=1
   [[ ${FAKE_GH_SCENARIO} == search-overflow ]] && issue_count=1001
+  [[ ${FAKE_GH_SCENARIO} == count-short || \
+    ${FAKE_GH_SCENARIO} == duplicate-node ]] && issue_count=2
+  if [[ ${FAKE_GH_SCENARIO} == count-change ]]; then
+    issue_count=2
+    [[ ${cursor} == CURSOR ]] && issue_count=1
+  fi
   if [[ ${cursor} == CURSOR ]]; then
     case ${FAKE_GH_SCENARIO} in
     page2-shape-error)
@@ -176,7 +183,7 @@ elif [[ ${query} == *'search(query:'* ]]; then
   page_info='{"hasNextPage":false,"endCursor":null}'
   case ${FAKE_GH_SCENARIO} in
   paginated | page2-api-failure | page2-graphql-error | page2-shape-error | \
-    repeated-cursor)
+    repeated-cursor | count-change)
     page_info='{"hasNextPage":true,"endCursor":"CURSOR"}'
     ;;
   esac
@@ -187,15 +194,16 @@ elif [[ ${query} == *'search(query:'* ]]; then
       issue_type='{"name":"Initiative"}'
     fi
     viewer_permission=WRITE
+    copies=1
+    [[ ${FAKE_GH_SCENARIO} == duplicate-node ]] && copies=2
     [[ ${FAKE_GH_SCENARIO} == repository-read-only ]] && \
       viewer_permission=READ
-    jq -n --argjson issue_count "${issue_count}" \
+    jq -n --argjson copies "${copies}" \
+      --argjson issue_count "${issue_count}" \
       --argjson issue_type "${issue_type}" \
       --arg viewer_permission "${viewer_permission}" \
-      --argjson page_info "${page_info}" '{
-      data: {search: {
-        issueCount: $issue_count,
-        nodes: [{
+      --argjson page_info "${page_info}" '
+      {
           __typename: "Issue",
           id: "ISSUE",
           url: "https://github.com/atrinik/server/issues/1",
@@ -208,7 +216,10 @@ elif [[ ${query} == *'search(query:'* ]]; then
           },
           labels: {nodes: []},
           subIssues: {totalCount: 1}
-        }],
+      } as $node |
+      {data: {search: {
+        issueCount: $issue_count,
+        nodes: [range(0; $copies) | $node],
         pageInfo: $page_info
       }}
     }'
@@ -411,6 +422,15 @@ grep -Fq 'cannot set issue types in repositories: server' \
 assert_preflight_failure 1 search-overflow
 grep -Fq 'search exceeds the 1000-result API window' \
   "${temporary}/search-overflow.err"
+assert_preflight_failure 1 count-short
+grep -Fq 'search result count does not match unique nodes' \
+  "${temporary}/count-short.err"
+assert_preflight_failure 1 count-change
+grep -Fq 'search result count changed during pagination' \
+  "${temporary}/count-change.err"
+assert_preflight_failure 1 duplicate-node
+grep -Fq 'search result count does not match unique nodes' \
+  "${temporary}/duplicate-node.err"
 
 grep -Fq 'gh: authentication failed' "${temporary}/api-failure.err"
 grep -Fq 'Resource not accessible by personal access token' \

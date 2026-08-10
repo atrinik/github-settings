@@ -39,8 +39,9 @@
   never claim the metadata API verifies a value, expiry, or effective scope.
 - Keep Project apply preflight ahead of every mutation: require the advertised
   classic-PAT scopes, Project update capability, repository write access for
-  issue-type changes, and a result count within GitHub's 1,000-item search
-  window. Exceeding a capability or inventory boundary fails closed.
+  issue-type changes, and a stable result count exactly matching unique nodes
+  within GitHub's 1,000-item search window. Exceeding a capability or inventory
+  boundary fails closed.
 - Treat GitHub cron as best-effort. Preserve the separate Project health
   workflow, its configured freshness and consecutive-failure thresholds, and
   its single bot-authored, marker-owned incident and outage-episode timestamp.

@@ -19,7 +19,7 @@ case ${1:-} in
   ;;
 esac
 
-for command in gh jq sleep tr; do
+for command in cat gh jq sleep tr wc; do
   if ! command -v "${command}" >/dev/null 2>&1; then
     echo "error: ${command} is required" >&2
     exit 1
@@ -140,9 +140,13 @@ graphql_paginate() {
   local variables=$3
   local connection_filter=$4
   local nodes_filter=$5
-  local connection cursor has_next page response status
+  local connection cursor emitted_count expected_count has_next output page
+  local response status unique_count
   local -A seen_cursors=()
 
+  output=${temporary}/pagination-$RANDOM.jsonl
+  : >"${output}"
+  expected_count=
   page=1
   while true; do
     if response=$(graphql "${operation} (page ${page})" \
@@ -175,8 +179,14 @@ graphql_paginate() {
         echo "error: GitHub GraphQL search exceeds the 1000-result API window: ${operation}" >&2
         return 1
       fi
+      if [[ -z ${expected_count} ]]; then
+        expected_count=$(jq -r '.issueCount' <<<"${connection}")
+      elif [[ $(jq -r '.issueCount' <<<"${connection}") != "${expected_count}" ]]; then
+        echo "error: GitHub GraphQL search result count changed during pagination: ${operation}" >&2
+        return 1
+      fi
     fi
-    if ! jq -c "${nodes_filter}" <<<"${connection}"; then
+    if ! jq -c "${nodes_filter}" <<<"${connection}" >>"${output}"; then
       echo "error: GitHub GraphQL response has invalid nodes: ${operation}" >&2
       return 1
     fi
@@ -197,6 +207,25 @@ graphql_paginate() {
       '. + {endCursor: $cursor}' <<<"${variables}")
     ((page += 1))
   done
+
+  if [[ ${connection_filter} == .data.search ]]; then
+    emitted_count=$(wc -l <"${output}")
+    if ! unique_count=$(jq -sr '
+      if all(.[]; .id | type == "string" and length > 0) then
+        [.[].id] | unique | length
+      else
+        error("search node ID is missing")
+      end
+    ' "${output}"); then
+      echo "error: GitHub GraphQL search returned a node without an ID: ${operation}" >&2
+      return 1
+    fi
+    if ((emitted_count != expected_count || unique_count != expected_count)); then
+      echo "error: GitHub GraphQL search result count does not match unique nodes: ${operation}" >&2
+      return 1
+    fi
+  fi
+  cat "${output}"
 }
 
 project_title=$(jq -r '.project.title' "${planning_config}")
