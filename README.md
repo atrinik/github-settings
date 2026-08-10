@@ -595,7 +595,9 @@ an external provider. Complete every retirement in this order:
 Record the exact environment and external-token names in the retirement pull
 request handoff without recording their values.
 
-## Granting Classic access to the Windows build image
+## Granting Classic access to private build images
+
+### Windows cross-build image
 
 The private `ghcr.io/atrinik/windows-build` image is owned by the
 `atrinik/windows-build` container package (package ID `14204802`) and remains
@@ -661,3 +663,52 @@ remove only `atrinik/classic` from **Manage Actions access**, and confirm the
 repository is absent while the package remains private and linked to
 `atrinik/devcontainer`. No `bin/publish --apply` run is involved in either
 direction because this setting has no supported publisher API.
+
+### Classic Linux build image
+
+The private `ghcr.io/atrinik/classic-build` image is owned by the
+`atrinik/classic-build` container package (package ID `14345002`) and remains
+linked to `atrinik/devcontainer`. The same Classic repository identity above
+needs an explicit **Read** grant for its Linux Check jobs. Before changing the
+manual setting, verify the exact package, consumer, and candidate version:
+
+```sh
+gh api /orgs/atrinik/packages/container/classic-build \
+  --jq '{id, name, package_type, visibility, source: .repository.full_name}'
+gh api /repos/atrinik/classic \
+  --jq '{id, full_name, visibility, archived, default_branch}'
+gh api --paginate \
+  '/orgs/atrinik/packages/container/classic-build/versions?per_page=100' \
+  --jq '.[] | select(.id == 1118365045) | {id, name, tags: .metadata.container.tags}'
+```
+
+Require package ID `14345002`, type `container`, visibility `private`, and
+source `atrinik/devcontainer`; require the Classic repository values documented
+above; and require version ID `1118365045`, digest
+`sha256:e117b858d5aecdb8eb39dc56451378b6e6bd72dd5e042ab96fee5b6154000043`,
+with tag
+`candidate-sha-b9a86c4f52205c927373caa7583d3a43989cfca7`.
+An API failure, an empty version query, any identity mismatch, or any
+unexpected live state is a stop condition.
+
+Open the
+[Classic build package settings](https://github.com/orgs/atrinik/packages/container/classic-build/settings),
+find **Manage Actions access**, select **Add repository**, add
+`atrinik/classic`, and leave its role at **Read**. Do not modify private
+visibility, repository source, or permission inheritance. Require the UI to
+list `atrinik/classic` exactly once with the **Read** role, then rerun the
+failed Classic Check jobs:
+
+```sh
+gh run rerun 31429664785 --repo atrinik/classic --failed
+gh run watch 31429664785 --repo atrinik/classic --exit-status
+```
+
+Core, server, and client validation must all pull the exact candidate digest
+and succeed. If any pull still reports `manifest unknown`, recheck the manual
+grant; do not make the package public or add a repository secret. To roll back,
+first merge a reviewed desired-state removal, then remove only
+`atrinik/classic` from this package's **Manage Actions access** list and verify
+that the repository entry is absent while private visibility and the
+`atrinik/devcontainer` association remain unchanged. Any unexpected UI state
+is a stop condition; do not remove or alter another entry.

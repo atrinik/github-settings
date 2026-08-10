@@ -71,6 +71,16 @@
     {
       "package_owner": "atrinik",
       "package_type": "container",
+      "package_name": "classic-build",
+      "package_id": 14345002,
+      "preserve_visibility": "private",
+      "actions_repository": "atrinik/classic",
+      "actions_repository_id": 1327289971,
+      "role": "read"
+    },
+    {
+      "package_owner": "atrinik",
+      "package_type": "container",
       "package_name": "windows-build",
       "package_id": 14204802,
       "preserve_visibility": "private",
