@@ -3,6 +3,7 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+organization_config=${root}/config/organization.json
 repositories_config=${root}/config/repositories.json
 advisory_merge_windows_config=${root}/config/advisory-merge-windows.json
 advanced_codeql_config=${root}/config/codeql-advanced-setup.json
@@ -37,6 +38,17 @@ fi
 while IFS= read -r -d '' config; do
   jq empty "${config}" >/dev/null
 done < <(find "${root}/config" -name '*.json' -print0 | sort -z)
+
+jq -e '
+  . == {
+    description: "A cooperative fantasy world of islands, ruins, and crystal-lit mysteries—open source, playable in Classic, and rebuilding for the future.",
+    blog: "https://atrinik.org",
+    default_repository_permission: "none",
+    members_can_create_repositories: false,
+    members_can_create_public_repositories: false,
+    members_can_create_private_repositories: false
+  }
+' "${organization_config}" >/dev/null
 
 jq -e '
   .bypass_actors == [] and
@@ -221,11 +233,35 @@ jq -e '
     "members_can_create_teams",
     "members_can_delete_or_transfer_repositories",
     "members_can_request_github_apps",
+    "organization_pins",
     "reason",
     "repository_admins_can_install_github_apps",
     "require_secure_two_factor_methods",
     "require_two_factor_authentication"
   ])
+' "${manual_settings_config}" >/dev/null
+
+jq -e '
+  .organization_pins as $pins |
+  ($pins | keys == ["apply_path", "repositories", "verification"]) and
+  $pins.apply_path == "https://github.com/atrinik" and
+  $pins.verification == "read_only_graphql" and
+  ($pins.repositories | type == "array" and length == 6) and
+  [$pins.repositories[].name] == [
+    "classic",
+    "atrinik",
+    "website",
+    "content",
+    "protocol",
+    "playtester"
+  ] and
+  ([ $pins.repositories[].repository_id ] | length == (unique | length)) and
+  all(
+    $pins.repositories[];
+    (keys == ["name", "repository_id"]) and
+    (.name | type == "string" and length > 0) and
+    (.repository_id | type == "number" and floor == . and . > 0)
+  )
 ' "${manual_settings_config}" >/dev/null
 
 jq -e \
@@ -720,6 +756,10 @@ jq -e '
     has_wiki: false
   }) and
   (.files | type == "array" and length > 0) and
+  any(
+    .files[];
+    . == {source: "profile/README.md", target: "profile/README.md"}
+  ) and
   ([.files[].source] | length == (unique | length)) and
   ([.files[].target] | length == (unique | length)) and
   all(
@@ -738,6 +778,24 @@ while IFS= read -r community_file; do
     exit 1
   fi
 done < <(jq -r '.files[].source' "${community_health_config}")
+
+profile_readme=${root}/community-health/profile/README.md
+for required_text in \
+  '# Atrinik' \
+  'Atrinik is an open-source cooperative fantasy role-playing world' \
+  'GPL-licensed [Atrinik Classic](https://github.com/atrinik/classic)' \
+  'MIT-licensed Go, Rust,' \
+  'They do not yet form a complete game release.' \
+  'Game content and' \
+  'media remain separately licensed' \
+  '[Play Atrinik Classic](https://atrinik.org/downloads/)' \
+  '[Follow the next-generation roadmap](https://github.com/atrinik/atrinik/issues/168)' \
+  'Direct human contributions are welcome.'; do
+  if ! grep -Fq "${required_text}" "${profile_readme}"; then
+    echo "error: organization profile is missing required text: ${required_text}" >&2
+    exit 1
+  fi
+done
 
 validate_issue_form() {
   local form_name=$1

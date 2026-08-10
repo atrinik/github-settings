@@ -9,6 +9,10 @@
   },
   "files": [
     {
+      "source": "profile/README.md",
+      "target": "profile/README.md"
+    },
+    {
       "source": "README.md",
       "target": "README.md"
     },

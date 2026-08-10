@@ -8,6 +8,7 @@ trap 'rm -rf "${temporary}"' EXIT
 cp -R "${root}/." "${temporary}/repository"
 
 forms=${temporary}/repository/community-health/.github/ISSUE_TEMPLATE
+profile=${temporary}/repository/community-health/profile/README.md
 
 assert_invalid() {
   local description=$1
@@ -24,6 +25,46 @@ reset_repository() {
 }
 
 "${temporary}/repository/bin/validate" >/dev/null
+
+rm "${profile}"
+assert_invalid 'a missing organization profile source'
+reset_repository
+
+sed -i 's/GPL-licensed/GPL-compatible/' "${profile}"
+assert_invalid 'an organization profile without the Classic license boundary'
+reset_repository
+
+jq 'del(.files[] | select(.target == "profile/README.md"))' \
+  "${temporary}/repository/config/community-health.json" \
+  >"${temporary}/community-health.json"
+mv "${temporary}/community-health.json" \
+  "${temporary}/repository/config/community-health.json"
+assert_invalid 'an undeclared generated organization profile'
+reset_repository
+
+jq '.description = "Developer tools for Atrinik"' \
+  "${temporary}/repository/config/organization.json" \
+  >"${temporary}/organization.json"
+mv "${temporary}/organization.json" \
+  "${temporary}/repository/config/organization.json"
+assert_invalid 'organization identity drift'
+reset_repository
+
+jq '.organization_pins.repositories |= reverse' \
+  "${temporary}/repository/config/manual-settings.json" \
+  >"${temporary}/manual-settings.json"
+mv "${temporary}/manual-settings.json" \
+  "${temporary}/repository/config/manual-settings.json"
+assert_invalid 'organization pin order drift'
+reset_repository
+
+jq '.organization_pins.apply_path = "https://github.com/organizations/atrinik/settings/profile"' \
+  "${temporary}/repository/config/manual-settings.json" \
+  >"${temporary}/manual-settings.json"
+mv "${temporary}/manual-settings.json" \
+  "${temporary}/repository/config/manual-settings.json"
+assert_invalid 'an organization pin path that omits the public profile flow'
+reset_repository
 
 sed -i '2a title: ""' "${forms}/bug.yml"
 assert_invalid 'an empty issue-form title'

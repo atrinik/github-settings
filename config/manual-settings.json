@@ -4,6 +4,36 @@
   "members_can_create_teams": false,
   "repository_admins_can_install_github_apps": false,
   "members_can_request_github_apps": true,
+  "organization_pins": {
+    "apply_path": "https://github.com/atrinik",
+    "repositories": [
+      {
+        "name": "classic",
+        "repository_id": 1327289971
+      },
+      {
+        "name": "atrinik",
+        "repository_id": 15810595
+      },
+      {
+        "name": "website",
+        "repository_id": 1327107093
+      },
+      {
+        "name": "content",
+        "repository_id": 1325219730
+      },
+      {
+        "name": "protocol",
+        "repository_id": 1327106950
+      },
+      {
+        "name": "playtester",
+        "repository_id": 1329284051
+      }
+    ],
+    "verification": "read_only_graphql"
+  },
   "codecov_github_app_repositories": [
     "atrinik",
     "classic",
@@ -91,5 +121,5 @@
   ],
   "require_two_factor_authentication": true,
   "require_secure_two_factor_methods": true,
-  "reason": "The public GitHub API does not expose supported update parameters for every setting in this file, and external credential values must never be stored here. Confirm these settings, credential lifecycle metadata and live secret-name presence, Codecov GitHub App repository access, any listed GitHub Actions environments, and GitHub Packages Actions access in the corresponding organization, repository, and package settings UI."
+  "reason": "The public GitHub API does not expose supported update parameters for every setting in this file, including organization pins, and external credential values must never be stored here. Confirm these settings, the exact ordered pin set, credential lifecycle metadata and live secret-name presence, Codecov GitHub App repository access, any listed GitHub Actions environments, and GitHub Packages Actions access in the corresponding organization, repository, and package settings UI."
 }

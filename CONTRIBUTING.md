@@ -23,6 +23,15 @@ material. Changes require credential-schema negative tests, the read-only
 `bin/verify-manual-settings` plan, and the documented manual and scheduled
 post-rotation checks.
 
+Organization identity changes must preserve the exact public description and
+canonical website in `config/organization.json`, remain delta-aware in plan and
+apply modes, and include unchanged-state coverage. Keep the public profile in
+`community-health/profile/README.md`; never edit `atrinik/.github` directly.
+Public pins are stable-ID manual state in `config/manual-settings.json`. Verify
+their exact count, public/active identity, and order read-only through GraphQL,
+and document the organization-owner profile-settings step rather than using an
+undocumented mutation interface.
+
 Synchronization authentication tests must distinguish readable from writable
 credentials, preserve exact CLI failure statuses, reject missing advertised
 classic-PAT scopes and write capabilities before mutation, and fail closed on

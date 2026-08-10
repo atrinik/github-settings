@@ -20,7 +20,14 @@ while (($#)); do
   -H)
     shift 2
     ;;
+  -f | -F)
+    shift 2
+    ;;
   *)
+    if [[ -n ${endpoint} ]]; then
+      echo "unexpected gh api argument: $1" >&2
+      exit 1
+    fi
     endpoint=$1
     shift
     ;;
@@ -33,6 +40,37 @@ if [[ ${FAKE_GH_SCENARIO} == api-failure ]]; then
   exit 41
 fi
 case ${endpoint} in
+graphql)
+  if [[ ${FAKE_GH_SCENARIO} == malformed-pins ]]; then
+    jq -n '{data: {organization: {login: "atrinik", pinnedItems: {nodes: []}}}}'
+  elif [[ ${FAKE_GH_SCENARIO} == pin-drift ]]; then
+    jq -n '{data: {organization: {
+      login: "atrinik",
+      pinnedItems: {
+        totalCount: 2,
+        nodes: [
+          {name: "atrinik", databaseId: 15810595, nameWithOwner: "atrinik/atrinik", isArchived: false, visibility: "PUBLIC"},
+          {name: "classic", databaseId: 1327289971, nameWithOwner: "atrinik/classic", isArchived: false, visibility: "PUBLIC"}
+        ]
+      }
+    }}}'
+  else
+    jq -n '{data: {organization: {
+      login: "atrinik",
+      pinnedItems: {
+        totalCount: 6,
+        nodes: [
+          {name: "classic", databaseId: 1327289971, nameWithOwner: "atrinik/classic", isArchived: false, visibility: "PUBLIC"},
+          {name: "atrinik", databaseId: 15810595, nameWithOwner: "atrinik/atrinik", isArchived: false, visibility: "PUBLIC"},
+          {name: "website", databaseId: 1327107093, nameWithOwner: "atrinik/website", isArchived: false, visibility: "PUBLIC"},
+          {name: "content", databaseId: 1325219730, nameWithOwner: "atrinik/content", isArchived: false, visibility: "PUBLIC"},
+          {name: "protocol", databaseId: 1327106950, nameWithOwner: "atrinik/protocol", isArchived: false, visibility: "PUBLIC"},
+          {name: "playtester", databaseId: 1329284051, nameWithOwner: "atrinik/playtester", isArchived: false, visibility: "PUBLIC"}
+        ]
+      }
+    }}}'
+  fi
+  ;;
 repos/atrinik/github-settings)
   if [[ ${FAKE_GH_SCENARIO} == identity-drift ]]; then
     jq -n '{
@@ -284,7 +322,8 @@ output=$(run_verify present)
 grep -Fq 'KEEP atrinik/github-settings repository Actions secret ATRINIK_SETTINGS_TOKEN' \
   <<<"${output}"
 grep -Fq 'KEEP atrinik/classic environment discord-release metadata' <<<"${output}"
-grep -Fq 'Manual settings live credential and environment metadata is present.' \
+grep -Fq 'KEEP atrinik organization pins match the exact governed order' <<<"${output}"
+grep -Fq 'Manual settings live credential, environment, and organization pin metadata is present.' \
   <<<"${output}"
 
 : >"${temporary}/gh.log"
@@ -350,6 +389,19 @@ for scenario in missing identity-drift api-failure page2-failure; do
     exit 1
   fi
 done
+
+for scenario in pin-drift malformed-pins; do
+  : >"${temporary}/gh.log"
+  if run_verify "${scenario}" \
+    >"${temporary}/${scenario}.out" 2>"${temporary}/${scenario}.err"; then
+    echo "error: manual-settings verifier accepted ${scenario}" >&2
+    exit 1
+  fi
+done
+grep -Fq 'organization pin order or identity drift' \
+  "${temporary}/pin-drift.err"
+grep -Fq 'invalid organization pin metadata' \
+  "${temporary}/malformed-pins.err"
 grep -Fq 'MISSING atrinik/github-settings repository Actions secret ATRINIK_SETTINGS_TOKEN' \
   "${temporary}/missing.err"
 grep -Fq 'repository identity or active-state drift' \

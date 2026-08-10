@@ -226,11 +226,30 @@ if [[ ${method} != GET ]]; then
 fi
 
 case "${endpoint}|${jq_filter}" in
-"orgs/atrinik|.plan.name")
-  printf 'team\n'
-  ;;
-"orgs/atrinik|.members_can_create_teams")
-  printf 'false\n'
+"orgs/atrinik|")
+  if [[ ${GH_ORGANIZATION_SCENARIO:-converged} == drifted ]]; then
+    jq -n '{
+      plan: {name: "team"},
+      description: "",
+      blog: "https://atrinik.org",
+      default_repository_permission: "none",
+      members_can_create_repositories: false,
+      members_can_create_public_repositories: false,
+      members_can_create_private_repositories: false,
+      members_can_create_teams: false
+    }'
+  else
+    jq -n '{
+      plan: {name: "team"},
+      description: "A cooperative fantasy world of islands, ruins, and crystal-lit mysteries—open source, playable in Classic, and rebuilding for the future.",
+      blog: "https://atrinik.org",
+      default_repository_permission: "none",
+      members_can_create_repositories: false,
+      members_can_create_public_repositories: false,
+      members_can_create_private_repositories: false,
+      members_can_create_teams: false
+    }'
+  fi
   ;;
 "orgs/atrinik/repos?per_page=100&type=all|"*)
   printf 'classic\t%s\tfalse\tpublic\tfalse\tfalse\ttrue\ttrue\ttrue\n' \
@@ -1083,6 +1102,7 @@ printf '{"enforced_repositories":"none"}\n' \
   >"${organization_immutable_state}"
 GH_API_LOG=${organization_log} \
   GH_IMMUTABLE_STATE=${organization_immutable_state} \
+  GH_ORGANIZATION_SCENARIO=drifted \
   GH_SECURITY_SCENARIO=drifted \
   PATH="${temporary}/bin:${PATH}" \
   ATRINIK_POLICY_SCOPE=organization \
@@ -1098,6 +1118,20 @@ jq -s -e '
   )
 ' "${organization_log}" >/dev/null
 assert_immutable_release_apply "${organization_log}"
+jq -s -e '
+  [
+    .[] |
+    select(.method == "PATCH" and .endpoint == "orgs/atrinik") |
+    .payload
+  ] == [{
+    description: "A cooperative fantasy world of islands, ruins, and crystal-lit mysteries—open source, playable in Classic, and rebuilding for the future.",
+    blog: "https://atrinik.org",
+    default_repository_permission: "none",
+    members_can_create_repositories: false,
+    members_can_create_public_repositories: false,
+    members_can_create_private_repositories: false
+  }]
+' "${organization_log}" >/dev/null
 assert_maintenance_payload \
   "${organization_log}" "orgs/atrinik/rulesets" true
 assert_default_branch_policy_payloads \
@@ -1140,7 +1174,16 @@ GH_API_LOG=${idempotent_log} \
   ATRINIK_POLICY_SCOPE=organization \
   "${root}/bin/publish" --apply >"${idempotent_output}"
 assert_idempotent_organization_security "${idempotent_log}"
+jq -s -e '
+  all(
+    .[];
+    .method != "PATCH" or .endpoint != "orgs/atrinik"
+  )
+' "${idempotent_log}" >/dev/null
 [[ ! -e ${enablement_event} ]]
+grep -F \
+  'KEEP /orgs/atrinik metadata and repository defaults' \
+  "${idempotent_output}" >/dev/null
 grep -F \
   'KEEP /orgs/atrinik/code-security/configurations/265377 matches config/code-security-advanced.json' \
   "${idempotent_output}" >/dev/null
@@ -1343,10 +1386,17 @@ plan_immutable_state=${temporary}/plan-immutable.json
 printf '{"enforced_repositories":"none"}\n' >"${plan_immutable_state}"
 GH_API_LOG=${temporary}/plan.jsonl \
   GH_IMMUTABLE_STATE=${plan_immutable_state} \
+  GH_ORGANIZATION_SCENARIO=drifted \
   GH_SECURITY_SCENARIO=drifted \
   PATH="${temporary}/bin:${PATH}" \
   ATRINIK_POLICY_SCOPE=organization \
   "${root}/bin/publish" >"${plan_output}"
+grep -F \
+  'DRIFT /orgs/atrinik description live="" desired="A cooperative fantasy world of islands, ruins, and crystal-lit mysteries—open source, playable in Classic, and rebuilding for the future."' \
+  "${plan_output}" >/dev/null
+grep -F \
+  'PLAN PATCH /orgs/atrinik <= config/organization.json' \
+  "${plan_output}" >/dev/null
 grep -F \
   'PLAN POST /orgs/atrinik/code-security/configurations/265377/attach' \
   "${plan_output}" >/dev/null
@@ -1376,8 +1426,7 @@ jq -e '. == {enforced_repositories: "none"}' \
 jq -s -e '
   all(
     .[];
-    .method != "PUT" or
-    .endpoint != "orgs/atrinik/settings/immutable-releases"
+    .method == "GET"
   )
 ' "${temporary}/plan.jsonl" >/dev/null
 
