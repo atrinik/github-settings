@@ -318,9 +318,10 @@ organization defaults. `bin/publish-community-health --apply` publishes
 the generated repository directly.
 
 GitHub does not provide a supported public API for organization pins. An
-organization owner must open
-<https://github.com/organizations/atrinik/settings/profile>, select exactly six
-repositories, and arrange them in this order:
+organization owner must open <https://github.com/atrinik>, choose **View as:
+Public**, select **Customize pins** in the Pinned section (or **pin
+repositories** when the section is empty), select exactly six repositories,
+arrange them in this order, and select **Save pins**:
 
 1. `classic`
 2. `atrinik`

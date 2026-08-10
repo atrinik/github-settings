@@ -58,6 +58,14 @@ mv "${temporary}/manual-settings.json" \
 assert_invalid 'organization pin order drift'
 reset_repository
 
+jq '.organization_pins.apply_path = "https://github.com/organizations/atrinik/settings/profile"' \
+  "${temporary}/repository/config/manual-settings.json" \
+  >"${temporary}/manual-settings.json"
+mv "${temporary}/manual-settings.json" \
+  "${temporary}/repository/config/manual-settings.json"
+assert_invalid 'an organization pin path that omits the public profile flow'
+reset_repository
+
 sed -i '2a title: ""' "${forms}/bug.yml"
 assert_invalid 'an empty issue-form title'
 reset_repository

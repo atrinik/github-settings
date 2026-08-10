@@ -244,8 +244,7 @@ jq -e '
 jq -e '
   .organization_pins as $pins |
   ($pins | keys == ["apply_path", "repositories", "verification"]) and
-  $pins.apply_path ==
-    "https://github.com/organizations/atrinik/settings/profile" and
+  $pins.apply_path == "https://github.com/atrinik" and
   $pins.verification == "read_only_graphql" and
   ($pins.repositories | type == "array" and length == 6) and
   [$pins.repositories[].name] == [

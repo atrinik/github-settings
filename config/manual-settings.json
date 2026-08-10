@@ -5,7 +5,7 @@
   "repository_admins_can_install_github_apps": false,
   "members_can_request_github_apps": true,
   "organization_pins": {
-    "apply_path": "https://github.com/organizations/atrinik/settings/profile",
+    "apply_path": "https://github.com/atrinik",
     "repositories": [
       {
         "name": "classic",
