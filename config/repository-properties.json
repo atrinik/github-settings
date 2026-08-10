@@ -242,6 +242,16 @@
       "lifecycle": "archived",
       "release_policy": "none"
     },
+    "playtester": {
+      "component_role": [
+        "tooling"
+      ],
+      "provider_set": [
+        "classic"
+      ],
+      "lifecycle": "active",
+      "release_policy": "semantic-release"
+    },
     "protocol": {
       "component_role": [
         "protocol"
