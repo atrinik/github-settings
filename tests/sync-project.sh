@@ -14,9 +14,13 @@ set -euo pipefail
 
 [[ ${1:-} == api ]] || exit 1
 shift
+endpoint=
 input=
 while (($#)); do
   case $1 in
+  --include)
+    shift
+    ;;
   -H)
     shift 2
     ;;
@@ -24,11 +28,28 @@ while (($#)); do
     input=$2
     shift 2
     ;;
+  user)
+    endpoint=user
+    shift
+    ;;
   *)
     shift
     ;;
   esac
 done
+
+if [[ ${endpoint} == user ]]; then
+  printf '%s\n' 'REST user' >>"${FAKE_GH_LOG}"
+  if [[ ${FAKE_GH_SCENARIO} == scope-api-failure ]]; then
+    echo "gh: scope metadata request failed" >&2
+    exit 44
+  fi
+  scopes='admin:org, project, repo'
+  [[ ${FAKE_GH_SCENARIO} == insufficient-scopes ]] && scopes=repo
+  printf 'HTTP/2.0 200 OK\r\nx-oauth-scopes: %s\r\n\r\n{"login":"test"}\n' \
+    "${scopes}"
+  exit 0
+fi
 
 [[ -n ${input} ]]
 query=$(jq -r '.query' "${input}")
@@ -62,7 +83,8 @@ page2-graphql-error)
   fi
   ;;
 happy | idempotent | paginated | page2-shape-error | repeated-cursor | \
-  mutation-empty-add | mutation-empty-status | mutation-empty-type) ;;
+  mutation-empty-add | mutation-empty-status | mutation-empty-type | \
+  project-read-only | repository-read-only | search-overflow) ;;
 *) exit 1 ;;
 esac
 
@@ -90,7 +112,9 @@ elif [[ ${query} == *'updateIssue(input:'* ]]; then
   jq -n --arg id "$(jq -r '.input.id' <<<"${variables}")" \
     '{data: {updateIssue: {issue: {id: $id}}}}'
 elif [[ ${query} == *'organization(login:'* ]]; then
-  jq -n '{
+  can_update=true
+  [[ ${FAKE_GH_SCENARIO} == project-read-only ]] && can_update=false
+  jq -n --argjson can_update "${can_update}" '{
     data: {
       organization: {
         issueTypes: {
@@ -106,6 +130,7 @@ elif [[ ${query} == *'organization(login:'* ]]; then
             id: "PROJECT",
             number: 1,
             title: "Atrinik work",
+            viewerCanUpdate: $can_update,
             fields: {
               nodes: [{
                 id: "STATUS",
@@ -124,19 +149,23 @@ elif [[ ${query} == *'organization(login:'* ]]; then
     }
   }'
 elif [[ ${query} == *'search(query:'* ]]; then
+  issue_count=1
+  [[ ${FAKE_GH_SCENARIO} == search-overflow ]] && issue_count=1001
   if [[ ${cursor} == CURSOR ]]; then
     case ${FAKE_GH_SCENARIO} in
     page2-shape-error)
       jq -n '{data: {search: null}}'
       ;;
     repeated-cursor)
-      jq -n '{data: {search: {
+      jq -n --argjson issue_count "${issue_count}" '{data: {search: {
+        issueCount: $issue_count,
         nodes: [],
         pageInfo: {hasNextPage: true, endCursor: "CURSOR"}
       }}}'
       ;;
     *)
-      jq -n '{data: {search: {
+      jq -n --argjson issue_count "${issue_count}" '{data: {search: {
+        issueCount: $issue_count,
         nodes: [],
         pageInfo: {hasNextPage: false, endCursor: null}
       }}}'
@@ -157,9 +186,15 @@ elif [[ ${query} == *'search(query:'* ]]; then
     if [[ ${FAKE_GH_SCENARIO} == idempotent ]]; then
       issue_type='{"name":"Initiative"}'
     fi
-    jq -n --argjson issue_type "${issue_type}" \
+    viewer_permission=WRITE
+    [[ ${FAKE_GH_SCENARIO} == repository-read-only ]] && \
+      viewer_permission=READ
+    jq -n --argjson issue_count "${issue_count}" \
+      --argjson issue_type "${issue_type}" \
+      --arg viewer_permission "${viewer_permission}" \
       --argjson page_info "${page_info}" '{
       data: {search: {
+        issueCount: $issue_count,
         nodes: [{
           __typename: "Issue",
           id: "ISSUE",
@@ -167,7 +202,10 @@ elif [[ ${query} == *'search(query:'* ]]; then
           createdAt: "2020-01-01T00:00:00Z",
           state: "OPEN",
           issueType: $issue_type,
-          repository: {name: "server", isArchived: false},
+          repository: {
+            name: "server", isArchived: false,
+            viewerPermission: $viewer_permission
+          },
           labels: {nodes: []},
           subIssues: {totalCount: 1}
         }],
@@ -175,8 +213,10 @@ elif [[ ${query} == *'search(query:'* ]]; then
       }}
     }'
   else
-    jq -n --argjson page_info "${page_info}" '{
+    jq -n --argjson issue_count "${issue_count}" \
+      --argjson page_info "${page_info}" '{
       data: {search: {
+        issueCount: $issue_count,
         nodes: [{
           __typename: "PullRequest",
           id: "PR",
@@ -184,7 +224,9 @@ elif [[ ${query} == *'search(query:'* ]]; then
           createdAt: "2020-01-01T00:00:00Z",
           state: "OPEN",
           isDraft: false,
-          repository: {name: "server", isArchived: false}
+          repository: {
+            name: "server", isArchived: false, viewerPermission: "WRITE"
+          }
         }],
         pageInfo: $page_info
       }}
@@ -333,6 +375,15 @@ assert_preflight_failure() {
 assert_preflight_failure 42 api-failure
 grep -Fq 'read organization planning metadata' \
   "${temporary}/api-failure.err"
+assert_preflight_failure 44 scope-api-failure
+grep -Fq 'gh: scope metadata request failed' \
+  "${temporary}/scope-api-failure.err"
+grep -Fq 'verify settings credential scopes' \
+  "${temporary}/scope-api-failure.err"
+assert_preflight_failure 1 insufficient-scopes
+grep -Fq 'missing required classic PAT scope: admin:org' \
+  "${temporary}/insufficient-scopes.err"
+[[ $(wc -l <"${temporary}/gh.log") == 1 ]]
 assert_preflight_failure 1 graphql-error
 grep -Fq 'read organization planning metadata' \
   "${temporary}/graphql-error.err"
@@ -351,6 +402,15 @@ grep -Fq 'missing the expected connection: search open is:issue work' \
 assert_preflight_failure 1 repeated-cursor
 grep -Fq 'repeated the next cursor: search open is:issue work' \
   "${temporary}/repeated-cursor.err"
+assert_preflight_failure 1 project-read-only
+grep -Fq 'cannot update organization project: Atrinik work' \
+  "${temporary}/project-read-only.err"
+assert_preflight_failure 1 repository-read-only
+grep -Fq 'cannot set issue types in repositories: server' \
+  "${temporary}/repository-read-only.err"
+assert_preflight_failure 1 search-overflow
+grep -Fq 'search exceeds the 1000-result API window' \
+  "${temporary}/search-overflow.err"
 
 grep -Fq 'gh: authentication failed' "${temporary}/api-failure.err"
 grep -Fq 'Resource not accessible by personal access token' \

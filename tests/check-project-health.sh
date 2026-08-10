@@ -42,10 +42,25 @@ done
 printf '%s\t%s\t%s\n' "${method}" "${endpoint}" "${field_names[*]:-}" \
   >>"${FAKE_GH_LOG}"
 
+if [[ ${FAKE_GH_SCENARIO} == runs-api-failure && \
+  ${endpoint} == *'runs?per_page=100' ]]; then
+  echo "gh: workflow runs request failed" >&2
+  exit 45
+elif [[ ${FAKE_GH_SCENARIO} == incident-api-failure && \
+  ${endpoint} == *'issues?state=all'* ]]; then
+  echo "gh: incident listing failed" >&2
+  exit 46
+elif [[ ${FAKE_GH_SCENARIO} == alert-api-failure && \
+  ${method} == POST ]]; then
+  echo "gh: incident creation failed" >&2
+  exit 47
+fi
+
 case ${endpoint} in
 "repos/atrinik/github-settings/actions/workflows/sync-project.yml/runs?per_page=100")
   case ${FAKE_GH_SCENARIO} in
-  healthy | missing-settings | recovery | recurrence-before | reopen)
+  healthy | missing-settings | recovery | recurrence-before | reopen | \
+    incident-api-failure)
     jq -n '{workflow_runs: [{
       status: "completed", conclusion: "success",
       created_at: "2026-08-10T04:49:00Z",
@@ -79,7 +94,7 @@ case ${endpoint} in
       }
     ]}'
     ;;
-  stale | sync-failure | foreign | multiple-managed)
+  stale | sync-failure | foreign | multiple-managed | alert-api-failure)
     jq -n '{workflow_runs: [{
       status: "completed", conclusion: "success",
       created_at: "2026-08-10T01:59:00Z",
@@ -123,7 +138,8 @@ case ${endpoint} in
   ;;
 "repos/atrinik/github-settings/actions/workflows/sync-project.yml/runs?status=success&per_page=1")
   case ${FAKE_GH_SCENARIO} in
-  healthy | missing-settings | recovery | recurrence-before | reopen)
+  healthy | missing-settings | recovery | recurrence-before | reopen | \
+    incident-api-failure)
     jq -n '{workflow_runs: [{
       status: "completed", conclusion: "success",
       created_at: "2026-08-10T04:49:00Z",
@@ -141,7 +157,7 @@ case ${endpoint} in
       head_sha: "SUCCESS"
     }]}'
     ;;
-  stale | sync-failure | foreign | multiple-managed)
+  stale | sync-failure | foreign | multiple-managed | alert-api-failure)
     jq -n '{workflow_runs: [{
       status: "completed", conclusion: "success",
       created_at: "2026-08-10T01:59:00Z",
@@ -308,6 +324,34 @@ grep -Fq 'State: **healthy**' <<<"${output}"
 grep -Fq 'Convergence: converged; mutations 0' <<<"${output}"
 grep -Fq 'State: **healthy**' "${temporary}/step-summary"
 [[ $(wc -l <"${temporary}/gh.log") == 2 ]]
+
+for failure in runs-api-failure:45:plan \
+  incident-api-failure:46:apply alert-api-failure:47:apply; do
+  scenario=${failure%%:*}
+  remainder=${failure#*:}
+  expected_status=${remainder%%:*}
+  mode=${remainder#*:}
+  arguments=()
+  [[ ${mode} == apply ]] && arguments=(--apply)
+  : >"${temporary}/gh.log"
+  : >"${temporary}/sync.log"
+  set +e
+  run_health "${scenario}" pending "${arguments[@]}" \
+    >"${temporary}/${scenario}.out" 2>"${temporary}/${scenario}.err"
+  status=$?
+  set -e
+  if ((status != expected_status)); then
+    echo "error: ${scenario} exited ${status}, expected ${expected_status}" >&2
+    exit 1
+  fi
+  grep -Fq 'GitHub API operation failed' "${temporary}/${scenario}.err"
+done
+grep -Fq 'read sync-project.yml workflow runs' \
+  "${temporary}/runs-api-failure.err"
+grep -Fq 'list Project health incidents (page 1)' \
+  "${temporary}/incident-api-failure.err"
+grep -Fq 'create Project health incident' \
+  "${temporary}/alert-api-failure.err"
 
 : >"${temporary}/gh.log"
 : >"${temporary}/sync.log"

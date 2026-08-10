@@ -31,11 +31,15 @@ trap 'rm -rf "${temporary}"' EXIT
 github_api() {
   local operation=$1
   local response
+  local status
 
   shift
-  if ! response=$(gh api -H "X-GitHub-Api-Version: ${api_version}" "$@"); then
+  if response=$(gh api -H "X-GitHub-Api-Version: ${api_version}" "$@"); then
+    :
+  else
+    status=$?
     echo "error: GitHub API operation failed: ${operation}" >&2
-    return 1
+    return "${status}"
   fi
   if ! jq -e 'type == "object"' <<<"${response}" >/dev/null; then
     echo "error: GitHub API operation returned invalid JSON: ${operation}" >&2
@@ -49,7 +53,7 @@ declare -A repository_secret_files=()
 
 load_repository_metadata() {
   local repository=$1
-  local collected expected page page_size repository_key response
+  local collected expected page page_size repository_key response status
 
   if [[ -v repository_data_files["${repository}"] ]]; then
     return
@@ -58,9 +62,12 @@ load_repository_metadata() {
   repository_key=${repository//\//-}
   repository_data_files["${repository}"]=${temporary}/${repository_key}.json
   repository_secret_files["${repository}"]=${temporary}/${repository_key}-secrets.jsonl
-  if ! github_api "read ${repository} identity" "repos/${repository}" \
+  if github_api "read ${repository} identity" "repos/${repository}" \
     >"${repository_data_files["${repository}"]}"; then
-    return 1
+    :
+  else
+    status=$?
+    return "${status}"
   fi
 
   : >"${repository_secret_files["${repository}"]}"
@@ -68,10 +75,13 @@ load_repository_metadata() {
   collected=0
   page=1
   while true; do
-    if ! response=$(github_api \
+    if response=$(github_api \
       "list ${repository} Actions secrets (page ${page})" \
       "repos/${repository}/actions/secrets?per_page=100&page=${page}"); then
-      return 1
+      :
+    else
+      status=$?
+      return "${status}"
     fi
     if ! jq -e '
       (.total_count | type == "number" and floor == . and . >= 0) and
@@ -117,8 +127,11 @@ while IFS= read -r credential; do
     echo "error: credential repository owner does not match ${organization}: ${repository}" >&2
     exit 1
   fi
-  if ! load_repository_metadata "${repository}"; then
-    exit 1
+  if load_repository_metadata "${repository}"; then
+    :
+  else
+    status=$?
+    exit "${status}"
   fi
   repository_data=$(<"${repository_data_files["${repository}"]}")
   live_repository_id=$(jq -r '.id // empty' <<<"${repository_data}")

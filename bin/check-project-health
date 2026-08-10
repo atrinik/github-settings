@@ -60,11 +60,15 @@ fi
 github_api() {
   local operation=$1
   local response
+  local status
 
   shift
-  if ! response=$(gh api -H "X-GitHub-Api-Version: ${api_version}" "$@"); then
+  if response=$(gh api -H "X-GitHub-Api-Version: ${api_version}" "$@"); then
+    :
+  else
+    status=$?
     echo "error: GitHub API operation failed: ${operation}" >&2
-    return 1
+    return "${status}"
   fi
   if ! jq -e '.' <<<"${response}" >/dev/null; then
     echo "error: GitHub API operation returned invalid JSON: ${operation}" >&2
@@ -73,13 +77,19 @@ github_api() {
   printf '%s\n' "${response}"
 }
 
-if ! runs=$(github_api "read ${sync_workflow} workflow runs" \
+if runs=$(github_api "read ${sync_workflow} workflow runs" \
   "repos/${repository}/actions/workflows/${sync_workflow}/runs?per_page=100"); then
-  exit 1
+  :
+else
+  status=$?
+  exit "${status}"
 fi
-if ! successful_runs=$(github_api "read latest successful ${sync_workflow} run" \
+if successful_runs=$(github_api "read latest successful ${sync_workflow} run" \
   "repos/${repository}/actions/workflows/${sync_workflow}/runs?status=success&per_page=1"); then
-  exit 1
+  :
+else
+  status=$?
+  exit "${status}"
 fi
 if ! jq -e '.workflow_runs | type == "array"' <<<"${runs}" >/dev/null; then
   echo "error: workflow-runs response omitted workflow_runs" >&2
@@ -191,9 +201,12 @@ if ${apply}; then
   : >"${issues_file}"
   issue_page=1
   while true; do
-    if ! issues=$(github_api "list Project health incidents (page ${issue_page})" \
+    if issues=$(github_api "list Project health incidents (page ${issue_page})" \
       "repos/${repository}/issues?state=all&per_page=100&page=${issue_page}"); then
-      exit 1
+      :
+    else
+      status=$?
+      exit "${status}"
     fi
     if ! jq -e 'type == "array"' <<<"${issues}" >/dev/null; then
       echo "error: Project health incident response is not an array" >&2

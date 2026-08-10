@@ -115,6 +115,16 @@ assert_invalid 'a stale rotate-by date'
 reset_manual_settings
 
 rewrite_manual_settings \
+  '.github_actions_credentials[0].rotate_by = "2026-02-30"'
+assert_invalid 'an impossible calendar day'
+reset_manual_settings
+
+rewrite_manual_settings \
+  '.github_actions_credentials[0].last_verified_on = "2025-02-29"'
+assert_invalid 'a non-leap-year February 29'
+reset_manual_settings
+
+rewrite_manual_settings \
   '.github_actions_credentials[0].last_verified_on = "2026-08-11"'
 assert_invalid 'a future verification date'
 reset_manual_settings
@@ -137,5 +147,19 @@ reset_manual_settings
 rewrite_manual_settings \
   '.github_actions_credential_values = {ATRINIK_SETTINGS_TOKEN: "secret"}'
 assert_invalid 'a top-level credential-value field'
+
+reset_manual_settings
+rewrite_manual_settings '
+  .github_actions_credentials[0].last_verified_on = "2028-02-29" |
+  .github_actions_credentials[0].rotate_by = "2028-05-29"
+'
+ATRINIK_VALIDATION_TODAY=2028-02-29 \
+  "${temporary}/bin/validate" >/dev/null
+
+if ATRINIK_VALIDATION_TODAY=2026-02-30 \
+  "${temporary}/bin/validate" >/dev/null 2>&1; then
+  echo "error: validator accepted an impossible validation date" >&2
+  exit 1
+fi
 
 echo "Manual GitHub Actions credential validation tests passed."

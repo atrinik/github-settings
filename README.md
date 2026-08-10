@@ -201,7 +201,9 @@ one, review Actions logs and organization audit events, and verify every
 consumer workflow. `bin/verify-manual-settings` proves only that GitHub exposes
 the declared secret name at the stable repository—it cannot inspect the value,
 expiry, or effective scopes. The synchronization preflight is the scope and
-functionality proof.
+functionality proof: apply mode verifies the classic PAT's advertised scopes,
+Project update capability, and write access for every repository needing an
+issue-type change before the first mutation.
 
 ## Cross-repository planning
 
@@ -232,6 +234,12 @@ items to **Done**. The scheduled `Synchronize project` workflow requests runs
 twice per hour, but GitHub schedules are best-effort and can be delayed or
 dropped. The first apply intentionally performs a large one-time backfill;
 later runs are incremental and idempotent.
+
+GitHub caps each GraphQL search at 1,000 results. The synchronizer reads the
+reported count and fails before mutation or a success summary if either the
+open-issue or open-pull-request search exceeds that window; it must be changed
+to enumerate or partition the inventory before a larger organization can be
+safely synchronized.
 
 `config/planning-health.json` sets a 90-minute maximum freshness age and alerts
 after two consecutive failed synchronization runs. The separate

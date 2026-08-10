@@ -23,6 +23,11 @@ material. Changes require credential-schema negative tests, the read-only
 `bin/verify-manual-settings` plan, and the documented manual and scheduled
 post-rotation checks.
 
+Synchronization authentication tests must distinguish readable from writable
+credentials, preserve exact CLI failure statuses, reject missing advertised
+classic-PAT scopes and write capabilities before mutation, and fail closed on
+GraphQL searches beyond GitHub's 1,000-result window.
+
 Project synchronization health changes must preserve the separate monitoring
 path, the 90-minute freshness/failure contract, one marker-owned incident, and
 least-privilege alerting through `GITHUB_TOKEN`. Test fresh, stale, repeated

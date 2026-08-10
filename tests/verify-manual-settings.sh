@@ -30,7 +30,7 @@ printf '%s\n' "${endpoint}" >>"${FAKE_GH_LOG}"
 
 if [[ ${FAKE_GH_SCENARIO} == api-failure ]]; then
   echo "gh: repository administration denied" >&2
-  exit 1
+  exit 41
 fi
 case ${endpoint} in
 repos/atrinik/github-settings)
@@ -162,6 +162,22 @@ grep -Fq 'gh: repository administration denied' "${temporary}/api-failure.err"
 grep -Fq 'read atrinik/github-settings identity' "${temporary}/api-failure.err"
 grep -Fq 'gh: second secret page failed' "${temporary}/page2-failure.err"
 grep -Fq 'page 2' "${temporary}/page2-failure.err"
+
+for failure in api-failure:41 page2-failure:42; do
+  scenario=${failure%%:*}
+  expected_status=${failure#*:}
+  : >"${temporary}/gh.log"
+  set +e
+  run_verify "${scenario}" \
+    >"${temporary}/${scenario}-status.out" \
+    2>"${temporary}/${scenario}-status.err"
+  status=$?
+  set -e
+  if ((status != expected_status)); then
+    echo "error: ${scenario} exited ${status}, expected ${expected_status}" >&2
+    exit 1
+  fi
+done
 
 : >"${temporary}/gh.log"
 if PATH="${temporary}/bin:${PATH}" \

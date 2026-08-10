@@ -21,7 +21,15 @@ for command in date git jq; do
 done
 
 validation_today=${ATRINIK_VALIDATION_TODAY:-$(date -u +%F)}
-if [[ ! ${validation_today} =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+if ! jq -en --arg value "${validation_today}" '
+  ($value | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")) and
+  (
+    try (
+      (($value + "T00:00:00Z" | fromdateiso8601) |
+        strftime("%Y-%m-%d")) == $value
+    ) catch false
+  )
+' >/dev/null; then
   echo "error: ATRINIK_VALIDATION_TODAY must use YYYY-MM-DD" >&2
   exit 2
 fi
@@ -225,6 +233,9 @@ jq -e \
   --slurpfile repositories "${repositories_config}" '
   def day_epoch($value):
     ($value + "T00:00:00Z" | fromdateiso8601);
+  def valid_day($value):
+    ($value | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")) and
+    (try ((day_epoch($value) | strftime("%Y-%m-%d")) == $value) catch false);
   .github_actions_credentials as $credentials |
   ($credentials | type == "array" and length > 0) and
   (
@@ -286,16 +297,8 @@ jq -e \
       .rotation_cadence_days |
       type == "number" and floor == . and . >= 1 and . <= 365
     ) and
-    (
-      .last_verified_on |
-      type == "string" and
-      test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
-    ) and
-    (
-      .rotate_by |
-      type == "string" and
-      test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
-    ) and
+    valid_day(.last_verified_on) and
+    valid_day(.rotate_by) and
     (day_epoch(.last_verified_on) <= day_epoch($today)) and
     (day_epoch(.rotate_by) >= day_epoch($today)) and
     (day_epoch(.rotate_by) > day_epoch(.last_verified_on)) and
