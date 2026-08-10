@@ -27,7 +27,10 @@ reset_manual_settings() {
       {
         deployment_branch_policy: {
           custom_branch_policies: true,
-          patterns: [{name: "main", type: "branch"}],
+          patterns: [
+            {name: "main", type: "branch"},
+            {name: "v*", type: "tag"}
+          ],
           protected_branches: false
         },
         environment: "test-deployment",
@@ -53,12 +56,34 @@ rewrite_manual_settings() {
 }
 
 jq -e '
-  .github_actions_environments == []
+  .github_actions_environments == [
+    {
+      deployment_branch_policy: {
+        custom_branch_policies: true,
+        patterns: [
+          {name: "main", type: "branch"},
+          {name: "v*", type: "tag"}
+        ],
+        protected_branches: false
+      },
+      environment: "discord-release",
+      repository: "atrinik/classic",
+      repository_id: 1327289971,
+      required_reviewers: [],
+      secret_names: ["DISCORD_APPLICATION_ID"],
+      variable_names: []
+    }
+  ]
 ' "${root}/config/manual-settings.json" >/dev/null
 
 "${temporary}/bin/validate" >/dev/null
 reset_manual_settings
 "${temporary}/bin/validate" >/dev/null
+
+rewrite_manual_settings \
+  '.github_actions_environments[0].variable_names = []'
+"${temporary}/bin/validate" >/dev/null
+reset_manual_settings
 
 rewrite_manual_settings \
   '.github_actions_environments += [.github_actions_environments[0]]'
@@ -96,8 +121,18 @@ assert_invalid 'a wildcard deployment branch policy'
 reset_manual_settings
 
 rewrite_manual_settings \
-  '.github_actions_environments[0].deployment_branch_policy.patterns[0].type = "tag"'
-assert_invalid 'a tag deployment policy'
+  '.github_actions_environments[0].deployment_branch_policy.patterns[1].name = "*"'
+assert_invalid 'an unrestricted tag deployment policy'
+reset_manual_settings
+
+rewrite_manual_settings \
+  '.github_actions_environments[0].deployment_branch_policy.patterns[1].name = "release-*"'
+assert_invalid 'a noncanonical release tag deployment policy'
+reset_manual_settings
+
+rewrite_manual_settings \
+  '.github_actions_environments[0].deployment_branch_policy.patterns[1].type = "environment"'
+assert_invalid 'an unsupported deployment policy type'
 reset_manual_settings
 
 rewrite_manual_settings \
@@ -115,6 +150,18 @@ rewrite_manual_settings '
     [.github_actions_environments[0].variable_names[0]]
 '
 assert_invalid 'a duplicate environment variable name'
+reset_manual_settings
+
+rewrite_manual_settings \
+  '.github_actions_environments[0].variable_names = ["external_account_id"]'
+assert_invalid 'a malformed environment variable name'
+reset_manual_settings
+
+rewrite_manual_settings '
+  .github_actions_environments[0].secret_names +=
+    [.github_actions_environments[0].secret_names[0]]
+'
+assert_invalid 'a duplicate environment secret name'
 reset_manual_settings
 
 rewrite_manual_settings '

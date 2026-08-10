@@ -14,7 +14,32 @@
     "renderer",
     "server"
   ],
-  "github_actions_environments": [],
+  "github_actions_environments": [
+    {
+      "deployment_branch_policy": {
+        "custom_branch_policies": true,
+        "patterns": [
+          {
+            "name": "main",
+            "type": "branch"
+          },
+          {
+            "name": "v*",
+            "type": "tag"
+          }
+        ],
+        "protected_branches": false
+      },
+      "environment": "discord-release",
+      "repository": "atrinik/classic",
+      "repository_id": 1327289971,
+      "required_reviewers": [],
+      "secret_names": [
+        "DISCORD_APPLICATION_ID"
+      ],
+      "variable_names": []
+    }
+  ],
   "github_actions_credentials": [
     {
       "credential_type": "classic_pat",

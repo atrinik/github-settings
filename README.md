@@ -73,8 +73,10 @@ read-only and are skipped on later runs.
   `config/manual-settings.json`: stable repository identity, secret placement,
   PAT type and scopes, consumers, accountable ownership, verification date,
   rotate-by deadline, cadence, and runbook. Validation rejects expired records
-  and any value-like field; `bin/verify-manual-settings` checks live secret-name
-  presence without reading or proving the value.
+  and any value-like field. `bin/verify-manual-settings` checks credential
+  secret-name presence plus inventoried environment identity, deployment
+  branches, reviewer rules, and exact secret and variable name sets without
+  reading or proving any value.
 - GitHub Actions defaults to read-only, cannot approve pull requests, and may
   use only Atrinik, GitHub, Codecov coverage, and explicitly allowed Docker
   actions.
@@ -463,6 +465,114 @@ rollback. Preserve its full error output and stop; do not retry with an ad hoc
 payload. For a later intentional rollback, review and merge a desired-state
 change first, then run the normal plan and explicitly authorized apply flow so
 the previous selection is not guessed or partially overwritten.
+
+## Provisioning the Classic Discord release environment
+
+The `discord-release` environment is manual desired state for
+`atrinik/classic` (repository ID `1327289971`). It permits deployments only
+from the selected `main` branch for checked recovery and immutable `v*` tags
+for normal releases, has no required reviewers or environment variables, and
+contains one value-free secret-name contract:
+`DISCORD_APPLICATION_ID`. The Application ID is public package configuration,
+but its value remains outside Git so release packaging can be enabled only
+through the reviewed environment boundary. `bin/publish` reports this manual
+state but does not create, update, or delete it.
+
+Provision it only after the consuming Classic workflow has been merged and
+reviewed. From an organization-owner account with repository administration
+access, first verify the stable repository identity and default branch:
+
+```sh
+gh api repos/atrinik/classic \
+  --jq '{id, full_name, archived, default_branch}'
+```
+
+Require exactly `id: 1327289971`, `full_name: atrinik/classic`,
+`archived: false`, and `default_branch: main`. Before any mutation, check
+whether the environment already exists:
+
+```sh
+gh api --include -H 'X-GitHub-Api-Version: 2026-03-10' \
+  repos/atrinik/classic/environments/discord-release
+```
+
+Proceed with the creation commands below only when GitHub returns an explicit
+`404 Not Found`. Any authentication, authorization, transport, or other error
+is a stop condition. If GitHub returns environment metadata, do not run the
+`PUT`, `POST`, or `gh secret set` commands: inspect the complete live state
+with the read-only verification commands below and reconcile any difference
+through a separately reviewed change. The secret command is an upsert, so an
+existing same-name secret must not be replaced without separately authorized
+rotation.
+
+For a confirmed absent environment, create it with no reviewers, no wait timer,
+and an exact custom-branch policy, then provide the initial secret:
+
+```sh
+printf '%s\n' '{
+  "wait_timer": 0,
+  "prevent_self_review": false,
+  "reviewers": [],
+  "deployment_branch_policy": {
+    "protected_branches": false,
+    "custom_branch_policies": true
+  }
+}' | gh api --method PUT \
+  -H 'X-GitHub-Api-Version: 2026-03-10' \
+  repos/atrinik/classic/environments/discord-release \
+  --input - &&
+printf '%s\n' '{"name":"main","type":"branch"}' | \
+  gh api --method POST \
+    -H 'X-GitHub-Api-Version: 2026-03-10' \
+    repos/atrinik/classic/environments/discord-release/deployment-branch-policies \
+    --input - &&
+printf '%s\n' '{"name":"v*","type":"tag"}' | \
+  gh api --method POST \
+    -H 'X-GitHub-Api-Version: 2026-03-10' \
+    repos/atrinik/classic/environments/discord-release/deployment-branch-policies \
+    --input - &&
+gh secret set DISCORD_APPLICATION_ID \
+  --env discord-release --repo atrinik/classic
+```
+
+Enter the Application ID only at the final prompt; never place it in a shell
+argument, environment variable, file in this repository, log, fixture, or pull
+request. If either policy creation reports that its exact policy already
+exists, stop and verify the complete live state instead of adding a duplicate.
+
+Verify the exact environment contract without reading the secret value:
+
+```sh
+gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
+  repos/atrinik/classic/environments/discord-release \
+  --jq '{name, deployment_branch_policy, protection_rule_types: [.protection_rules[].type]}'
+gh api --paginate -H 'X-GitHub-Api-Version: 2026-03-10' \
+  'repos/atrinik/classic/environments/discord-release/deployment-branch-policies?per_page=100' \
+  --jq '[.branch_policies[] | {name, type}]'
+gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
+  repos/atrinik/classic/environments/discord-release/secrets \
+  --jq '{total_count, names: [.secrets[].name]}'
+gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
+  repos/atrinik/classic/environments/discord-release/variables \
+  --jq '{total_count, names: [.variables[].name]}'
+bin/verify-manual-settings
+```
+
+Require the environment name to be `discord-release`; the deployment policy
+to have custom branch policies enabled and protected-branch mode disabled;
+`protection_rule_types` to equal `["branch_policy"]`; the deployment
+branch-policy list to equal
+`[{"name":"main","type":"branch"},{"name":"v*","type":"tag"}]` (in
+either API order); the secret result to equal
+`{"total_count":1,"names":["DISCORD_APPLICATION_ID"]}`; and the variable
+result to equal `{"total_count":0,"names":[]}`. Finally, run the Classic
+release rehearsal and confirm its Discord configuration job is skipped and no
+production Application ID appears in rehearsal artifacts. Then run an
+explicitly authorized production package workflow for a reviewed release tag
+and require its environment-bound configuration job and Windows package
+verification to succeed. If any identity, policy, reviewer, name, or count
+differs, stop: do not delete or overwrite unknown live settings. Reconcile the
+reviewed desired-state contract first, then repeat the complete verification.
 
 ## Retiring a manually inventoried Actions environment
 
