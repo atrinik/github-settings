@@ -61,6 +61,6 @@ output=$(
 )
 
 [[ $(grep -c '^PLAN PUT /orgs/atrinik/properties/schema/' <<<"${output}") == 4 ]]
-[[ $(grep -c '^PLAN PATCH /orgs/atrinik/properties/values ' <<<"${output}") == 23 ]]
+[[ $(grep -c '^PLAN PATCH /orgs/atrinik/properties/values ' <<<"${output}") == 24 ]]
 
 echo "Repository-property publisher plans every definition and repository value."

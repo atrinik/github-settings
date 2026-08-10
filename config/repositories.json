@@ -9,6 +9,7 @@
     "editor",
     "github-settings",
     "metaserver-worker",
+    "playtester",
     "protocol",
     "renderer",
     "resources",
@@ -79,6 +80,10 @@
       "verify",
       "Conventional PR title"
     ],
+    "playtester": [
+      "Playtester validation",
+      "Conventional PR title"
+    ],
     "github-settings": [
       "Policy validation",
       "Conventional PR title"
@@ -104,6 +109,7 @@
     "editor",
     "github-settings",
     "metaserver-worker",
+    "playtester",
     "protocol",
     "renderer",
     "resources",
