@@ -32,6 +32,7 @@ for command in gh git jq; do
 done
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+organization_config=${root}/config/organization.json
 repositories_config=${root}/config/repositories.json
 advisory_merge_windows_config=${root}/config/advisory-merge-windows.json
 codeql_advanced_config=${root}/config/codeql-advanced-setup.json
@@ -61,6 +62,30 @@ run_api() {
   else
     echo "PLAN ${method} /${endpoint}"
   fi
+}
+
+converge_organization_settings() {
+  local current=$1
+  local desired
+
+  desired=$(jq -c . "${organization_config}")
+  if jq -e --argjson desired "${desired}" '
+    . as $current |
+    all($desired | to_entries[]; $current[.key] == .value)
+  ' <<<"${current}" >/dev/null; then
+    echo "KEEP /orgs/${organization} metadata and repository defaults"
+    return
+  fi
+
+  jq -r \
+    --arg endpoint "/orgs/${organization}" \
+    --argjson desired "${desired}" '
+      . as $current |
+      $desired | to_entries[] |
+      select($current[.key] != .value) |
+      "DRIFT \($endpoint) \(.key) live=\($current[.key] | tojson) desired=\(.value | tojson)"
+    ' <<<"${current}"
+  run_api PATCH "orgs/${organization}" "${organization_config}"
 }
 
 repository_uses_advanced_codeql() {
@@ -1015,7 +1040,13 @@ converge_immutable_release_policy() {
   return 1
 }
 
-organization_plan=$(github_api "orgs/${organization}" --jq '.plan.name')
+organization_metadata=$(github_api "orgs/${organization}")
+if ! jq -e 'type == "object" and (.plan.name | type == "string")' \
+  <<<"${organization_metadata}" >/dev/null; then
+  echo "error: GitHub returned invalid organization metadata" >&2
+  exit 1
+fi
+organization_plan=$(jq -r '.plan.name' <<<"${organization_metadata}")
 if [[ ${policy_scope} == auto ]]; then
   case ${organization_plan} in
   team | enterprise) policy_scope=organization ;;
@@ -1089,7 +1120,7 @@ done < <(
 
 converge_immutable_release_policy
 
-run_api PATCH "orgs/${organization}" "${root}/config/organization.json"
+converge_organization_settings "${organization_metadata}"
 run_api PUT "orgs/${organization}/actions/permissions" \
   "${root}/config/actions-permissions.json"
 run_api PUT "orgs/${organization}/actions/permissions/selected-actions" \
@@ -1129,7 +1160,7 @@ while IFS= read -r repository; do
   run_api PATCH "repos/${organization}/${repository}" "${archive_payload}"
 done < <(jq -r '.archive[]' "${repositories_config}")
 
-if [[ $(github_api "orgs/${organization}" --jq '.members_can_create_teams') != false ]]; then
+if [[ $(jq -r '.members_can_create_teams' <<<"${organization_metadata}") != false ]]; then
   echo "MANUAL members can still create teams; disable this in Member privileges."
 fi
 echo "Manual confirmation required for config/manual-settings.json."

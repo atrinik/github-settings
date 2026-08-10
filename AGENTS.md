@@ -52,6 +52,12 @@
   deployment target. Never hand-edit that repository, add independent release
   automation to it, or add its issue forms' `projects:` key: public
   contributors may not have the Project write permission that key requires.
+- Keep the game-first organization description and canonical website in
+  `config/organization.json`, and publish them only on real drift. Keep the
+  generated public profile in `community-health/profile/README.md`. Record the
+  six ordered public pins with stable repository IDs in
+  `config/manual-settings.json`, verify them read-only through GraphQL, and use
+  the documented organization-owner UI step instead of an undocumented writer.
 - Keep required workflow job names synchronized with rulesets. Workflow or
   permissions changes also require actionlint, least-privilege review, and
   immutable action references according to policy.

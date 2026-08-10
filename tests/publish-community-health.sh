@@ -35,6 +35,9 @@ output=$(PATH="${temporary}/bin:${PATH}" \
   "${root}/bin/publish-community-health")
 
 [[ $(grep -c '^PLAN POST /orgs/atrinik/repos ' <<<"${output}") == 1 ]]
-[[ $(grep -c '^PLAN PUT /repos/atrinik/.github/contents/' <<<"${output}") == 9 ]]
+[[ $(grep -c '^PLAN PUT /repos/atrinik/.github/contents/' <<<"${output}") == 10 ]]
+grep -Fq \
+  'PLAN PUT /repos/atrinik/.github/contents/profile/README.md' \
+  <<<"${output}"
 
 echo "Community-health publisher plans the repository and every default file."

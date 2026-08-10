@@ -11,6 +11,11 @@ organization issue types and fields, the public **Atrinik work** Project and
 shared views, scheduled item synchronization, repository custom properties,
 and the generated organization community-health repository.
 
+The organization description and canonical website are also governed here.
+The public profile README is generated from `community-health/profile/README.md`,
+while the six public organization pins remain explicit, read-only-verified
+manual state because GitHub exposes no supported pin mutation API.
+
 Atrinik uses GitHub Team. The publisher detects the organization plan and uses
 organization-level rulesets on Team or Enterprise. On GitHub Free it installs
 equivalent repository-level rulesets instead. Archived repositories are
@@ -100,9 +105,18 @@ read-only and are skipped on later runs.
   release policy.
 - `community-health/` is the source for organization-wide issue forms,
   pull-request guidance, contribution guidance, conduct policy, and security
-  reporting. `bin/publish-community-health` generates `atrinik/.github`
-  directly from this released source; the generated repository is not edited
-  or released independently.
+  reporting, including the public organization profile.
+  `bin/publish-community-health` generates `atrinik/.github` directly from this
+  released source; the generated repository is not edited or released
+  independently.
+- `config/organization.json` owns the game-first organization description and
+  preserves `https://atrinik.org` as the canonical website. The publisher
+  compares every owned field and patches only when live state differs.
+- `config/manual-settings.json` owns the exact public repository pin order:
+  `classic`, `atrinik`, `website`, `content`, `protocol`, and `playtester`, with
+  stable repository IDs. `bin/verify-manual-settings` reads the ordered pins
+  through GraphQL and fails closed on count, identity, visibility, archival, or
+  order drift; it never mutates them.
 
 The GitHub REST API does not expose every organization control. The desired
 values are recorded in `config/manual-settings.json` and must be confirmed in
@@ -286,6 +300,45 @@ the operational record.
 repository if needed and converges every file listed in
 `config/community-health.json`. Local community-health files in a component
 repository continue to take precedence over these defaults.
+
+### Organization identity and public pins
+
+Review and deploy organization identity only after the governing pull request
+is merged. First inspect both complete plans:
+
+```sh
+bin/publish
+bin/publish-community-health
+```
+
+With separate live-mutation authorization, `bin/publish --apply` converges the
+description while preserving the canonical website and the other owned
+organization defaults. `bin/publish-community-health --apply` publishes
+`community-health/profile/README.md` as `.github/profile/README.md`; never edit
+the generated repository directly.
+
+GitHub does not provide a supported public API for organization pins. An
+organization owner must open
+<https://github.com/organizations/atrinik/settings/profile>, select exactly six
+repositories, and arrange them in this order:
+
+1. `classic`
+2. `atrinik`
+3. `website`
+4. `content`
+5. `protocol`
+6. `playtester`
+
+After saving, verify the exact live order and stable identities without
+mutation:
+
+```sh
+bin/verify-manual-settings
+```
+
+Do not use browser automation or an undocumented endpoint to apply pins. A
+change is complete only after the public organization view renders the profile
+README and links correctly and the verifier reports the governed pin order.
 
 `bin/publish-repository-properties` creates the organization property schema
 and assigns the complete desired value set to every repository. It runs after

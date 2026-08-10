@@ -400,4 +400,46 @@ while IFS= read -r environment_record; do
   echo "KEEP ${repository} environment ${environment} metadata"
 done < <(jq -c '.github_actions_environments[]' "${manual_settings}")
 
-echo "Manual settings live credential and environment metadata is present."
+# GraphQL variables must remain literal for GitHub to substitute.
+# shellcheck disable=SC2016
+pins_response=$(github_api \
+  "read ${organization} organization pins" \
+  graphql \
+  -f query='query($login:String!){organization(login:$login){login pinnedItems(first:10,types:REPOSITORY){totalCount nodes{... on Repository{name databaseId nameWithOwner isArchived visibility}}}}}' \
+  -F login="${organization}")
+if ! jq -e \
+  --arg organization "${organization}" '
+    .data.organization as $organization_data |
+    ($organization_data | type == "object") and
+    $organization_data.login == $organization and
+    ($organization_data.pinnedItems.totalCount | type == "number") and
+    ($organization_data.pinnedItems.nodes | type == "array") and
+    $organization_data.pinnedItems.totalCount ==
+      ($organization_data.pinnedItems.nodes | length) and
+    all(
+      $organization_data.pinnedItems.nodes[];
+      (.name | type == "string" and length > 0) and
+      (.databaseId | type == "number" and floor == . and . > 0) and
+      .nameWithOwner == "\($organization)/\(.name)" and
+      .isArchived == false and
+      .visibility == "PUBLIC"
+    )
+  ' <<<"${pins_response}" >/dev/null; then
+  echo "error: GitHub returned invalid organization pin metadata for ${organization}" >&2
+  exit 1
+fi
+
+desired_pins=$(jq -c '.organization_pins.repositories' "${manual_settings}")
+live_pins=$(jq -c '
+  [.data.organization.pinnedItems.nodes[] |
+    {name, repository_id: .databaseId}]
+' <<<"${pins_response}")
+if [[ ${live_pins} != "${desired_pins}" ]]; then
+  echo "error: organization pin order or identity drift for ${organization}" >&2
+  echo "desired: ${desired_pins}" >&2
+  echo "live: ${live_pins}" >&2
+  exit 1
+fi
+echo "KEEP ${organization} organization pins match the exact governed order"
+
+echo "Manual settings live credential, environment, and organization pin metadata is present."

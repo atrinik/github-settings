@@ -1,4 +1,6 @@
 {
+  "description": "A cooperative fantasy world of islands, ruins, and crystal-lit mysteries—open source, playable in Classic, and rebuilding for the future.",
+  "blog": "https://atrinik.org",
   "default_repository_permission": "none",
   "members_can_create_repositories": false,
   "members_can_create_public_repositories": false,
