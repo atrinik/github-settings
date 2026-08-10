@@ -23,6 +23,7 @@ fi
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 manual_settings=${root}/config/manual-settings.json
+repository_defaults=${root}/config/repository-defaults.json
 temporary=$(mktemp -d)
 trap 'rm -rf "${temporary}"' EXIT
 
@@ -51,9 +52,9 @@ github_api() {
 declare -A repository_data_files=()
 declare -A repository_secret_files=()
 
-load_repository_metadata() {
+load_repository_identity() {
   local repository=$1
-  local collected expected page page_size repository_key response status
+  local repository_key status
 
   if [[ -v repository_data_files["${repository}"] ]]; then
     return
@@ -61,7 +62,6 @@ load_repository_metadata() {
 
   repository_key=${repository//\//-}
   repository_data_files["${repository}"]=${temporary}/${repository_key}.json
-  repository_secret_files["${repository}"]=${temporary}/${repository_key}-secrets.jsonl
   if github_api "read ${repository} identity" "repos/${repository}" \
     >"${repository_data_files["${repository}"]}"; then
     :
@@ -69,7 +69,24 @@ load_repository_metadata() {
     status=$?
     return "${status}"
   fi
+}
 
+load_repository_secrets() {
+  local repository=$1
+  local collected expected page page_size repository_key response status
+
+  if [[ -v repository_secret_files["${repository}"] ]]; then
+    return
+  fi
+  if load_repository_identity "${repository}"; then
+    :
+  else
+    status=$?
+    return "${status}"
+  fi
+
+  repository_key=${repository//\//-}
+  repository_secret_files["${repository}"]=${temporary}/${repository_key}-secrets.jsonl
   : >"${repository_secret_files["${repository}"]}"
   expected=
   collected=0
@@ -115,6 +132,86 @@ load_repository_metadata() {
   fi
 }
 
+load_paginated_metadata() {
+  local operation=$1
+  local endpoint=$2
+  local collection=$3
+  local output=$4
+  local collected=0
+  local expected=
+  local page=1
+  local page_size response status
+
+  : >"${output}"
+  while true; do
+    if response=$(github_api \
+      "${operation} (page ${page})" \
+      "${endpoint}?per_page=100&page=${page}"); then
+      :
+    else
+      status=$?
+      return "${status}"
+    fi
+    if ! jq -e --arg collection "${collection}" '
+      (.total_count | type == "number" and floor == . and . >= 0) and
+      (.[$collection] | type == "array")
+    ' <<<"${response}" >/dev/null; then
+      echo "error: ${operation} returned invalid metadata (page ${page})" >&2
+      return 1
+    fi
+    if [[ -z ${expected} ]]; then
+      expected=$(jq -r '.total_count' <<<"${response}")
+    elif [[ $(jq -r '.total_count' <<<"${response}") != "${expected}" ]]; then
+      echo "error: ${operation} changed while listing metadata" >&2
+      return 1
+    fi
+    jq -c --arg collection "${collection}" '.[$collection][]' <<<"${response}" \
+      >>"${output}"
+    page_size=$(jq -r --arg collection "${collection}" '.[$collection] | length' \
+      <<<"${response}")
+    ((collected += page_size))
+    if ((collected >= expected)); then
+      break
+    fi
+    if ((page_size == 0)); then
+      echo "error: ${operation} ended before total_count" >&2
+      return 1
+    fi
+    ((page += 1))
+  done
+  if ((collected != expected)); then
+    echo "error: ${operation} count mismatch: expected ${expected}, got ${collected}" >&2
+    return 1
+  fi
+}
+
+verify_repository_identity() {
+  local repository=$1
+  local repository_id=$2
+  local default_branch repository_data status
+
+  if load_repository_identity "${repository}"; then
+    :
+  else
+    status=$?
+    return "${status}"
+  fi
+  repository_data=$(<"${repository_data_files["${repository}"]}")
+  default_branch=$(jq -r '.default_branch' "${repository_defaults}")
+  if ! jq -e \
+    --arg repository "${repository}" \
+    --arg default_branch "${default_branch}" \
+    --argjson repository_id "${repository_id}" '
+      .id == $repository_id and
+      .full_name == $repository and
+      .archived == false and
+      .default_branch == $default_branch
+    ' <<<"${repository_data}" >/dev/null; then
+    echo "error: repository identity or active-state drift for ${repository}" >&2
+    return 1
+  fi
+}
+
 missing=0
 while IFS= read -r credential; do
   repository=$(jq -r '.repository' <<<"${credential}")
@@ -127,17 +224,17 @@ while IFS= read -r credential; do
     echo "error: credential repository owner does not match ${organization}: ${repository}" >&2
     exit 1
   fi
-  if load_repository_metadata "${repository}"; then
+  if verify_repository_identity "${repository}" "${repository_id}"; then
     :
   else
     status=$?
     exit "${status}"
   fi
-  repository_data=$(<"${repository_data_files["${repository}"]}")
-  live_repository_id=$(jq -r '.id // empty' <<<"${repository_data}")
-  if [[ ${live_repository_id} != "${repository_id}" ]]; then
-    echo "error: repository identity drift for ${repository}: expected ${repository_id}, got ${live_repository_id:-missing}" >&2
-    exit 1
+  if load_repository_secrets "${repository}"; then
+    :
+  else
+    status=$?
+    exit "${status}"
   fi
 
   case ${secret_scope} in
@@ -167,4 +264,140 @@ if ((missing > 0)); then
   exit 1
 fi
 
-echo "Manual settings live credential metadata is present."
+while IFS= read -r environment_record; do
+  repository=$(jq -r '.repository' <<<"${environment_record}")
+  repository_owner=${repository%%/*}
+  repository_id=$(jq -r '.repository_id' <<<"${environment_record}")
+  environment=$(jq -r '.environment' <<<"${environment_record}")
+  environment_key=${repository//\//-}-${environment}
+
+  if [[ ${repository_owner} != "${organization}" ]]; then
+    echo "error: environment repository owner does not match ${organization}: ${repository}" >&2
+    exit 1
+  fi
+  if verify_repository_identity "${repository}" "${repository_id}"; then
+    :
+  else
+    status=$?
+    exit "${status}"
+  fi
+
+  environment_file=${temporary}/${environment_key}.json
+  if github_api \
+    "read ${repository} environment ${environment}" \
+    "repos/${repository}/environments/${environment}" >"${environment_file}"; then
+    :
+  else
+    status=$?
+    exit "${status}"
+  fi
+  if ! jq -e --arg environment "${environment}" '
+    .name == $environment and
+    (.deployment_branch_policy | type == "object") and
+    (.protection_rules | type == "array")
+  ' "${environment_file}" >/dev/null; then
+    echo "error: environment metadata is invalid for ${repository} ${environment}" >&2
+    exit 1
+  fi
+
+  expected_branch_mode=$(jq -c '.deployment_branch_policy | {
+    protected_branches,
+    custom_branch_policies
+  }' <<<"${environment_record}")
+  live_branch_mode=$(jq -c '.deployment_branch_policy | {
+    protected_branches,
+    custom_branch_policies
+  }' "${environment_file}")
+  if [[ ${live_branch_mode} != "${expected_branch_mode}" ]]; then
+    echo "error: deployment branch mode drift for ${repository} ${environment}" >&2
+    exit 1
+  fi
+
+  branch_policies_file=${temporary}/${environment_key}-branch-policies.jsonl
+  if load_paginated_metadata \
+    "list ${repository} environment ${environment} deployment branch policies" \
+    "repos/${repository}/environments/${environment}/deployment-branch-policies" \
+    branch_policies "${branch_policies_file}"; then
+    :
+  else
+    status=$?
+    exit "${status}"
+  fi
+  expected_branch_policies=$(jq -c \
+    '[.deployment_branch_policy.patterns[] | {name, type}] | sort_by(.type, .name)' \
+    <<<"${environment_record}")
+  live_branch_policies=$(jq -sc \
+    '[.[] | {name, type}] | sort_by(.type, .name)' "${branch_policies_file}")
+  if [[ ${live_branch_policies} != "${expected_branch_policies}" ]]; then
+    echo "error: deployment branch policy drift for ${repository} ${environment}" >&2
+    exit 1
+  fi
+
+  expected_reviewers=$(jq -c \
+    '.required_reviewers | sort_by(.type, .id)' <<<"${environment_record}")
+  reviewer_rule_count=$(jq \
+    '[.protection_rules[] | select(.type == "required_reviewers")] | length' \
+    "${environment_file}")
+  live_reviewers=$(jq -c '
+    [.protection_rules[] |
+      select(.type == "required_reviewers") |
+      .reviewers[] |
+      {type, id: .reviewer.id}] |
+    sort_by(.type, .id)
+  ' "${environment_file}")
+  if [[ (${expected_reviewers} == '[]' && ${reviewer_rule_count} -ne 0) ||
+        (${expected_reviewers} != '[]' && ${reviewer_rule_count} -ne 1) ||
+        ${live_reviewers} != "${expected_reviewers}" ]]; then
+    echo "error: required reviewer drift for ${repository} ${environment}" >&2
+    exit 1
+  fi
+  expected_protection_rule_types=$(jq -cn \
+    --argjson reviewers "${expected_reviewers}" \
+    '["branch_policy"] +
+      (if ($reviewers | length) > 0 then ["required_reviewers"] else [] end) |
+      sort')
+  live_protection_rule_types=$(jq -c \
+    '[.protection_rules[].type] | sort' "${environment_file}")
+  if [[ ${live_protection_rule_types} != "${expected_protection_rule_types}" ]]; then
+    echo "error: protection rule drift for ${repository} ${environment}" >&2
+    exit 1
+  fi
+
+  secrets_file=${temporary}/${environment_key}-secrets.jsonl
+  if load_paginated_metadata \
+    "list ${repository} environment ${environment} secrets" \
+    "repos/${repository}/environments/${environment}/secrets" \
+    secrets "${secrets_file}"; then
+    :
+  else
+    status=$?
+    exit "${status}"
+  fi
+  expected_names=$(jq -c '.secret_names | sort' <<<"${environment_record}")
+  live_names=$(jq -sc '[.[].name] | sort' "${secrets_file}")
+  if [[ ${live_names} != "${expected_names}" ]]; then
+    echo "error: environment secret-name drift for ${repository} ${environment}" >&2
+    exit 1
+  fi
+
+  variables_file=${temporary}/${environment_key}-variables.jsonl
+  if load_paginated_metadata \
+    "list ${repository} environment ${environment} variables" \
+    "repos/${repository}/environments/${environment}/variables" \
+    variables "${variables_file}"; then
+    :
+  else
+    status=$?
+    exit "${status}"
+  fi
+  expected_names=$(jq -c '.variable_names | sort' <<<"${environment_record}")
+  live_names=$(jq -sc '[.[].name] | sort' "${variables_file}")
+  if [[ ${live_names} != "${expected_names}" ]]; then
+    echo "error: environment variable-name drift for ${repository} ${environment}" >&2
+    exit 1
+  fi
+
+  echo "KEEP ${repository} environment ${environment} metadata"
+done < <(jq -c '.github_actions_environments[]' "${manual_settings}")
+
+echo "Manual settings live credential and environment metadata is present."

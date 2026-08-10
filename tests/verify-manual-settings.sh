@@ -35,9 +35,57 @@ fi
 case ${endpoint} in
 repos/atrinik/github-settings)
   if [[ ${FAKE_GH_SCENARIO} == identity-drift ]]; then
-    jq -n '{id: 1}'
+    jq -n '{
+      id: 1,
+      full_name: "atrinik/github-settings",
+      archived: false,
+      default_branch: "main"
+    }'
   else
-    jq -n '{id: 1324382941}'
+    jq -n '{
+      id: 1324382941,
+      full_name: "atrinik/github-settings",
+      archived: false,
+      default_branch: "main"
+    }'
+  fi
+  ;;
+repos/atrinik/classic)
+  if [[ ${FAKE_GH_SCENARIO} == environment-identity-drift ]]; then
+    jq -n '{
+      id: 1,
+      full_name: "atrinik/classic",
+      archived: false,
+      default_branch: "main"
+    }'
+  elif [[ ${FAKE_GH_SCENARIO} == environment-repository-name-drift ]]; then
+    jq -n '{
+      id: 1327289971,
+      full_name: "atrinik/renamed-classic",
+      archived: false,
+      default_branch: "main"
+    }'
+  elif [[ ${FAKE_GH_SCENARIO} == environment-archived ]]; then
+    jq -n '{
+      id: 1327289971,
+      full_name: "atrinik/classic",
+      archived: true,
+      default_branch: "main"
+    }'
+  elif [[ ${FAKE_GH_SCENARIO} == environment-default-branch-drift ]]; then
+    jq -n '{
+      id: 1327289971,
+      full_name: "atrinik/classic",
+      archived: false,
+      default_branch: "trunk"
+    }'
+  else
+    jq -n '{
+      id: 1327289971,
+      full_name: "atrinik/classic",
+      archived: false,
+      default_branch: "main"
+    }'
   fi
   ;;
 "repos/atrinik/github-settings/actions/secrets?per_page=100&page=1")
@@ -95,6 +143,126 @@ repos/atrinik/github-settings)
     }]
   }'
   ;;
+repos/atrinik/classic/environments/discord-release)
+  if [[ ${FAKE_GH_SCENARIO} == missing-environment ]]; then
+    echo "gh: environment not found" >&2
+    exit 43
+  elif [[ ${FAKE_GH_SCENARIO} == environment-name-drift ]]; then
+    jq -n '{
+      name: "other-environment",
+      deployment_branch_policy: {
+        protected_branches: false,
+        custom_branch_policies: true
+      },
+      protection_rules: [{type: "branch_policy"}]
+    }'
+  elif [[ ${FAKE_GH_SCENARIO} == branch-mode-drift ]]; then
+    jq -n '{
+      name: "discord-release",
+      deployment_branch_policy: {
+        protected_branches: true,
+        custom_branch_policies: false
+      },
+      protection_rules: [{type: "branch_policy"}]
+    }'
+  elif [[ ${FAKE_GH_SCENARIO} == extra-reviewer ]]; then
+    jq -n '{
+      name: "discord-release",
+      deployment_branch_policy: {
+        protected_branches: false,
+        custom_branch_policies: true
+      },
+      protection_rules: [{
+        type: "required_reviewers",
+        reviewers: [{type: "User", reviewer: {id: 1, login: "reviewer"}}]
+      }, {type: "branch_policy"}]
+    }'
+  elif [[ ${FAKE_GH_SCENARIO} == wait-timer ||
+    ${FAKE_GH_SCENARIO} == custom-protection-rule ]]; then
+    rule_type=wait_timer
+    if [[ ${FAKE_GH_SCENARIO} == custom-protection-rule ]]; then
+      rule_type=custom_deployment_protection_rule
+    fi
+    jq -n --arg rule_type "${rule_type}" '{
+      name: "discord-release",
+      deployment_branch_policy: {
+        protected_branches: false,
+        custom_branch_policies: true
+      },
+      protection_rules: [{type: "branch_policy"}, {type: $rule_type}]
+    }'
+  else
+    jq -n '{
+      name: "discord-release",
+      deployment_branch_policy: {
+        protected_branches: false,
+        custom_branch_policies: true
+      },
+      protection_rules: [{type: "branch_policy"}]
+    }'
+  fi
+  ;;
+"repos/atrinik/classic/environments/discord-release/deployment-branch-policies?per_page=100&page=1")
+  if [[ ${FAKE_GH_SCENARIO} == branch-policy-drift ]]; then
+    jq -n '{
+      total_count: 1,
+      branch_policies: [{id: 1, name: "release", type: "branch"}]
+    }'
+  elif [[ ${FAKE_GH_SCENARIO} == environment-page2 ||
+    ${FAKE_GH_SCENARIO} == environment-page2-failure ]]; then
+    jq -n '{
+      total_count: 101,
+      branch_policies: [range(0; 100) | {
+        id: ., name: ("branch-" + tostring), type: "branch"
+      }]
+    }'
+  elif [[ ${FAKE_GH_SCENARIO} == malformed-branch-policy-response ]]; then
+    jq -n '{total_count: 1, branch_policy: []}'
+  else
+    jq -n '{
+      total_count: 2,
+      branch_policies: [
+        {id: 1, name: "main", type: "branch"},
+        {id: 2, name: "v*", type: "tag"}
+      ]
+    }'
+  fi
+  ;;
+"repos/atrinik/classic/environments/discord-release/deployment-branch-policies?per_page=100&page=2")
+  if [[ ${FAKE_GH_SCENARIO} == environment-page2-failure ]]; then
+    echo "gh: second environment branch-policy page failed" >&2
+    exit 44
+  fi
+  [[ ${FAKE_GH_SCENARIO} == environment-page2 ]]
+  jq -n '{
+    total_count: 101,
+    branch_policies: [{id: 101, name: "main", type: "branch"}]
+  }'
+  ;;
+"repos/atrinik/classic/environments/discord-release/secrets?per_page=100&page=1")
+  if [[ ${FAKE_GH_SCENARIO} == missing-environment-secret ]]; then
+    jq -n '{total_count: 0, secrets: []}'
+  else
+    jq -n '{
+      total_count: 1,
+      secrets: [{
+        name: "DISCORD_APPLICATION_ID",
+        created_at: "2026-08-10T00:00:00Z",
+        updated_at: "2026-08-10T00:00:00Z"
+      }]
+    }'
+  fi
+  ;;
+"repos/atrinik/classic/environments/discord-release/variables?per_page=100&page=1")
+  if [[ ${FAKE_GH_SCENARIO} == extra-environment-variable ]]; then
+    jq -n '{
+      total_count: 1,
+      variables: [{name: "UNEXPECTED", created_at: "2026-08-10T00:00:00Z"}]
+    }'
+  else
+    jq -n '{total_count: 0, variables: []}'
+  fi
+  ;;
 *) exit 1 ;;
 esac
 EOF
@@ -115,13 +283,40 @@ run_verify() {
 output=$(run_verify present)
 grep -Fq 'KEEP atrinik/github-settings repository Actions secret ATRINIK_SETTINGS_TOKEN' \
   <<<"${output}"
-grep -Fq 'Manual settings live credential metadata is present.' <<<"${output}"
+grep -Fq 'KEEP atrinik/classic environment discord-release metadata' <<<"${output}"
+grep -Fq 'Manual settings live credential and environment metadata is present.' \
+  <<<"${output}"
 
 : >"${temporary}/gh.log"
 output=$(run_verify page2)
 grep -Fq 'KEEP atrinik/github-settings repository Actions secret ATRINIK_SETTINGS_TOKEN' \
   <<<"${output}"
 grep -Fq 'page=2' "${temporary}/gh.log"
+
+environment_page_root=${temporary}/environment-page
+mkdir -p "${environment_page_root}/bin"
+cp "${root}/bin/validate" "${root}/bin/verify-manual-settings" \
+  "${environment_page_root}/bin/"
+cp -R "${root}/config" "${environment_page_root}/config"
+cp -R "${root}/community-health" "${environment_page_root}/community-health"
+cp -R "${root}/.github" "${environment_page_root}/.github"
+jq '
+  .github_actions_environments[0].deployment_branch_policy.patterns =
+    ([range(0; 100) | {
+      name: ("branch-" + tostring),
+      type: "branch"
+    }] + [{name: "main", type: "branch"}])
+' "${root}/config/manual-settings.json" \
+  >"${environment_page_root}/config/manual-settings.json"
+: >"${temporary}/gh.log"
+output=$(PATH="${temporary}/bin:${PATH}" \
+  FAKE_GH_LOG="${temporary}/gh.log" \
+  FAKE_GH_SCENARIO=environment-page2 \
+  GITHUB_ACTIONS=true GH_TOKEN=test-token \
+  ATRINIK_VALIDATION_TODAY=2026-08-10 \
+  "${environment_page_root}/bin/verify-manual-settings")
+grep -Fq 'KEEP atrinik/classic environment discord-release metadata' <<<"${output}"
+grep -Fq 'deployment-branch-policies?per_page=100&page=2' "${temporary}/gh.log"
 
 shared_root=${temporary}/shared-repository
 mkdir -p "${shared_root}/bin"
@@ -157,11 +352,67 @@ for scenario in missing identity-drift api-failure page2-failure; do
 done
 grep -Fq 'MISSING atrinik/github-settings repository Actions secret ATRINIK_SETTINGS_TOKEN' \
   "${temporary}/missing.err"
-grep -Fq 'repository identity drift' "${temporary}/identity-drift.err"
+grep -Fq 'repository identity or active-state drift' \
+  "${temporary}/identity-drift.err"
 grep -Fq 'gh: repository administration denied' "${temporary}/api-failure.err"
 grep -Fq 'read atrinik/github-settings identity' "${temporary}/api-failure.err"
 grep -Fq 'gh: second secret page failed' "${temporary}/page2-failure.err"
 grep -Fq 'page 2' "${temporary}/page2-failure.err"
+
+environment_failures=(
+  missing-environment
+  environment-identity-drift
+  environment-repository-name-drift
+  environment-archived
+  environment-default-branch-drift
+  environment-name-drift
+  branch-mode-drift
+  branch-policy-drift
+  extra-reviewer
+  wait-timer
+  custom-protection-rule
+  missing-environment-secret
+  extra-environment-variable
+  malformed-branch-policy-response
+  environment-page2-failure
+)
+for scenario in "${environment_failures[@]}"; do
+  : >"${temporary}/gh.log"
+  if run_verify "${scenario}" \
+    >"${temporary}/${scenario}.out" 2>"${temporary}/${scenario}.err"; then
+    echo "error: manual-settings verifier accepted ${scenario}" >&2
+    exit 1
+  fi
+done
+grep -Fq 'environment not found' "${temporary}/missing-environment.err"
+grep -Fq 'read atrinik/classic environment discord-release' \
+  "${temporary}/missing-environment.err"
+grep -Fq 'repository identity or active-state drift for atrinik/classic' \
+  "${temporary}/environment-identity-drift.err"
+grep -Fq 'repository identity or active-state drift for atrinik/classic' \
+  "${temporary}/environment-repository-name-drift.err"
+grep -Fq 'repository identity or active-state drift for atrinik/classic' \
+  "${temporary}/environment-archived.err"
+grep -Fq 'repository identity or active-state drift for atrinik/classic' \
+  "${temporary}/environment-default-branch-drift.err"
+grep -Fq 'environment metadata is invalid' \
+  "${temporary}/environment-name-drift.err"
+grep -Fq 'deployment branch mode drift' \
+  "${temporary}/branch-mode-drift.err"
+grep -Fq 'deployment branch policy drift' \
+  "${temporary}/branch-policy-drift.err"
+grep -Fq 'required reviewer drift' "${temporary}/extra-reviewer.err"
+grep -Fq 'protection rule drift' "${temporary}/wait-timer.err"
+grep -Fq 'protection rule drift' "${temporary}/custom-protection-rule.err"
+grep -Fq 'environment secret-name drift' \
+  "${temporary}/missing-environment-secret.err"
+grep -Fq 'environment variable-name drift' \
+  "${temporary}/extra-environment-variable.err"
+grep -Fq 'returned invalid metadata' \
+  "${temporary}/malformed-branch-policy-response.err"
+grep -Fq 'second environment branch-policy page failed' \
+  "${temporary}/environment-page2-failure.err"
+grep -Fq 'page 2' "${temporary}/environment-page2-failure.err"
 
 for failure in api-failure:41 page2-failure:42; do
   scenario=${failure%%:*}
@@ -180,6 +431,18 @@ for failure in api-failure:41 page2-failure:42; do
 done
 
 : >"${temporary}/gh.log"
+set +e
+run_verify environment-page2-failure \
+  >"${temporary}/environment-page2-failure-status.out" \
+  2>"${temporary}/environment-page2-failure-status.err"
+status=$?
+set -e
+if ((status != 44)); then
+  echo "error: environment-page2-failure exited ${status}, expected 44" >&2
+  exit 1
+fi
+
+: >"${temporary}/gh.log"
 if PATH="${temporary}/bin:${PATH}" \
   FAKE_GH_LOG="${temporary}/gh.log" FAKE_GH_SCENARIO=present \
   GITHUB_ACTIONS=true GH_TOKEN='' ATRINIK_VALIDATION_TODAY=2026-08-10 \
@@ -191,4 +454,4 @@ fi
 grep -Fq 'ATRINIK_SETTINGS_TOKEN is unavailable' "${temporary}/empty.err"
 [[ ! -s ${temporary}/gh.log ]]
 
-echo "Manual settings live credential verification tests passed."
+echo "Manual settings live credential and environment verification tests passed."

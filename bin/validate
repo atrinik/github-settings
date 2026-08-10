@@ -425,19 +425,21 @@ jq -e \
       all(
         .patterns[];
         (keys == ["name", "type"]) and
-        .type == "branch" and
         (
-          .name |
-          type == "string" and
-          length > 0 and
-          test("^[A-Za-z0-9._/-]+$")
+          (
+            .type == "branch" and
+            (.name | type == "string" and test("^[A-Za-z0-9._/-]+$"))
+          ) or
+          (
+            .type == "tag" and
+            .name == "v*"
+          )
         )
       )
     ) and
     (
       .variable_names |
       type == "array" and
-      length > 0 and
       length == (unique | length) and
       all(.[]; type == "string" and test("^[A-Z][A-Z0-9_]*$"))
     ) and
