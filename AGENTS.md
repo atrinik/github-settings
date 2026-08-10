@@ -80,9 +80,12 @@
 - Record cross-repository private-package consumption in
   `config/manual-settings.json` with stable package and repository IDs. Grant
   consumer workflows only the `read` role through the package's **Manage
-  Actions access** UI. Do not change package visibility, permission
-  inheritance, or source-repository association, and do not automate the grant
-  through an undocumented API.
+  Actions access** UI, preserve visibility and source association, and do not
+  automate the grant through an undocumented API. A transition from private to
+  public is a separate, effectively irreversible organization-owner action:
+  merge reviewed desired-state and consumer-permission changes first, preserve
+  the source association, verify anonymous digest access, and remove obsolete
+  repository grants without altering foreign entries.
 - Record manually provisioned GitHub Actions environments in
   `config/manual-settings.json` with stable repository IDs, exact deployment
   branch policies and reviewer sets, and variable and secret names only. Never
