@@ -66,9 +66,11 @@ read-only and are skipped on later runs.
   request GitHub Apps for owner review. These UI-only settings are recorded in
   `config/manual-settings.json`.
 - Private GitHub Packages consumed across repositories have explicit,
-  read-only workflow grants recorded in `config/manual-settings.json`. The
-  package's visibility, permission inheritance, and source-repository link are
-  not changed by these grants.
+  read-only workflow grants recorded in `config/manual-settings.json`. Public
+  reusable build images instead require anonymous immutable-digest access and
+  no consumer grant or package permission. A private-to-public transition is a
+  separately reviewed, effectively irreversible owner action that preserves
+  the source-repository link.
 - GitHub Actions environments that depend on externally issued credentials
   have name-only contracts in `config/manual-settings.json`. The inventory
   records the stable repository identity, exact deployment branch policy and
@@ -122,9 +124,11 @@ The GitHub REST API does not expose every organization control. The desired
 values are recorded in `config/manual-settings.json` and must be confirmed in
 the organization UI under **Member privileges**, **Authentication security**,
 **GitHub Apps**, each listed repository's **Environments** settings, and each
-listed package's **Manage Actions access** section. Codecov must be installed
-for the listed repositories so their OIDC-authenticated coverage uploads and
-badges remain available.
+listed private package's **Manage Actions access** section. Public package
+identity, visibility, source association, and anonymous digest access use the
+separate checked procedure below. Codecov must be installed for the listed
+repositories so their OIDC-authenticated coverage uploads and badges remain
+available.
 
 ## Usage
 
@@ -649,120 +653,56 @@ an external provider. Complete every retirement in this order:
 Record the exact environment and external-token names in the retirement pull
 request handoff without recording their values.
 
-## Granting Classic access to private build images
+## Public reusable build images
 
-### Windows cross-build image
+`ghcr.io/atrinik/classic-build` (package ID `14345002`) and
+`ghcr.io/atrinik/windows-build` (package ID `14204802`) are public reusable
+toolchain images linked to `atrinik/devcontainer`. Their public visibility lets
+fork-controlled pull-request workflows consume immutable digests without a
+package permission, registry login, repository secret, or cross-repository
+**Manage Actions access** grant. Accordingly,
+`github_packages_actions_access` contains no entry for either package.
 
-The private `ghcr.io/atrinik/windows-build` image is owned by the
-`atrinik/windows-build` container package (package ID `14204802`) and remains
-linked to `atrinik/devcontainer`. Classic release workflows run from the public
-`atrinik/classic` repository (repository ID `1327289971`). They need an
-explicit **Read** grant under the package's **Manage Actions access** section;
-connecting the package to Classic, changing inherited permissions, making the
-package public, or adding a personal access token are not substitutes for this
-grant.
+Changing a GitHub Container Registry package from private to public is an
+effectively irreversible organization-owner action. Before the change, merge a
+reviewed desired-state removal, verify both stable package identities and the
+`atrinik/devcontainer` source association, and confirm that every intended
+consumer change removes package permissions and registry login. Never change
+permission inheritance, detach the source repository, or alter a foreign
+Actions-access entry.
 
-Before changing the manual setting, an organization owner with package
-administration access must verify the stable identities and the pinned build
-image version:
-
-```sh
-gh api /orgs/atrinik/packages/container/windows-build \
-  --jq '{id, name, package_type, visibility, source: .repository.full_name}'
-gh api /repos/atrinik/classic \
-  --jq '{id, full_name, visibility, archived, default_branch}'
-gh api --paginate \
-  '/orgs/atrinik/packages/container/windows-build/versions?per_page=100' \
-  --jq '.[] | select(.id == 1107232303) | {id, name, tags: .metadata.container.tags}'
-```
-
-The expected values are:
-
-- package `windows-build`, ID `14204802`, type `container`, visibility
-  `private`, source `atrinik/devcontainer`;
-- repository `atrinik/classic`, ID `1327289971`, visibility `public`, not
-  archived, default branch `main`;
-- package version ID `1107232303`, digest
-  `sha256:9cc373f620a577328fc0a7a7fa823bddaca6d7dc75ac73bcf21be421c49676f7`,
-  with tag `1.0.5`.
-
-Open the
-[Windows build package settings](https://github.com/orgs/atrinik/packages/container/windows-build/settings),
-find **Manage Actions access**, select **Add repository**, add
-`atrinik/classic`, and leave its role at **Read**. Do not modify the package's
-**Private** visibility, repository source, or permission-inheritance setting.
-The public Packages REST API does not expose this workflow-grant list, so the
-package settings UI is the authoritative verification surface: it must list
-`atrinik/classic` exactly once with **Read** access.
-
-After confirming the UI state, rerun the failed read-only release rehearsal and
-inspect both Windows jobs:
-
-```sh
-gh run rerun 31239475233 --repo atrinik/classic --failed
-gh run watch 31239475233 --repo atrinik/classic --exit-status
-gh run view 31239475233 --repo atrinik/classic \
-  --json jobs \
-  --jq '.jobs[] | select(.name | test("Build Windows (client|server) package$")) | [.name, .conclusion] | @tsv'
-```
-
-Both Windows package jobs must succeed, including the digest-pinned
-`docker pull`. If they still report `manifest unknown`, recheck the **Manage
-Actions access** entry; do not weaken package visibility or add a repository
-secret.
-
-To roll back the grant, first merge a reviewed change removing its entry from
-`github_packages_actions_access`. Then return to the same package settings,
-remove only `atrinik/classic` from **Manage Actions access**, and confirm the
-repository is absent while the package remains private and linked to
-`atrinik/devcontainer`. No `bin/publish --apply` run is involved in either
-direction because this setting has no supported publisher API.
-
-### Classic Linux build image
-
-The private `ghcr.io/atrinik/classic-build` image is owned by the
-`atrinik/classic-build` container package (package ID `14345002`) and remains
-linked to `atrinik/devcontainer`. The same Classic repository identity above
-needs an explicit **Read** grant for its Linux Check jobs. Before changing the
-manual setting, verify the exact package, consumer, and candidate version:
+Verify the live contract read-only:
 
 ```sh
 gh api /orgs/atrinik/packages/container/classic-build \
   --jq '{id, name, package_type, visibility, source: .repository.full_name}'
+gh api /orgs/atrinik/packages/container/windows-build \
+  --jq '{id, name, package_type, visibility, source: .repository.full_name}'
 gh api /repos/atrinik/classic \
   --jq '{id, full_name, visibility, archived, default_branch}'
-gh api --paginate \
-  '/orgs/atrinik/packages/container/classic-build/versions?per_page=100' \
-  --jq '.[] | select(.id == 1118365045) | {id, name, tags: .metadata.container.tags}'
 ```
 
-Require package ID `14345002`, type `container`, visibility `private`, and
-source `atrinik/devcontainer`; require the Classic repository values documented
-above; and require version ID `1118365045`, digest
-`sha256:e117b858d5aecdb8eb39dc56451378b6e6bd72dd5e042ab96fee5b6154000043`,
-with tag
-`candidate-sha-b9a86c4f52205c927373caa7583d3a43989cfca7`.
-An API failure, an empty version query, any identity mismatch, or any
-unexpected live state is a stop condition.
+Require the exact package IDs above, type `container`, visibility `public`, and
+source `atrinik/devcontainer`. Require Classic repository ID `1327289971`,
+visibility `public`, `archived: false`, and default branch `main`. An API
+failure, missing field, identity mismatch, private package, detached source, or
+unexpected state is a stop condition.
 
-Open the
-[Classic build package settings](https://github.com/orgs/atrinik/packages/container/classic-build/settings),
-find **Manage Actions access**, select **Add repository**, add
-`atrinik/classic`, and leave its role at **Read**. Do not modify private
-visibility, repository source, or permission inheritance. Require the UI to
-list `atrinik/classic` exactly once with the **Read** role, then rerun the
-failed Classic Check jobs:
+Then use a new empty Docker configuration to prove anonymous access to every
+consumer-pinned digest:
 
 ```sh
-gh run rerun 31429664785 --repo atrinik/classic --failed
-gh run watch 31429664785 --repo atrinik/classic --exit-status
+anonymous_docker_config=$(mktemp -d)
+DOCKER_CONFIG="${anonymous_docker_config}" \
+  docker buildx imagetools inspect \
+  'ghcr.io/atrinik/classic-build:1.2.3@sha256:d0ec0a31f97fa1d699f62b81bbe697d95b335f44f1c99fde8704dfc528e2102f'
+DOCKER_CONFIG="${anonymous_docker_config}" \
+  docker buildx imagetools inspect \
+  'ghcr.io/atrinik/windows-build:1.2.1@sha256:d1f082eb28891600a9cf018a1d4310b9f3e1f985f82139fa48fbd4ac77b623bb'
 ```
 
-Core, server, and client validation must all pull the exact candidate digest
-and succeed. If any pull still reports `manifest unknown`, recheck the manual
-grant; do not make the package public or add a repository secret. To roll back,
-first merge a reviewed desired-state removal, then remove only
-`atrinik/classic` from this package's **Manage Actions access** list and verify
-that the repository entry is absent while private visibility and the
-`atrinik/devcontainer` association remain unchanged. Any unexpected UI state
-is a stop condition; do not remove or alter another entry.
+Both inspections must succeed without `docker login`. The package settings UI
+must not list an obsolete `atrinik/classic` Actions-access grant; remove only
+that exact entry if it remains after the visibility transition. Finally, run a
+real fork pull request and require its digest pulls and complete required
+checks to succeed without package permissions or registry authentication.

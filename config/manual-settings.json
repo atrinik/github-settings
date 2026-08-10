@@ -97,28 +97,7 @@
       "secret_scope": "repository"
     }
   ],
-  "github_packages_actions_access": [
-    {
-      "package_owner": "atrinik",
-      "package_type": "container",
-      "package_name": "classic-build",
-      "package_id": 14345002,
-      "preserve_visibility": "private",
-      "actions_repository": "atrinik/classic",
-      "actions_repository_id": 1327289971,
-      "role": "read"
-    },
-    {
-      "package_owner": "atrinik",
-      "package_type": "container",
-      "package_name": "windows-build",
-      "package_id": 14204802,
-      "preserve_visibility": "private",
-      "actions_repository": "atrinik/classic",
-      "actions_repository_id": 1327289971,
-      "role": "read"
-    }
-  ],
+  "github_packages_actions_access": [],
   "require_two_factor_authentication": true,
   "require_secure_two_factor_methods": true,
   "reason": "The public GitHub API does not expose supported update parameters for every setting in this file, including organization pins, and external credential values must never be stored here. Confirm these settings, the exact ordered pin set, credential lifecycle metadata and live secret-name presence, Codecov GitHub App repository access, any listed GitHub Actions environments, and GitHub Packages Actions access in the corresponding organization, repository, and package settings UI."

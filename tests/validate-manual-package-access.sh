@@ -8,6 +8,7 @@ trap 'rm -rf "${temporary}"' EXIT
 
 mkdir -p "${temporary}/bin"
 cp "${root}/bin/validate" "${temporary}/bin/validate"
+cp -R "${root}/.github" "${temporary}/.github"
 cp -R "${root}/config" "${temporary}/config"
 cp -R "${root}/community-health" "${temporary}/community-health"
 
@@ -31,7 +32,14 @@ rewrite_manual_settings() {
 }
 
 jq -e '
-  .github_packages_actions_access == [
+  .github_packages_actions_access == []
+' "${root}/config/manual-settings.json" >/dev/null
+
+reset_valid_access() {
+  cp "${root}/config/manual-settings.json" \
+    "${temporary}/config/manual-settings.json"
+  rewrite_manual_settings '
+    .github_packages_actions_access = [
     {
       package_owner: "atrinik",
       package_type: "container",
@@ -41,44 +49,32 @@ jq -e '
       actions_repository: "atrinik/classic",
       actions_repository_id: 1327289971,
       role: "read"
-    },
-    {
-      package_owner: "atrinik",
-      package_type: "container",
-      package_name: "windows-build",
-      package_id: 14204802,
-      preserve_visibility: "private",
-      actions_repository: "atrinik/classic",
-      actions_repository_id: 1327289971,
-      role: "read"
     }
-  ]
-' "${root}/config/manual-settings.json" >/dev/null
+    ]'
+  "${temporary}/bin/validate" >/dev/null
+}
 
+reset_valid_access
 rewrite_manual_settings \
   '.github_packages_actions_access += [.github_packages_actions_access[0]]'
 assert_invalid 'a duplicate package Actions-access grant'
-cp "${root}/config/manual-settings.json" \
-  "${temporary}/config/manual-settings.json"
 
+reset_valid_access
 rewrite_manual_settings \
   '.github_packages_actions_access[0].role = "write"'
 assert_invalid 'a write-capable package Actions-access grant'
-cp "${root}/config/manual-settings.json" \
-  "${temporary}/config/manual-settings.json"
 
+reset_valid_access
 rewrite_manual_settings \
   'del(.github_packages_actions_access[0].actions_repository_id)'
 assert_invalid 'a package grant without a stable repository ID'
-cp "${root}/config/manual-settings.json" \
-  "${temporary}/config/manual-settings.json"
 
+reset_valid_access
 rewrite_manual_settings \
   '.github_packages_actions_access[0].package_id = 0'
 assert_invalid 'a package grant without a positive package ID'
-cp "${root}/config/manual-settings.json" \
-  "${temporary}/config/manual-settings.json"
 
+reset_valid_access
 rewrite_manual_settings \
   '.github_packages_actions_access[0].actions_repository = "classic"'
 assert_invalid 'a package grant without a full repository name'
