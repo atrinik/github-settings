@@ -1071,6 +1071,8 @@ cp "${root}/bin/publish" "${root}/bin/validate" \
 cp -R "${root}/config" "${advisory_active_root}/config"
 cp -R "${root}/community-health" \
   "${advisory_active_root}/community-health"
+mkdir -p "${advisory_active_root}/.github"
+cp -R "${root}/.github/workflows" "${advisory_active_root}/.github/workflows"
 jq '.repositories = ["classic"]' \
   "${root}/config/advisory-merge-windows.json" \
   >"${advisory_active_root}/config/advisory-merge-windows.json"
@@ -1189,6 +1191,8 @@ mkdir -p "${rollback_root}/bin"
 cp "${root}/bin/publish" "${root}/bin/validate" "${rollback_root}/bin/"
 cp -R "${root}/config" "${rollback_root}/config"
 cp -R "${root}/community-health" "${rollback_root}/community-health"
+mkdir -p "${rollback_root}/.github"
+cp -R "${root}/.github/workflows" "${rollback_root}/.github/workflows"
 jq '.repositories = []' \
   "${root}/config/codeql-advanced-setup.json" \
   >"${rollback_root}/config/codeql-advanced-setup.json"
@@ -1278,6 +1282,9 @@ cp "${root}/bin/publish" "${root}/bin/validate" \
 cp -R "${root}/config" "${advisory_rollback_root}/config"
 cp -R "${root}/community-health" \
   "${advisory_rollback_root}/community-health"
+mkdir -p "${advisory_rollback_root}/.github"
+cp -R "${root}/.github/workflows" \
+  "${advisory_rollback_root}/.github/workflows"
 jq '.repositories = []' \
   "${root}/config/advisory-merge-windows.json" \
   >"${advisory_rollback_root}/config/advisory-merge-windows.json"

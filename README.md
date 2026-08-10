@@ -1,5 +1,7 @@
 # Atrinik GitHub settings
 
+[![Project synchronization health](https://github.com/atrinik/github-settings/actions/workflows/check-project-health.yml/badge.svg)](https://github.com/atrinik/github-settings/actions/workflows/check-project-health.yml)
+
 This repository is the source of truth for Atrinik organization settings and
 repository rulesets. `bin/publish` uses the GitHub REST API to apply the policy
 to every targeted repository in one run.
@@ -67,6 +69,12 @@ read-only and are skipped on later runs.
   records the stable repository identity, exact deployment branch policy and
   reviewer set, and variable and secret names; credential values remain manual
   and are never committed.
+- Administrative Actions credentials have value-free lifecycle contracts in
+  `config/manual-settings.json`: stable repository identity, secret placement,
+  PAT type and scopes, consumers, accountable ownership, verification date,
+  rotate-by deadline, cadence, and runbook. Validation rejects expired records
+  and any value-like field; `bin/verify-manual-settings` checks live secret-name
+  presence without reading or proving the value.
 - GitHub Actions defaults to read-only, cannot approve pull requests, and may
   use only Atrinik, GitHub, Codecov coverage, and explicitly allowed Docker
   actions.
@@ -149,6 +157,52 @@ Actions. It requires an `ATRINIK_SETTINGS_TOKEN` repository secret with
 organization administration and repository administration access. Never store
 that token in this repository.
 
+### Settings automation credential
+
+`ATRINIK_SETTINGS_TOKEN` is a repository-scoped Actions secret on
+`atrinik/github-settings`. Its value-free lifecycle record lives in
+`config/manual-settings.json`; the current record's `rotate_by` date is an
+enforced maximum, not a suggestion. The credential value belongs only in an
+approved private credential manager and GitHub Actions.
+
+Provision or rotate it as an Atrinik organization owner:
+
+1. Before the current `rotate_by` date, prepare a pull request that updates
+   `last_verified_on` and a new `rotate_by` no later than the declared rotation
+   cadence. Keep ownership, consumers, and required scopes accurate.
+2. Create a classic PAT with exactly `admin:org`, `project`, and `repo`, an
+   expiration no later than the recorded deadline, and organization access if
+   GitHub requires separate authorization.
+3. Store it without echoing the value:
+
+   ```sh
+   gh secret set ATRINIK_SETTINGS_TOKEN --repo atrinik/github-settings
+   ```
+
+4. Verify repository identity and secret-name presence, then dispatch only the
+   synchronization workflow:
+
+   ```sh
+   bin/verify-manual-settings
+   gh workflow run sync-project.yml --repo atrinik/github-settings
+   gh run list --repo atrinik/github-settings --workflow sync-project.yml --limit 2
+   bin/sync-project
+   ```
+
+5. Require the manual run to succeed, the read-only plan to report
+   `Items to add: 0` and `Total mutations: 0`, and a later scheduled run plus
+   Project health check to succeed before revoking the previous credential.
+
+If verification fails, do not run a publisher or expose the token while
+debugging. Restore the prior unexpired credential from the approved private
+credential manager, or issue a replacement; then repeat the complete check.
+For suspected disclosure, revoke the affected PAT immediately, provision a new
+one, review Actions logs and organization audit events, and verify every
+consumer workflow. `bin/verify-manual-settings` proves only that GitHub exposes
+the declared secret name at the stable repository—it cannot inspect the value,
+expiry, or effective scopes. The synchronization preflight is the scope and
+functionality proof.
+
 ## Cross-repository planning
 
 Review and apply the planning layers in their dependency order:
@@ -174,9 +228,45 @@ workflows, which are limited to five repository-specific workflows and do not
 backfill existing work. It discovers every non-archived repository, adds all
 open issues and pull requests, sets intake status only when missing or when
 work is reopened, infers only missing issue types, and moves tracked closed
-items to **Done**. The scheduled `Synchronize project` workflow repeats this
-every 30 minutes. The first apply intentionally performs a large one-time
-backfill; later runs are incremental and idempotent.
+items to **Done**. The scheduled `Synchronize project` workflow requests runs
+twice per hour, but GitHub schedules are best-effort and can be delayed or
+dropped. The first apply intentionally performs a large one-time backfill;
+later runs are incremental and idempotent.
+
+`config/planning-health.json` sets a 90-minute maximum freshness age and alerts
+after two consecutive failed synchronization runs. The separate
+`Project synchronization health` workflow runs on its own schedule, after each
+completed synchronization, and on manual dispatch. It uses the ordinary
+least-privilege `GITHUB_TOKEN` to read Actions and maintain one deduplicated
+health incident, so a missing `ATRINIK_SETTINGS_TOKEN` cannot suppress the
+alert. The administration PAT is used only for the optional read-only
+convergence plan.
+
+Inspect health without changing GitHub:
+
+```sh
+bin/check-project-health
+gh run list --repo atrinik/github-settings \
+  --workflow check-project-health.yml --limit 5
+```
+
+The health summary reports the last run, last successful run and revision,
+age, consecutive failures, and pending Project mutations. A managed incident
+opens or updates after the threshold is crossed. It closes only after a newer
+successful synchronization and a zero-mutation plan. Do not remove its hidden
+marker, create one incident per missed window, or use the administration PAT
+for alert publication. The monitoring owner is the Atrinik organization-owner
+role. If organization-wide GitHub scheduling itself becomes an unacceptable
+single point of failure, provision an external dispatcher/monitor under a
+separately reviewed owner and lifecycle contract; the repository workflow does
+not pretend to provide that external guarantee.
+
+Retire or replace this monitor only through a reviewed governance change.
+Establish and prove the replacement signal first, remove the health workflow's
+triggers, then remove its badge, configuration, validator rules, and tests in
+the same change. Close any marker-owned incident with a final note pointing to
+the replacement; preserve the issue and Actions history rather than deleting
+the operational record.
 
 `bin/publish-community-health` creates the public `atrinik/.github` deployment
 repository if needed and converges every file listed in

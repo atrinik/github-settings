@@ -9,15 +9,22 @@ advanced_codeql_config=${root}/config/codeql-advanced-setup.json
 immutable_releases_config=${root}/config/immutable-releases.json
 manual_settings_config=${root}/config/manual-settings.json
 planning_config=${root}/config/planning.json
+planning_health_config=${root}/config/planning-health.json
 repository_properties_config=${root}/config/repository-properties.json
 community_health_config=${root}/config/community-health.json
 
-for command in git jq; do
+for command in date git jq; do
   if ! command -v "${command}" >/dev/null 2>&1; then
     echo "error: ${command} is required" >&2
     exit 1
   fi
 done
+
+validation_today=${ATRINIK_VALIDATION_TODAY:-$(date -u +%F)}
+if [[ ! ${validation_today} =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+  echo "error: ATRINIK_VALIDATION_TODAY must use YYYY-MM-DD" >&2
+  exit 2
+fi
 
 while IFS= read -r -d '' config; do
   jq empty "${config}" >/dev/null
@@ -199,6 +206,7 @@ jq -e '. == {state: "not-configured"}' \
 jq -e '
   (keys == [
     "codecov_github_app_repositories",
+    "github_actions_credentials",
     "github_actions_environments",
     "github_packages_actions_access",
     "members_can_change_repository_visibility",
@@ -211,6 +219,117 @@ jq -e '
     "require_two_factor_authentication"
   ])
 ' "${manual_settings_config}" >/dev/null
+
+jq -e \
+  --arg today "${validation_today}" \
+  --slurpfile repositories "${repositories_config}" '
+  def day_epoch($value):
+    ($value + "T00:00:00Z" | fromdateiso8601);
+  .github_actions_credentials as $credentials |
+  ($credentials | type == "array" and length > 0) and
+  (
+    [$credentials[] | [.repository, .secret_scope, .secret_name]] |
+    length == (unique | length)
+  ) and
+  all(
+    $credentials[];
+    (keys == [
+      "consumers",
+      "credential_type",
+      "last_verified_on",
+      "owner",
+      "purpose",
+      "repository",
+      "repository_id",
+      "required_scopes",
+      "rotate_by",
+      "rotation_cadence_days",
+      "rotation_owner",
+      "runbook",
+      "secret_name",
+      "secret_scope"
+    ]) and
+    .credential_type == "classic_pat" and
+    .secret_scope == "repository" and
+    (
+      .repository |
+      type == "string" and
+      test("^atrinik/[A-Za-z0-9_.-]+$")
+    ) and
+    (
+      .repository as $full_name |
+      ($full_name | split("/")[1]) as $repository |
+      ($repositories[0].pull_request_gate | index($repository)) != null and
+      ($repositories[0].archive | index($repository)) == null
+    ) and
+    (.repository_id | type == "number" and . > 0 and floor == .) and
+    (.secret_name | type == "string" and test("^[A-Z][A-Z0-9_]*$")) and
+    (
+      .required_scopes |
+      type == "array" and
+      length > 0 and
+      . == (sort | unique) and
+      all(.[]; IN("admin:org", "project", "repo"))
+    ) and
+    (
+      .consumers |
+      type == "array" and
+      length > 0 and
+      . == (sort | unique) and
+      all(
+        .[];
+        type == "string" and
+        test("^\\.github/workflows/[A-Za-z0-9_.-]+\\.ya?ml$")
+      )
+    ) and
+    (.purpose | type == "string" and length > 0) and
+    (.owner | type == "string" and length > 0) and
+    (.rotation_owner | type == "string" and length > 0) and
+    (
+      .rotation_cadence_days |
+      type == "number" and floor == . and . >= 1 and . <= 365
+    ) and
+    (
+      .last_verified_on |
+      type == "string" and
+      test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+    ) and
+    (
+      .rotate_by |
+      type == "string" and
+      test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+    ) and
+    (day_epoch(.last_verified_on) <= day_epoch($today)) and
+    (day_epoch(.rotate_by) >= day_epoch($today)) and
+    (day_epoch(.rotate_by) > day_epoch(.last_verified_on)) and
+    (
+      (day_epoch(.rotate_by) - day_epoch(.last_verified_on)) / 86400 <=
+      .rotation_cadence_days
+    ) and
+    (
+      .runbook |
+      type == "string" and
+      test("^[A-Za-z0-9._/-]+\\.md#[a-z0-9-]+$")
+    )
+  ) and
+  all(
+    $credentials[];
+    . as $credential |
+    all(
+      $credentials[];
+      .repository != $credential.repository or
+      .repository_id == $credential.repository_id
+    )
+  )
+' "${manual_settings_config}" >/dev/null
+
+while IFS= read -r consumer; do
+  if [[ ! -f ${root}/${consumer} ]]; then
+    echo "error: credential consumer workflow is missing: ${consumer}" >&2
+    exit 1
+  fi
+done < <(jq -r '.github_actions_credentials[].consumers[]' \
+  "${manual_settings_config}")
 
 jq -e '
   .github_packages_actions_access as $access |
@@ -463,6 +582,47 @@ jq -e '
     (.query | type == "string" and startswith("org:atrinik "))
   )
 ' "${planning_config}" >/dev/null
+
+jq -e '
+  (keys == [
+    "consecutive_failure_threshold",
+    "freshness_threshold_minutes",
+    "incident_marker",
+    "incident_title",
+    "monitor_workflow",
+    "monitoring_owner",
+    "repository",
+    "sync_workflow"
+  ]) and
+  (
+    .consecutive_failure_threshold |
+    type == "number" and floor == . and . >= 2 and . <= 10
+  ) and
+  (
+    .freshness_threshold_minutes |
+    type == "number" and floor == . and . >= 60 and . <= 1440
+  ) and
+  .incident_marker == "<!-- atrinik-project-sync-health -->" and
+  (.incident_title | type == "string" and length > 0 and length <= 120) and
+  (
+    .monitor_workflow |
+    type == "string" and test("^[A-Za-z0-9_.-]+\\.ya?ml$")
+  ) and
+  (.monitoring_owner | type == "string" and length > 0) and
+  .repository == "atrinik/github-settings" and
+  (
+    .sync_workflow |
+    type == "string" and test("^[A-Za-z0-9_.-]+\\.ya?ml$")
+  )
+' "${planning_health_config}" >/dev/null
+
+for workflow in $(jq -r '.monitor_workflow, .sync_workflow' \
+  "${planning_health_config}"); do
+  if [[ ! -f ${root}/.github/workflows/${workflow} ]]; then
+    echo "error: planning health workflow is missing: ${workflow}" >&2
+    exit 1
+  fi
+done
 
 jq -e \
   --slurpfile repositories "${repositories_config}" '

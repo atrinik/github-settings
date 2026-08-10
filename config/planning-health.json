@@ -1,0 +1,10 @@
+{
+  "consecutive_failure_threshold": 2,
+  "freshness_threshold_minutes": 90,
+  "incident_marker": "<!-- atrinik-project-sync-health -->",
+  "incident_title": "Atrinik work synchronization is stale",
+  "monitor_workflow": "check-project-health.yml",
+  "monitoring_owner": "Atrinik organization owners",
+  "repository": "atrinik/github-settings",
+  "sync_workflow": "sync-project.yml"
+}
