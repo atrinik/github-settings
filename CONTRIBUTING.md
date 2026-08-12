@@ -27,6 +27,17 @@ material. Changes require credential-schema negative tests, the read-only
 `bin/verify-manual-settings` plan, and the documented manual and scheduled
 post-rotation checks.
 
+Actions GitHub Apps require their own value-free inventory entry with stable
+App, installation, and repository IDs; exact permissions and event set;
+selected-repository verification; consumer paths; secret and variable names;
+accountable ownership; verification and rotation dates; and a runbook. Never
+store a private key, installation token, token response, or credential value.
+Changes require negative schema tests, read-only installation and metadata-name
+verification, and organization-owner confirmation of the exact selected
+repository set in GitHub's installation UI. Keep the App out of bypass lists,
+preserve read-only Actions defaults, and prove the consumer's disposable pull
+request receives ordinary checks without self-approval or self-merge.
+
 Organization identity changes must preserve the exact public description and
 canonical website in `config/organization.json`, remain delta-aware in plan and
 apply modes, and include unchanged-state coverage. Keep the public profile in

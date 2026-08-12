@@ -51,6 +51,7 @@ github_api() {
 
 declare -A repository_data_files=()
 declare -A repository_secret_files=()
+declare -A repository_variable_files=()
 
 load_repository_identity() {
   local repository=$1
@@ -128,6 +129,73 @@ load_repository_secrets() {
   done
   if ((collected != expected)); then
     echo "error: Actions secret metadata count mismatch for ${repository}: expected ${expected}, got ${collected}" >&2
+    return 1
+  fi
+}
+
+load_repository_variables() {
+  local repository=$1
+  local collected expected page page_size repository_key response status
+
+  if [[ -v repository_variable_files["${repository}"] ]]; then
+    return
+  fi
+  if load_repository_identity "${repository}"; then
+    :
+  else
+    status=$?
+    return "${status}"
+  fi
+
+  repository_key=${repository//\//-}
+  repository_variable_files["${repository}"]=${temporary}/${repository_key}-variables.jsonl
+  : >"${repository_variable_files["${repository}"]}"
+  expected=
+  collected=0
+  page=1
+  while true; do
+    if response=$(github_api \
+      "list ${repository} Actions variables (page ${page})" \
+      "repos/${repository}/actions/variables?per_page=100&page=${page}"); then
+      :
+    else
+      status=$?
+      return "${status}"
+    fi
+    if ! jq -e '
+      (.total_count | type == "number" and floor == . and . >= 0) and
+      (.variables | type == "array") and
+      all(
+        .variables[];
+        (.name | type == "string") and
+        (.created_at | type == "string") and
+        (.updated_at | type == "string")
+      )
+    ' <<<"${response}" >/dev/null; then
+      echo "error: Actions variable metadata response is invalid for ${repository} (page ${page})" >&2
+      return 1
+    fi
+    if [[ -z ${expected} ]]; then
+      expected=$(jq -r '.total_count' <<<"${response}")
+    elif [[ $(jq -r '.total_count' <<<"${response}") != "${expected}" ]]; then
+      echo "error: Actions variable metadata changed while listing ${repository}" >&2
+      return 1
+    fi
+    jq -c '.variables[] | {name, created_at, updated_at}' <<<"${response}" \
+      >>"${repository_variable_files["${repository}"]}"
+    page_size=$(jq -r '.variables | length' <<<"${response}")
+    ((collected += page_size))
+    if ((collected >= expected)); then
+      break
+    fi
+    if ((page_size == 0)); then
+      echo "error: Actions variable metadata ended before total_count for ${repository}" >&2
+      return 1
+    fi
+    ((page += 1))
+  done
+  if ((collected != expected)); then
+    echo "error: Actions variable metadata count mismatch for ${repository}: expected ${expected}, got ${collected}" >&2
     return 1
   fi
 }
@@ -400,6 +468,101 @@ while IFS= read -r environment_record; do
   echo "KEEP ${repository} environment ${environment} metadata"
 done < <(jq -c '.github_actions_environments[]' "${manual_settings}")
 
+installations_file=${temporary}/${organization}-installations.jsonl
+if load_paginated_metadata \
+  "list ${organization} GitHub App installations" \
+  "orgs/${organization}/installations" \
+  installations "${installations_file}"; then
+  :
+else
+  status=$?
+  exit "${status}"
+fi
+
+while IFS= read -r app_record; do
+  app_id=$(jq -r '.app_id' <<<"${app_record}")
+  app_slug=$(jq -r '.app_slug' <<<"${app_record}")
+  installation_id=$(jq -r '.installation_id' <<<"${app_record}")
+  repository=$(jq -r '.repository' <<<"${app_record}")
+  repository_owner=${repository%%/*}
+  repository_id=$(jq -r '.repository_id' <<<"${app_record}")
+  secret_name=$(jq -r '.secret_name' <<<"${app_record}")
+  variable_name=$(jq -r '.variable_name' <<<"${app_record}")
+
+  if [[ ${repository_owner} != "${organization}" ]]; then
+    echo "error: GitHub App repository owner does not match ${organization}: ${repository}" >&2
+    exit 1
+  fi
+  if verify_repository_identity "${repository}" "${repository_id}"; then
+    :
+  else
+    status=$?
+    exit "${status}"
+  fi
+
+  expected_permissions=$(jq -c '.permissions' <<<"${app_record}")
+  installation=$(jq -sc \
+    --argjson app_id "${app_id}" \
+    --argjson installation_id "${installation_id}" '
+      [.[] | select(.app_id == $app_id and .id == $installation_id)] |
+      if length == 1 then .[0] else empty end
+    ' "${installations_file}")
+  if [[ -z ${installation} ]]; then
+    echo "error: GitHub App installation is missing or ambiguous for ${app_slug}" >&2
+    exit 1
+  fi
+  if ! jq -e \
+    --arg app_slug "${app_slug}" \
+    --arg organization "${organization}" \
+    --argjson expected_permissions "${expected_permissions}" '
+      .app_slug == $app_slug and
+      .target_type == "Organization" and
+      .account.login == $organization and
+      .account.type == "Organization" and
+      .repository_selection == "selected" and
+      .permissions == $expected_permissions and
+      .events == [] and
+      .suspended_at == null
+    ' <<<"${installation}" >/dev/null; then
+    echo "error: GitHub App installation metadata or permission drift for ${app_slug}" >&2
+    exit 1
+  fi
+
+  if load_repository_secrets "${repository}"; then
+    :
+  else
+    status=$?
+    exit "${status}"
+  fi
+  secret_updated_at=$(jq -sr --arg name "${secret_name}" '
+    [.[] | select(.name == $name) | .updated_at] |
+    if length == 1 then .[0] else empty end
+  ' "${repository_secret_files["${repository}"]}")
+  if [[ -z ${secret_updated_at} ]]; then
+    echo "error: GitHub App Actions secret name is missing for ${repository}: ${secret_name}" >&2
+    exit 1
+  fi
+
+  if load_repository_variables "${repository}"; then
+    :
+  else
+    status=$?
+    exit "${status}"
+  fi
+  variable_updated_at=$(jq -sr --arg name "${variable_name}" '
+    [.[] | select(.name == $name) | .updated_at] |
+    if length == 1 then .[0] else empty end
+  ' "${repository_variable_files["${repository}"]}")
+  if [[ -z ${variable_updated_at} ]]; then
+    echo "error: GitHub App Actions variable name is missing for ${repository}: ${variable_name}" >&2
+    exit 1
+  fi
+
+  echo "KEEP ${app_slug} installation metadata and exact permissions"
+  echo "KEEP ${repository} repository Actions secret ${secret_name} (updated ${secret_updated_at})"
+  echo "KEEP ${repository} repository Actions variable ${variable_name} (updated ${variable_updated_at})"
+done < <(jq -c '.github_actions_apps[]' "${manual_settings}")
+
 # GraphQL variables must remain literal for GitHub to substitute.
 # shellcheck disable=SC2016
 pins_response=$(github_api \
@@ -442,4 +605,4 @@ if [[ ${live_pins} != "${desired_pins}" ]]; then
 fi
 echo "KEEP ${organization} organization pins match the exact governed order"
 
-echo "Manual settings live credential, environment, and organization pin metadata is present."
+echo "Manual settings live credential, GitHub App, environment, and organization pin metadata is present."

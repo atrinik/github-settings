@@ -84,6 +84,12 @@ read-only and are skipped on later runs.
   secret-name presence plus inventoried environment identity, deployment
   branches, reviewer rules, and exact secret and variable name sets without
   reading or proving any value.
+- Repository-scoped GitHub Apps used by Actions have separate value-free
+  lifecycle contracts in `config/manual-settings.json`. The inventory binds
+  the stable App and installation IDs, exact permissions and event set,
+  intended repository and consumer, credential metadata names, accountable
+  owner, verification date, rotation deadline, and runbook. The App private
+  key and installation tokens never belong in this repository.
 - GitHub Actions defaults to read-only, cannot approve pull requests, and may
   use only Atrinik, GitHub, Codecov coverage, and explicitly allowed Docker
   actions.
@@ -224,6 +230,113 @@ expiry, or effective scopes. The synchronization preflight is the scope and
 functionality proof: apply mode verifies the classic PAT's advertised scopes,
 Project update capability, and write access for every repository needing an
 issue-type change before the first mutation.
+
+### Classic dependency update App
+
+`atrinik-classic-dependency-updater` is an organization-owned GitHub App used
+only by the planned `atrinik/classic` consumer workflow
+`.github/workflows/update-content.yml`. App ID `4564008` and installation ID
+`153045686` are public stable identifiers. The installation selects only
+`atrinik/classic`, repository ID `1327289971`, and has exactly these repository
+permissions:
+
+- metadata: read;
+- contents: write;
+- pull requests: write.
+
+The App subscribes to no webhook events and has no Actions, checks,
+deployments, environments, issues, packages, secrets, organization
+administration, or ruleset-bypass permission. Organization Actions defaults
+remain read-only and Actions cannot approve pull-request reviews. The App ID
+is stored as the repository Actions variable `DEPENDENCY_UPDATE_APP_ID`; its
+private key is stored as the repository Actions secret
+`DEPENDENCY_UPDATE_APP_PRIVATE_KEY`. Never commit, print, cache, artifact, or
+place either the private key or an installation token in a pull-request body,
+step output, command line, fixture, or log.
+
+The public REST response available to the settings administration credential
+proves the organization owner, stable App and installation IDs, selected-mode
+installation, exact effective permissions, empty event set, and unsuspended
+state. GitHub does not expose the installation's exact selected-repository list
+to that credential. An organization owner must therefore also inspect
+<https://github.com/organizations/atrinik/settings/installations/153045686>
+and confirm that the only selected repository is `classic` whenever the record
+is created, rotated, or reviewed. `repository_scope_verification` records this
+manual boundary; `bin/verify-manual-settings` additionally verifies Classic's
+stable repository identity and both credential metadata names without reading
+or logging their values.
+
+GitHub App installation access tokens expire after one hour. The consumer must
+mint a token only in the branch/PR mutation job, scope it to `classic`, avoid
+exporting it beyond the necessary steps, and allow the pinned token action to
+revoke it when the job finishes. The automation boundary is the single stable
+branch `automation/content-update` and one open pull request from that branch.
+Use one non-cancelling concurrency group, `classic-content-update`; a queued
+run re-evaluates current state after the prior run completes. A run updates the
+existing App-owned branch and PR only when their base, head owner, author, and
+changed-path contract are intact. Zero matching PRs permits creation, one
+permits refresh, and multiple matches or unexpected commits fail closed.
+
+GitHub has no branch-only App permission: `contents: write`, which is required
+to update the automation branch, also authorizes Git-reference and release API
+operations. GitHub likewise has no separate create-or-update-PR permission that
+excludes review APIs: `pull requests: write` covers both. The App credential
+therefore cannot by itself prove that tag, release, or review calls are
+technically impossible. Because the App owns its generated pull request, it
+cannot provide the distinct human approval required by the ordinary gate, and
+it has no bypass. The consumer must never review, approve, merge, tag, publish,
+dispatch a release, write the default branch, or change repository settings.
+Its reviewed code, exact branch and changed-path checks, ordinary pull-request
+gate, protected release-tag rules, workflow contract tests, and audit trail
+jointly enforce that operational boundary. Do not describe the credential as
+release- or review-incapable; treat any use outside the exact automation branch
+and pull-request operations as an incident.
+
+Provision or rotate the key as an Atrinik organization owner:
+
+1. Prepare a reviewed change that advances `last_verified_on` and `rotate_by`
+   by no more than the recorded 90-day cadence. Reconfirm the App owner,
+   installation ID, Classic-only selection, empty event set, and exact three
+   permissions in the GitHub UI before changing credentials.
+2. Generate a new App private key while the prior key remains valid. Store the
+   complete new PEM in the approved private credential manager and replace the
+   `DEPENDENCY_UPDATE_APP_PRIVATE_KEY` repository secret without echoing it.
+   Keep `DEPENDENCY_UPDATE_APP_ID` equal to the public numeric App ID.
+3. Run `bin/verify-manual-settings`. This proves metadata and name presence,
+   not the key value. After the Classic consumer exists, dispatch only
+   `update-content.yml` and require one App-authored disposable pull request to
+   receive ordinary `Classic validation`, `CodeQL validation`, and
+   `Conventional PR title` checks.
+4. Confirm the App-authored pull request cannot satisfy its own human approval
+   or merge gate, close the disposable pull request, remove its branch, and
+   only then delete the previous private key. A later scheduled run must also
+   succeed before rotation is considered complete.
+
+For suspected disclosure or misuse, disable the Classic updater workflow,
+suspend installation `153045686`, delete the repository secret, and revoke the
+affected private key immediately. Review Actions logs, App and organization
+audit events, open pull requests, branches, tags, and releases; remove only
+verified App-owned disposable state. Rotate to a new key and repeat the full
+proof before re-enabling. To revoke permanently, uninstall the App from
+Classic, delete its keys plus the repository secret and variable, and reconcile
+`config/manual-settings.json` through a reviewed rollback. Do not leave a
+credential inventory entry claiming a revoked installation is active.
+
+Read non-secret live metadata and run the complete verifier with:
+
+```sh
+gh api orgs/atrinik/installations \
+  --jq '[.installations[] | {id, app_id, app_slug, repository_selection, permissions, events, suspended_at}]'
+gh api repos/atrinik/classic/actions/secrets \
+  --jq '{total_count, names: [.secrets[].name]}'
+gh api repos/atrinik/classic/actions/variables \
+  --jq '{total_count, names: [.variables[].name]}'
+bin/verify-manual-settings
+```
+
+If any ID, permission, event, suspension state, selected repository, or
+credential name differs, stop. Disable the consumer and reconcile reviewed
+desired state before minting another installation token.
 
 ## Cross-repository planning
 

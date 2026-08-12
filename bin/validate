@@ -226,6 +226,7 @@ jq -e '. == {state: "not-configured"}' \
 jq -e '
   (keys == [
     "codecov_github_app_repositories",
+    "github_actions_apps",
     "github_actions_credentials",
     "github_actions_environments",
     "github_packages_actions_access",
@@ -239,6 +240,127 @@ jq -e '
     "require_secure_two_factor_methods",
     "require_two_factor_authentication"
   ])
+' "${manual_settings_config}" >/dev/null
+
+jq -e \
+  --arg today "${validation_today}" \
+  --slurpfile repositories "${repositories_config}" '
+  def day_epoch($value):
+    ($value + "T00:00:00Z" | fromdateiso8601);
+  def valid_day($value):
+    ($value | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")) and
+    (try ((day_epoch($value) | strftime("%Y-%m-%d")) == $value) catch false);
+  .github_actions_apps as $apps |
+  ($apps | type == "array" and length > 0) and
+  ([$apps[].app_id] | length == (unique | length)) and
+  ([$apps[].installation_id] | length == (unique | length)) and
+  (
+    [$apps[] | [.repository, .secret_scope, .secret_name]] |
+    length == (unique | length)
+  ) and
+  (
+    [$apps[] | [.repository, .variable_scope, .variable_name]] |
+    length == (unique | length)
+  ) and
+  all(
+    $apps[];
+    (keys == [
+      "app_id",
+      "app_slug",
+      "consumers",
+      "events",
+      "installation_id",
+      "last_verified_on",
+      "owner",
+      "permissions",
+      "purpose",
+      "repository",
+      "repository_id",
+      "repository_scope_verification",
+      "repository_selection",
+      "rotate_by",
+      "rotation_cadence_days",
+      "rotation_owner",
+      "runbook",
+      "secret_name",
+      "secret_scope",
+      "variable_name",
+      "variable_scope"
+    ]) and
+    (.app_id | type == "number" and floor == . and . > 0) and
+    (
+      .app_slug |
+      type == "string" and
+      test("^[a-z0-9]+(?:-[a-z0-9]+)*$")
+    ) and
+    (.installation_id | type == "number" and floor == . and . > 0) and
+    .repository_selection == "selected" and
+    .repository_scope_verification == "organization_owner_ui" and
+    .events == [] and
+    .permissions == {
+      contents: "write",
+      metadata: "read",
+      pull_requests: "write"
+    } and
+    (
+      .repository |
+      type == "string" and
+      test("^atrinik/[A-Za-z0-9_.-]+$")
+    ) and
+    (
+      .repository as $full_name |
+      ($full_name | split("/")[1]) as $repository |
+      ($repositories[0].pull_request_gate | index($repository)) != null and
+      ($repositories[0].archive | index($repository)) == null
+    ) and
+    (.repository_id | type == "number" and floor == . and . > 0) and
+    .secret_scope == "repository" and
+    .variable_scope == "repository" and
+    (.secret_name | type == "string" and test("^[A-Z][A-Z0-9_]*$")) and
+    (.variable_name | type == "string" and test("^[A-Z][A-Z0-9_]*$")) and
+    .secret_name != .variable_name and
+    (
+      .consumers |
+      type == "array" and
+      length > 0 and
+      . == (sort | unique) and
+      all(
+        .[];
+        type == "string" and
+        test("^\\.github/workflows/[A-Za-z0-9_.-]+\\.ya?ml$")
+      )
+    ) and
+    (.purpose | type == "string" and length > 0) and
+    (.owner | type == "string" and length > 0) and
+    (.rotation_owner | type == "string" and length > 0) and
+    (
+      .rotation_cadence_days |
+      type == "number" and floor == . and . >= 1 and . <= 365
+    ) and
+    valid_day(.last_verified_on) and
+    valid_day(.rotate_by) and
+    (day_epoch(.last_verified_on) <= day_epoch($today)) and
+    (day_epoch(.rotate_by) >= day_epoch($today)) and
+    (day_epoch(.rotate_by) > day_epoch(.last_verified_on)) and
+    (
+      (day_epoch(.rotate_by) - day_epoch(.last_verified_on)) / 86400 <=
+      .rotation_cadence_days
+    ) and
+    (
+      .runbook |
+      type == "string" and
+      test("^[A-Za-z0-9._/-]+\\.md#[a-z0-9-]+$")
+    )
+  ) and
+  all(
+    $apps[];
+    . as $app |
+    all(
+      $apps[];
+      .repository != $app.repository or
+      .repository_id == $app.repository_id
+    )
+  )
 ' "${manual_settings_config}" >/dev/null
 
 jq -e '
