@@ -126,6 +126,132 @@ repos/atrinik/classic)
     }'
   fi
   ;;
+"orgs/atrinik/installations?per_page=100&page=1")
+  if [[ ${FAKE_GH_SCENARIO} == app-api-failure ]]; then
+    echo "gh: organization installation administration denied" >&2
+    exit 45
+  elif [[ ${FAKE_GH_SCENARIO} == malformed-app-installations ]]; then
+    jq -n '{total_count: 1, installation: []}'
+  elif [[ ${FAKE_GH_SCENARIO} == app-installations-page2 || \
+    ${FAKE_GH_SCENARIO} == app-installations-page2-failure ]]; then
+    jq -n '{
+      total_count: 101,
+      installations: [range(0; 100) | {
+        id: (1000 + .),
+        app_id: (2000 + .),
+        app_slug: ("unrelated-" + tostring),
+        target_type: "Organization",
+        account: {login: "atrinik", type: "Organization"},
+        repository_selection: "selected",
+        permissions: {metadata: "read"},
+        events: [],
+        suspended_at: null
+      }]
+    }'
+  elif [[ ${FAKE_GH_SCENARIO} == missing-app ]]; then
+    jq -n '{total_count: 0, installations: []}'
+  else
+    app_id=4564008
+    installation_id=153045686
+    app_slug=atrinik-classic-dependency-updater
+    repository_selection=selected
+    account_login=atrinik
+    events='[]'
+    permissions='{"contents":"write","metadata":"read","pull_requests":"write"}'
+    suspended_at=null
+    case ${FAKE_GH_SCENARIO} in
+    app-id-drift) app_id=1 ;;
+    app-installation-id-drift) installation_id=1 ;;
+    app-slug-drift) app_slug=other-app ;;
+    app-selection-drift) repository_selection=all ;;
+    app-account-drift) account_login=other ;;
+    app-events-drift) events='["push"]' ;;
+    app-permission-drift) permissions='{"actions":"write","contents":"write","metadata":"read","pull_requests":"write"}' ;;
+    app-suspended) suspended_at='"2026-08-11T00:00:00Z"' ;;
+    esac
+    jq -n \
+      --argjson app_id "${app_id}" \
+      --argjson installation_id "${installation_id}" \
+      --arg app_slug "${app_slug}" \
+      --arg repository_selection "${repository_selection}" \
+      --arg account_login "${account_login}" \
+      --argjson events "${events}" \
+      --argjson permissions "${permissions}" \
+      --argjson suspended_at "${suspended_at}" '{
+        total_count: 1,
+        installations: [{
+          id: $installation_id,
+          app_id: $app_id,
+          app_slug: $app_slug,
+          target_type: "Organization",
+          account: {login: $account_login, type: "Organization"},
+          repository_selection: $repository_selection,
+          permissions: $permissions,
+          events: $events,
+          suspended_at: $suspended_at
+        }]
+      }'
+  fi
+  ;;
+"orgs/atrinik/installations?per_page=100&page=2")
+  if [[ ${FAKE_GH_SCENARIO} == app-installations-page2-failure ]]; then
+    echo "gh: second installation page failed" >&2
+    exit 47
+  fi
+  [[ ${FAKE_GH_SCENARIO} == app-installations-page2 ]]
+  jq -n '{
+    total_count: 101,
+    installations: [{
+      id: 153045686,
+      app_id: 4564008,
+      app_slug: "atrinik-classic-dependency-updater",
+      target_type: "Organization",
+      account: {login: "atrinik", type: "Organization"},
+      repository_selection: "selected",
+      permissions: {
+        contents: "write",
+        metadata: "read",
+        pull_requests: "write"
+      },
+      events: [],
+      suspended_at: null
+    }]
+  }'
+  ;;
+"repos/atrinik/classic/actions/secrets?per_page=100&page=1")
+  if [[ ${FAKE_GH_SCENARIO} == missing-app-secret ]]; then
+    jq -n '{total_count: 0, secrets: []}'
+  else
+    jq -n '{
+      total_count: 1,
+      secrets: [{
+        name: "DEPENDENCY_UPDATE_APP_PRIVATE_KEY",
+        created_at: "2026-08-11T23:47:15Z",
+        updated_at: "2026-08-11T23:47:15Z"
+      }]
+    }'
+  fi
+  ;;
+"repos/atrinik/classic/actions/variables?per_page=100&page=1")
+  if [[ ${FAKE_GH_SCENARIO} == app-variable-api-failure ]]; then
+    echo "gh: Actions variable administration denied" >&2
+    exit 46
+  elif [[ ${FAKE_GH_SCENARIO} == malformed-app-variables ]]; then
+    jq -n '{total_count: 1, variable: []}'
+  elif [[ ${FAKE_GH_SCENARIO} == missing-app-variable ]]; then
+    jq -n '{total_count: 0, variables: []}'
+  else
+    jq -n '{
+      total_count: 1,
+      variables: [{
+        name: "DEPENDENCY_UPDATE_APP_ID",
+        value: "not-inspected-by-the-verifier",
+        created_at: "2026-08-11T23:47:00Z",
+        updated_at: "2026-08-11T23:47:00Z"
+      }]
+    }'
+  fi
+  ;;
 "repos/atrinik/github-settings/actions/secrets?per_page=100&page=1")
   if [[ ${FAKE_GH_SCENARIO} == missing ]]; then
     jq -n '{total_count: 0, secrets: []}'
@@ -313,7 +439,7 @@ run_verify() {
     FAKE_GH_LOG="${temporary}/gh.log" \
     FAKE_GH_SCENARIO="${scenario}" \
     GITHUB_ACTIONS=true GH_TOKEN=test-token \
-    ATRINIK_VALIDATION_TODAY=2026-08-10 \
+    ATRINIK_VALIDATION_TODAY=2026-08-11 \
     "${root}/bin/verify-manual-settings"
 }
 
@@ -322,8 +448,14 @@ output=$(run_verify present)
 grep -Fq 'KEEP atrinik/github-settings repository Actions secret ATRINIK_SETTINGS_TOKEN' \
   <<<"${output}"
 grep -Fq 'KEEP atrinik/classic environment discord-release metadata' <<<"${output}"
+grep -Fq 'KEEP atrinik-classic-dependency-updater installation metadata and exact permissions' \
+  <<<"${output}"
+grep -Fq 'KEEP atrinik/classic repository Actions secret DEPENDENCY_UPDATE_APP_PRIVATE_KEY' \
+  <<<"${output}"
+grep -Fq 'KEEP atrinik/classic repository Actions variable DEPENDENCY_UPDATE_APP_ID' \
+  <<<"${output}"
 grep -Fq 'KEEP atrinik organization pins match the exact governed order' <<<"${output}"
-grep -Fq 'Manual settings live credential, environment, and organization pin metadata is present.' \
+grep -Fq 'Manual settings live credential, GitHub App, environment, and organization pin metadata is present.' \
   <<<"${output}"
 
 : >"${temporary}/gh.log"
@@ -352,7 +484,7 @@ output=$(PATH="${temporary}/bin:${PATH}" \
   FAKE_GH_LOG="${temporary}/gh.log" \
   FAKE_GH_SCENARIO=environment-page2 \
   GITHUB_ACTIONS=true GH_TOKEN=test-token \
-  ATRINIK_VALIDATION_TODAY=2026-08-10 \
+  ATRINIK_VALIDATION_TODAY=2026-08-11 \
   "${environment_page_root}/bin/verify-manual-settings")
 grep -Fq 'KEEP atrinik/classic environment discord-release metadata' <<<"${output}"
 grep -Fq 'deployment-branch-policies?per_page=100&page=2' "${temporary}/gh.log"
@@ -376,7 +508,7 @@ output=$(PATH="${temporary}/bin:${PATH}" \
   FAKE_GH_LOG="${temporary}/gh.log" \
   FAKE_GH_SCENARIO=shared-repository \
   GITHUB_ACTIONS=true GH_TOKEN=test-token \
-  ATRINIK_VALIDATION_TODAY=2026-08-10 \
+  ATRINIK_VALIDATION_TODAY=2026-08-11 \
   "${shared_root}/bin/verify-manual-settings")
 grep -Fq 'SECOND_SETTINGS_TOKEN' <<<"${output}"
 [[ $(grep -Fc 'repos/atrinik/github-settings' "${temporary}/gh.log") == 2 ]]
@@ -395,6 +527,76 @@ for scenario in pin-drift malformed-pins; do
   if run_verify "${scenario}" \
     >"${temporary}/${scenario}.out" 2>"${temporary}/${scenario}.err"; then
     echo "error: manual-settings verifier accepted ${scenario}" >&2
+    exit 1
+  fi
+done
+
+app_failures=(
+  missing-app
+  app-id-drift
+  app-installation-id-drift
+  app-slug-drift
+  app-selection-drift
+  app-account-drift
+  app-events-drift
+  app-permission-drift
+  app-suspended
+  missing-app-secret
+  missing-app-variable
+  malformed-app-installations
+  malformed-app-variables
+  app-api-failure
+  app-variable-api-failure
+  app-installations-page2-failure
+)
+for scenario in "${app_failures[@]}"; do
+  : >"${temporary}/gh.log"
+  if run_verify "${scenario}" \
+    >"${temporary}/${scenario}.out" 2>"${temporary}/${scenario}.err"; then
+    echo "error: manual-settings verifier accepted ${scenario}" >&2
+    exit 1
+  fi
+done
+grep -Fq 'GitHub App installation is missing or ambiguous' \
+  "${temporary}/missing-app.err"
+grep -Fq 'GitHub App installation metadata or permission drift' \
+  "${temporary}/app-permission-drift.err"
+grep -Fq 'GitHub App Actions secret name is missing' \
+  "${temporary}/missing-app-secret.err"
+grep -Fq 'GitHub App Actions variable name is missing' \
+  "${temporary}/missing-app-variable.err"
+grep -Fq 'returned invalid metadata' \
+  "${temporary}/malformed-app-installations.err"
+grep -Fq 'Actions variable metadata response is invalid' \
+  "${temporary}/malformed-app-variables.err"
+grep -Fq 'organization installation administration denied' \
+  "${temporary}/app-api-failure.err"
+grep -Fq 'Actions variable administration denied' \
+  "${temporary}/app-variable-api-failure.err"
+grep -Fq 'second installation page failed' \
+  "${temporary}/app-installations-page2-failure.err"
+
+: >"${temporary}/gh.log"
+output=$(run_verify app-installations-page2)
+grep -Fq 'KEEP atrinik-classic-dependency-updater installation metadata and exact permissions' \
+  <<<"${output}"
+grep -Fq 'orgs/atrinik/installations?per_page=100&page=2' "${temporary}/gh.log"
+
+for failure in \
+  app-api-failure:45 \
+  app-variable-api-failure:46 \
+  app-installations-page2-failure:47; do
+  scenario=${failure%%:*}
+  expected_status=${failure#*:}
+  : >"${temporary}/gh.log"
+  set +e
+  run_verify "${scenario}" \
+    >"${temporary}/${scenario}-status.out" \
+    2>"${temporary}/${scenario}-status.err"
+  status=$?
+  set -e
+  if ((status != expected_status)); then
+    echo "error: ${scenario} exited ${status}, expected ${expected_status}" >&2
     exit 1
   fi
 done
@@ -497,7 +699,7 @@ fi
 : >"${temporary}/gh.log"
 if PATH="${temporary}/bin:${PATH}" \
   FAKE_GH_LOG="${temporary}/gh.log" FAKE_GH_SCENARIO=present \
-  GITHUB_ACTIONS=true GH_TOKEN='' ATRINIK_VALIDATION_TODAY=2026-08-10 \
+  GITHUB_ACTIONS=true GH_TOKEN='' ATRINIK_VALIDATION_TODAY=2026-08-11 \
   "${root}/bin/verify-manual-settings" \
   >"${temporary}/empty.out" 2>"${temporary}/empty.err"; then
   echo "error: manual-settings verifier accepted an empty workflow credential" >&2
@@ -506,4 +708,4 @@ fi
 grep -Fq 'ATRINIK_SETTINGS_TOKEN is unavailable' "${temporary}/empty.err"
 [[ ! -s ${temporary}/gh.log ]]
 
-echo "Manual settings live credential and environment verification tests passed."
+echo "Manual settings live credential, GitHub App, and environment verification tests passed."
