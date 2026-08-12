@@ -239,6 +239,8 @@ assert_invalid 'a top-level credential-value field'
 
 reset_manual_settings
 rewrite_manual_settings '
+  .github_actions_apps[0].last_verified_on = "2028-02-29" |
+  .github_actions_apps[0].rotate_by = "2028-05-29" |
   .github_actions_credentials[0].last_verified_on = "2028-02-29" |
   .github_actions_credentials[0].rotate_by = "2028-05-29"
 '
