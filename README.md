@@ -528,7 +528,7 @@ confirm that remaining pull requests and branches have been preserved at their
 new location. For `atrinik/classic`, also complete any intentional tag rebuild
 before applying immutable release-tag policy.
 
-## Protecting a maintenance branch
+## Protecting and retiring a maintenance branch
 
 Add a unique repository/branch entry to `maintenance_branches` in
 `config/repositories.json`. Branch names are repository-relative, so `1.x`
@@ -537,18 +537,50 @@ non-fast-forward, linear-history, and pull-request rules. Its `required_ci`
 array may contain only stable checks already declared for that repository and
 emitted by workflows on the maintenance branch.
 
-`content/1.x` requires `Content validation` and `Conventional PR title`. Both
-contexts were emitted successfully by the branch-aware maintenance-line pull
-request before the desired state added them; neither context is inferred from
-the default branch.
+Retired maintenance lines move out of that active array and into
+`config/retired-maintenance-branches.json`. The immutable record binds the
+stable repository and ruleset IDs, exact final branch commit, final rollback
+tag/commit and asset names, and every default-branch/tag ruleset that must stay
+active. The targeted publisher refuses missing, ambiguous, or drifted live
+state and emits only the exact maintenance-ruleset deletion:
+
+```sh
+bin/validate
+bin/publish --retire-maintenance content/1.x
+```
+
+For the completed content cutover, the final rollback anchor is
+`v1.8.19@566bd25f78b80b08d5f75f4b02017ab2429204db`; the preserved retirement
+branch tip is `080a9ea41741e4e67adc7b09b3ccb51475d93d3a`. The source archive,
+Classic runtime archive, and `SHA256SUMS` must remain accessible and checksum
+clean. `content@main` is the sole authored and released source, and the Classic
+updater remains justified only for proposing locks to verified main-built
+Classic artifacts.
+
+After the desired-state pull request merges, an organization owner may
+explicitly authorize this one policy mutation:
+
+```sh
+bin/publish --apply --retire-maintenance content/1.x
+```
+
+The targeted apply verifies that only ruleset `20571870` is absent and that
+the recorded main and immutable-tag protections remain active. It does not
+delete the branch. Before deleting `refs/heads/1.x`, repeat the live repository,
+ruleset, open-PR, consumer, tag, release, asset, checksum, and reachability
+preflight and obtain a second explicit organization-owner authorization for
+that exact Git-reference deletion. After deletion, verify the branch is absent
+and every preserved tag/release asset and commit remains reachable. Recreating
+`1.x` is a new organization-owner recovery decision, not automatic rollback.
 
 On GitHub Team the publisher creates one organization ruleset per maintenance
 branch. The repository-policy fallback creates the equivalent repository
 ruleset. Both paths remove stale managed maintenance rulesets, and migration
 creates the destination protection before deleting the previous scope.
 
-Validate semantic configuration and both publisher scopes before reviewing the
-live plan:
+Validate semantic configuration and both publisher scopes when adding or
+changing active maintenance protection. For a recorded retirement, additionally
+review the targeted plan above before any live authorization:
 
 ```sh
 bin/validate

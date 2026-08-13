@@ -8,6 +8,7 @@ repositories_config=${root}/config/repositories.json
 advisory_merge_windows_config=${root}/config/advisory-merge-windows.json
 advanced_codeql_config=${root}/config/codeql-advanced-setup.json
 immutable_releases_config=${root}/config/immutable-releases.json
+retired_maintenance_config=${root}/config/retired-maintenance-branches.json
 manual_settings_config=${root}/config/manual-settings.json
 planning_config=${root}/config/planning.json
 planning_health_config=${root}/config/planning-health.json
@@ -158,6 +159,65 @@ jq -e '
   ([.maintenance_branches[] | [.repository, .branch]] as $branches |
     ($branches | length) == ($branches | unique | length))
 ' "${repositories_config}" >/dev/null
+
+jq -e \
+  --slurpfile repositories "${repositories_config}" '
+    (keys == ["retirements"]) and
+    (.retirements | type == "array") and
+    all(
+      .retirements[];
+      (keys == [
+        "branch",
+        "default_branch",
+        "final_branch_commit",
+        "final_release",
+        "preserved_rulesets",
+        "repository",
+        "repository_id",
+        "ruleset"
+      ]) and
+      (.repository | type == "string" and length > 0) and
+      (.repository_id | type == "number" and floor == . and . > 0) and
+      .default_branch == "main" and
+      (. as $retirement |
+        ($retirement.branch | type == "string" and length > 0) and
+        $retirement.branch != $retirement.default_branch) and
+      (.final_branch_commit | test("^[0-9a-f]{40}$")) and
+      (.final_release | keys == ["assets", "commit", "tag"]) and
+      (.final_release.tag | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")) and
+      (.final_release.commit | test("^[0-9a-f]{40}$")) and
+      (.final_release.assets | type == "array" and length > 0) and
+      ((.final_release.assets | length) ==
+        (.final_release.assets | unique | length)) and
+      all(.final_release.assets[]; type == "string" and length > 0) and
+      (.ruleset | keys == ["id", "name", "required_ci"]) and
+      (.ruleset.id | type == "number" and floor == . and . > 0) and
+      (.ruleset.name ==
+        "05 - Maintenance branch - \(.repository) - \(.branch)") and
+      (.ruleset.required_ci | type == "array" and length > 0) and
+      ((.ruleset.required_ci | length) ==
+        (.ruleset.required_ci | unique | length)) and
+      all(.ruleset.required_ci[]; type == "string" and length > 0) and
+      (.preserved_rulesets | type == "array" and length > 0) and
+      all(
+        .preserved_rulesets[];
+        (keys == ["id", "name"]) and
+        (.id | type == "number" and floor == . and . > 0) and
+        (.name | type == "string" and length > 0)
+      ) and
+      ((.preserved_rulesets | map(.id) | length) ==
+        (.preserved_rulesets | map(.id) | unique | length)) and
+      (.repository as $repository | .branch as $branch |
+        all(
+          $repositories[0].maintenance_branches[];
+          .repository != $repository or .branch != $branch
+        ))
+    ) and
+    ((.retirements | map([.repository, .branch]) | length) ==
+      (.retirements | map([.repository, .branch]) | unique | length)) and
+    ((.retirements | map(.ruleset.id) | length) ==
+      (.retirements | map(.ruleset.id) | unique | length))
+  ' "${retired_maintenance_config}" >/dev/null
 
 jq -e \
   --slurpfile repositories "${repositories_config}" '

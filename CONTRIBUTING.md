@@ -101,3 +101,14 @@ landed and passed on the protected branch. In particular, add Classic's
 `CodeQL validation` requirement only after its advanced workflow is merged;
 otherwise the required check would prevent the workflow pull request itself
 from merging.
+
+Maintenance-branch retirement removes the active entry from
+`config/repositories.json` and adds an immutable recovery record to
+`config/retired-maintenance-branches.json`. Validate the complete repository,
+then review the targeted `bin/publish --retire-maintenance
+REPOSITORY/BRANCH` output. It must contain exactly one planned mutation: the
+declared ruleset deletion. Merge the desired state before requesting explicit
+organization-owner authorization for `--apply`. Re-run the complete preflight
+after apply and again before separately authorized exact branch deletion;
+never combine either operation with tag, release, asset, default-branch, or
+unrelated policy changes.
