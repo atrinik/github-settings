@@ -38,7 +38,10 @@ sed -i 's/MIT by default/MIT-only/' "${profile}"
 assert_invalid 'an organization profile without the tools mixed-license boundary'
 reset_repository
 
-sed -i 's/map-checker-qt/wrong-checker/' "${profile}"
+sed -i \
+  's/GPL-2.0-or-later map-checker-qt\/ exception/GPL-2.0-or-later wrong-checker\/ exception/' \
+  "${profile}"
+printf '\nUnrelated replacement tracker: map-checker-qt/.\n' >>"${profile}"
 assert_invalid 'an organization profile without the tools path-scoped exception'
 reset_repository
 

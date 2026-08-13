@@ -971,10 +971,7 @@ for required_text in \
   'Game content and' \
   'media remain separately licensed' \
   '[Tools](https://github.com/atrinik/tools)' \
-  'is MIT by default with a GPL-2.0-or-later' \
-  'map-checker-qt/' \
-  'exception; historical' \
-  'historical' \
+  'is MIT by default with a GPL-2.0-or-later map-checker-qt/ exception; historical' \
   'tools tags and releases remain under the terms that applied when published' \
   'historical MIT provenance registry' \
   'exact, independently separable' \
