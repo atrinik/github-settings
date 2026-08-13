@@ -906,10 +906,25 @@ for required_text in \
   '# Atrinik' \
   'Atrinik is an open-source cooperative fantasy role-playing world' \
   'GPL-licensed [Atrinik Classic](https://github.com/atrinik/classic)' \
-  'MIT-licensed Go, Rust,' \
+  'next-generation MIT' \
   'They do not yet form a complete game release.' \
   'Game content and' \
   'media remain separately licensed' \
+  'historical MIT provenance registry' \
+  'exact, independently separable' \
+  'copy it, migrate or port it, translate or adapt it, or' \
+  'each selected contribution' \
+  "applicable named grantor's original work" \
+  'solely authored by that grantor' \
+  "row's temporal scope" \
+  'only when each independently' \
+  'satisfies one row' \
+  'jointly authored' \
+  'contributions, generated output, or' \
+  'inseparable mixed work' \
+  'does not relicense the source' \
+  'repositories or by itself' \
+  'GPL dependency, link, or bundle' \
   '[Play Atrinik Classic](https://atrinik.org/downloads/)' \
   '[Follow the next-generation roadmap](https://github.com/atrinik/atrinik/issues/168)' \
   'Direct human contributions are welcome.'; do
