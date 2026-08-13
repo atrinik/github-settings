@@ -1095,6 +1095,14 @@ cp -R "${root}/.github/workflows" "${advisory_active_root}/.github/workflows"
 jq '.repositories = ["classic"]' \
   "${root}/config/advisory-merge-windows.json" \
   >"${advisory_active_root}/config/advisory-merge-windows.json"
+jq '.maintenance_branches = [{
+  repository: "content",
+  branch: "1.x",
+  required_ci: ["Content validation", "Conventional PR title"]
+}]' "${root}/config/repositories.json" \
+  >"${advisory_active_root}/config/repositories.json"
+jq '.retirements = []' "${root}/config/retired-maintenance-branches.json" \
+  >"${advisory_active_root}/config/retired-maintenance-branches.json"
 
 organization_log=${temporary}/organization.jsonl
 organization_immutable_state=${temporary}/organization-immutable.json

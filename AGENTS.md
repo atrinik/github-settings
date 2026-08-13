@@ -75,6 +75,14 @@
   repository/branch pair a unique entry, and require only status checks that
   the branch's workflows already emit. Validate both Team organization rulesets
   and the retained repository-level fallback when changing this contract.
+- Record a completed maintenance-line retirement in
+  `config/retired-maintenance-branches.json` with stable repository/ruleset
+  identities, exact final branch and release commits, recovery assets, and the
+  rulesets that must remain active. Use the targeted
+  `bin/publish --retire-maintenance REPOSITORY/BRANCH` plan so the authorized
+  apply can remove only that exact ruleset. Branch deletion is a later,
+  separately authorized operation after a second live preflight; the publisher
+  never deletes a branch, tag, release, or asset.
 - Preserve the selected-actions entry for Codecov and the manual GitHub App
   repository-access inventory while coverage uploads use OIDC authentication.
 - Record cross-repository private-package consumption in

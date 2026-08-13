@@ -89,16 +89,7 @@
       "Conventional PR title"
     ]
   },
-  "maintenance_branches": [
-    {
-      "repository": "content",
-      "branch": "1.x",
-      "required_ci": [
-        "Content validation",
-        "Conventional PR title"
-      ]
-    }
-  ],
+  "maintenance_branches": [],
   "release_tags": [
     "atrinik",
     "classic",

@@ -1,0 +1,50 @@
+{
+  "retirements": [
+    {
+      "repository": "content",
+      "repository_id": 1325219730,
+      "default_branch": "main",
+      "branch": "1.x",
+      "final_branch_commit": "080a9ea41741e4e67adc7b09b3ccb51475d93d3a",
+      "final_release": {
+        "tag": "v1.8.19",
+        "commit": "566bd25f78b80b08d5f75f4b02017ab2429204db",
+        "assets": [
+          "SHA256SUMS",
+          "atrinik-content-1.8.19-runtime.tar.gz",
+          "atrinik-content-1.8.19.tar.gz"
+        ]
+      },
+      "ruleset": {
+        "id": 20571870,
+        "name": "05 - Maintenance branch - content - 1.x",
+        "required_ci": [
+          "Content validation",
+          "Conventional PR title"
+        ]
+      },
+      "preserved_rulesets": [
+        {
+          "id": 20522685,
+          "name": "01 - Default branch integrity"
+        },
+        {
+          "id": 20593745,
+          "name": "01 - Default branch linear history"
+        },
+        {
+          "id": 20522686,
+          "name": "02 - Changes through pull requests"
+        },
+        {
+          "id": 20522693,
+          "name": "03 - Required CI - content"
+        },
+        {
+          "id": 20522688,
+          "name": "04 - Immutable release tags"
+        }
+      ]
+    }
+  ]
+}

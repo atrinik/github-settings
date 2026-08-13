@@ -6,15 +6,28 @@ organization=${ATRINIK_ORGANIZATION:-atrinik}
 policy_scope=${ATRINIK_POLICY_SCOPE:-auto}
 api_version=2026-03-10
 apply=false
+retire_maintenance=
 
-case "${1:-}" in
-"") ;;
---apply) apply=true ;;
-*)
-  echo "usage: $0 [--apply]" >&2
-  exit 2
-  ;;
-esac
+while (($#)); do
+  case $1 in
+  --apply)
+    apply=true
+    shift
+    ;;
+  --retire-maintenance)
+    if (($# < 2)) || [[ -z $2 ]]; then
+      echo "error: --retire-maintenance requires REPOSITORY/BRANCH" >&2
+      exit 2
+    fi
+    retire_maintenance=$2
+    shift 2
+    ;;
+  *)
+    echo "usage: $0 [--apply] [--retire-maintenance REPOSITORY/BRANCH]" >&2
+    exit 2
+    ;;
+  esac
+done
 
 case ${policy_scope} in
 auto | organization | repository) ;;
@@ -37,6 +50,7 @@ repositories_config=${root}/config/repositories.json
 advisory_merge_windows_config=${root}/config/advisory-merge-windows.json
 codeql_advanced_config=${root}/config/codeql-advanced-setup.json
 immutable_releases_config=${root}/config/immutable-releases.json
+retired_maintenance_config=${root}/config/retired-maintenance-branches.json
 temporary_files=()
 trap 'rm -f "${temporary_files[@]}"' EXIT
 
@@ -63,6 +77,188 @@ run_api() {
     echo "PLAN ${method} /${endpoint}"
   fi
 }
+
+retire_maintenance_branch_ruleset() {
+  local coordinate=$1
+  local retirement repository branch repository_id default_branch
+  local branch_commit release_tag release_commit ruleset_id ruleset_name
+  local repository_metadata ruleset branch_ref tag_ref release open_pulls
+  local rulesets preserved_id preserved_name
+
+  retirement=$(jq -c --arg coordinate "${coordinate}" '
+    [
+      .retirements[] |
+      select("\(.repository)/\(.branch)" == $coordinate)
+    ] |
+    if length == 1 then .[0] else empty end
+  ' "${retired_maintenance_config}")
+  if [[ -z ${retirement} ]]; then
+    echo "error: retirement coordinate is absent or ambiguous: ${coordinate}" >&2
+    exit 1
+  fi
+
+  repository=$(jq -r '.repository' <<<"${retirement}")
+  branch=$(jq -r '.branch' <<<"${retirement}")
+  repository_id=$(jq -r '.repository_id' <<<"${retirement}")
+  default_branch=$(jq -r '.default_branch' <<<"${retirement}")
+  branch_commit=$(jq -r '.final_branch_commit' <<<"${retirement}")
+  release_tag=$(jq -r '.final_release.tag' <<<"${retirement}")
+  release_commit=$(jq -r '.final_release.commit' <<<"${retirement}")
+  ruleset_id=$(jq -r '.ruleset.id' <<<"${retirement}")
+  ruleset_name=$(jq -r '.ruleset.name' <<<"${retirement}")
+
+  if jq -e --arg repository "${repository}" --arg branch "${branch}" '
+    any(
+      .maintenance_branches[];
+      .repository == $repository and .branch == $branch
+    )
+  ' "${repositories_config}" >/dev/null; then
+    echo "error: retirement target remains in desired maintenance branches" >&2
+    exit 1
+  fi
+
+  repository_metadata=$(github_api "repos/${organization}/${repository}")
+  if ! jq -e --argjson id "${repository_id}" \
+    --arg default_branch "${default_branch}" '
+      .id == $id and
+      .archived == false and
+      .default_branch == $default_branch
+    ' <<<"${repository_metadata}" >/dev/null; then
+    echo "error: retirement repository identity or default branch drift" >&2
+    exit 1
+  fi
+
+  branch_ref=$(github_api \
+    "repos/${organization}/${repository}/git/ref/heads/${branch}")
+  if [[ $(jq -r '.object.sha // empty' <<<"${branch_ref}") != \
+    "${branch_commit}" ]]; then
+    echo "error: retirement branch commit drift" >&2
+    exit 1
+  fi
+
+  tag_ref=$(github_api \
+    "repos/${organization}/${repository}/git/ref/tags/${release_tag}")
+  if [[ $(jq -r '.object.sha // empty' <<<"${tag_ref}") != \
+    "${release_commit}" ]]; then
+    echo "error: final rollback tag commit drift" >&2
+    exit 1
+  fi
+
+  release=$(github_api \
+    "repos/${organization}/${repository}/releases/tags/${release_tag}")
+  if ! jq -e --arg tag "${release_tag}" --argjson retirement "${retirement}" '
+    .tag_name == $tag and
+    .draft == false and
+    .prerelease == false and
+    ([.assets[].name] | sort) == ($retirement.final_release.assets | sort)
+  ' <<<"${release}" >/dev/null; then
+    echo "error: final rollback release or asset inventory drift" >&2
+    exit 1
+  fi
+
+  open_pulls=$(github_api \
+    "repos/${organization}/${repository}/pulls?state=open&base=${branch}&per_page=100")
+  if [[ $(jq 'length' <<<"${open_pulls}") != 0 ]]; then
+    echo "error: open pull requests still target the retirement branch" >&2
+    exit 1
+  fi
+
+  rulesets=$(github_api "orgs/${organization}/rulesets")
+  while IFS=$'\t' read -r preserved_id preserved_name; do
+    if ! jq -e --argjson id "${preserved_id}" --arg name "${preserved_name}" '
+      any(.[]; .id == $id and .name == $name and .enforcement == "active")
+    ' <<<"${rulesets}" >/dev/null; then
+      echo "error: preserved ruleset identity or enforcement drift: ${preserved_id}" >&2
+      exit 1
+    fi
+  done < <(jq -r '.preserved_rulesets[] | [.id, .name] | @tsv' \
+    <<<"${retirement}")
+
+  if ! jq -e --argjson id "${ruleset_id}" --arg name "${ruleset_name}" '
+    [.[] | select(.id == $id and .name == $name)] | length == 1
+  ' <<<"${rulesets}" >/dev/null; then
+    echo "error: exact retirement ruleset is missing or ambiguous" >&2
+    exit 1
+  fi
+
+  ruleset=$(github_api "orgs/${organization}/rulesets/${ruleset_id}")
+  if ! jq -e --argjson id "${ruleset_id}" --arg name "${ruleset_name}" \
+    --arg repository "${repository}" --arg branch "${branch}" \
+    --argjson retirement "${retirement}" '
+      .id == $id and
+      .name == $name and
+      .target == "branch" and
+      .enforcement == "active" and
+      .bypass_actors == [{
+        actor_id: null,
+        actor_type: "OrganizationAdmin",
+        bypass_mode: "pull_request"
+      }] and
+      .conditions.repository_name.include == [$repository] and
+      .conditions.repository_name.exclude == [] and
+      .conditions.ref_name.include == ["refs/heads/\($branch)"] and
+      .conditions.ref_name.exclude == [] and
+      ([.rules[].type] | sort) == ([
+        "deletion",
+        "non_fast_forward",
+        "pull_request",
+        "required_linear_history",
+        "required_status_checks"
+      ] | sort) and
+      ([.rules[] | select(.type == "pull_request")] | length == 1) and
+      ([.rules[] | select(.type == "pull_request")][0].parameters == {
+        allowed_merge_methods: ["merge", "squash", "rebase"],
+        dismiss_stale_reviews_on_push: false,
+        require_code_owner_review: false,
+        require_last_push_approval: false,
+        required_approving_review_count: 0,
+        required_review_thread_resolution: true,
+        required_reviewers: []
+      }) and
+      ([.rules[] | select(.type == "required_status_checks")] | length == 1) and
+      ([.rules[] | select(.type == "required_status_checks")][0].parameters == {
+        do_not_enforce_on_create: false,
+        required_status_checks: (
+          $retirement.ruleset.required_ci |
+          map({context: ., integration_id: 15368})
+        ),
+        strict_required_status_checks_policy: true
+      })
+    ' <<<"${ruleset}" >/dev/null; then
+    echo "error: exact retirement ruleset payload drift" >&2
+    exit 1
+  fi
+
+  echo "KEEP ${organization}/${repository} default branch is ${default_branch}"
+  echo "KEEP refs/heads/${branch} is ${branch_commit}"
+  echo "KEEP ${release_tag} is ${release_commit} with exact recovery assets"
+  echo "KEEP no open pull request targets ${branch}"
+  run_api DELETE "orgs/${organization}/rulesets/${ruleset_id}"
+
+  if ${apply}; then
+    rulesets=$(github_api "orgs/${organization}/rulesets")
+    if jq -e --argjson id "${ruleset_id}" 'any(.[]; .id == $id)' \
+      <<<"${rulesets}" >/dev/null; then
+      echo "error: retirement ruleset still exists after apply" >&2
+      exit 1
+    fi
+    while IFS=$'\t' read -r preserved_id preserved_name; do
+      if ! jq -e --argjson id "${preserved_id}" --arg name "${preserved_name}" '
+        any(.[]; .id == $id and .name == $name and .enforcement == "active")
+      ' <<<"${rulesets}" >/dev/null; then
+        echo "error: preserved ruleset changed during retirement: ${preserved_id}" >&2
+        exit 1
+      fi
+    done < <(jq -r '.preserved_rulesets[] | [.id, .name] | @tsv' \
+      <<<"${retirement}")
+    echo "APPLY verified only ruleset ${ruleset_id} is absent"
+  fi
+}
+
+if [[ -n ${retire_maintenance} ]]; then
+  retire_maintenance_branch_ruleset "${retire_maintenance}"
+  exit 0
+fi
 
 converge_organization_settings() {
   local current=$1
