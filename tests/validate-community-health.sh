@@ -38,6 +38,10 @@ sed -i 's/MIT by default/MIT-only/' "${profile}"
 assert_invalid 'an organization profile without the tools mixed-license boundary'
 reset_repository
 
+sed -i 's/map-checker-qt/wrong-checker/' "${profile}"
+assert_invalid 'an organization profile without the tools path-scoped exception'
+reset_repository
+
 jq 'del(.files[] | select(.target == "profile/README.md"))' \
   "${temporary}/repository/config/community-health.json" \
   >"${temporary}/community-health.json"
