@@ -970,6 +970,11 @@ for required_text in \
   'They do not yet form a complete game release.' \
   'Game content and' \
   'media remain separately licensed' \
+  '[Tools](https://github.com/atrinik/tools)' \
+  'is MIT by default with a GPL-2.0-or-later' \
+  'exception; historical' \
+  'historical' \
+  'tools tags and releases remain under the terms that applied when published' \
   'historical MIT provenance registry' \
   'exact, independently separable' \
   'copy it, migrate or port it, translate or adapt it, or' \

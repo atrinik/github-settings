@@ -34,6 +34,10 @@ sed -i 's/GPL-licensed/GPL-compatible/' "${profile}"
 assert_invalid 'an organization profile without the Classic license boundary'
 reset_repository
 
+sed -i 's/MIT by default/MIT-only/' "${profile}"
+assert_invalid 'an organization profile without the tools mixed-license boundary'
+reset_repository
+
 jq 'del(.files[] | select(.target == "profile/README.md"))' \
   "${temporary}/repository/config/community-health.json" \
   >"${temporary}/community-health.json"
