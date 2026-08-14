@@ -17,6 +17,10 @@ Actions environments belong in the same inventory with a stable repository
 ID, exact branch policy and reviewer set, and variable and secret names only.
 Never commit their values, and provision them only after the workflow that uses
 them is merged and reviewed.
+GitHub Pages records likewise bind stable repository identity, the provider
+URL, HTTPS, the deployment environment, and an immutable marker in the owning
+workflow. Keep a pre-merge legacy source only as the verifier's explicit
+pending state, then activate the Actions source after that exact workflow lands.
 
 Administrative Actions credentials require a value-free lifecycle entry in
 `config/manual-settings.json`. Record stable repository identity, secret scope

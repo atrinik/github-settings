@@ -10,7 +10,7 @@ if (($#)); then
   exit 2
 fi
 
-for command in gh jq; do
+for command in base64 gh jq; do
   if ! command -v "${command}" >/dev/null 2>&1; then
     echo "error: ${command} is required" >&2
     exit 1
@@ -332,6 +332,80 @@ if ((missing > 0)); then
   exit 1
 fi
 
+while IFS= read -r pages_record; do
+  repository=$(jq -r '.repository' <<<"${pages_record}")
+  repository_owner=${repository%%/*}
+  repository_id=$(jq -r '.repository_id' <<<"${pages_record}")
+  site_url=$(jq -r '.site_url' <<<"${pages_record}")
+  workflow_path=$(jq -r '.workflow_path' <<<"${pages_record}")
+  activation_marker=$(jq -r '.activation_marker' <<<"${pages_record}")
+  pages_key=${repository//\//-}
+
+  if [[ ${repository_owner} != "${organization}" ]]; then
+    echo "error: Pages repository owner does not match ${organization}: ${repository}" >&2
+    exit 1
+  fi
+  if verify_repository_identity "${repository}" "${repository_id}"; then
+    :
+  else
+    status=$?
+    exit "${status}"
+  fi
+
+  pages_file=${temporary}/${pages_key}-pages.json
+  workflow_file=${temporary}/${pages_key}-pages-workflow.json
+  if github_api "read ${repository} Pages metadata" \
+    "repos/${repository}/pages" >"${pages_file}" &&
+    github_api "read ${repository} Pages workflow from the default branch" \
+      "repos/${repository}/contents/${workflow_path}?ref=main" >"${workflow_file}"; then
+    :
+  else
+    status=$?
+    exit "${status}"
+  fi
+  if ! jq -e --arg site_url "${site_url}" '
+    .html_url == $site_url and
+    .public == true and
+    .https_enforced == true and
+    .cname == null and
+    (.build_type | IN("legacy", "workflow"))
+  ' "${pages_file}" >/dev/null; then
+    echo "error: Pages identity or HTTPS drift for ${repository}" >&2
+    exit 1
+  fi
+  if ! jq -e '
+    .type == "file" and
+    .encoding == "base64" and
+    (.content | type == "string")
+  ' "${workflow_file}" >/dev/null; then
+    echo "error: Pages workflow metadata is invalid for ${repository}" >&2
+    exit 1
+  fi
+  if ! jq -r '.content' "${workflow_file}" | base64 --decode \
+    >"${temporary}/${pages_key}-pages-workflow.yml"; then
+    echo "error: Pages workflow content is not valid base64 for ${repository}" >&2
+    exit 1
+  fi
+
+  if grep -Fq -- "${activation_marker}" \
+    "${temporary}/${pages_key}-pages-workflow.yml"; then
+    if [[ $(jq -r '.build_type' "${pages_file}") != workflow ]]; then
+      echo "error: Pages Actions source is not active for merged ${repository} workflow" >&2
+      exit 1
+    fi
+    echo "KEEP ${repository} Pages uses the reviewed Actions workflow source"
+  else
+    if ! jq -e '
+      .build_type == "legacy" and
+      .source == {branch: "main", path: "/"}
+    ' "${pages_file}" >/dev/null; then
+      echo "error: pending Pages activation has unexpected live source for ${repository}" >&2
+      exit 1
+    fi
+    echo "PENDING ${repository} Pages remains on the exact legacy main-root source until the reviewed workflow merges"
+  fi
+done < <(jq -c '.github_pages_sites[]' "${manual_settings}")
+
 while IFS= read -r environment_record; do
   repository=$(jq -r '.repository' <<<"${environment_record}")
   repository_owner=${repository%%/*}
@@ -605,4 +679,4 @@ if [[ ${live_pins} != "${desired_pins}" ]]; then
 fi
 echo "KEEP ${organization} organization pins match the exact governed order"
 
-echo "Manual settings live credential, GitHub App, environment, and organization pin metadata is present."
+echo "Manual settings live credential, GitHub App, Pages, environment, and organization pin metadata is present."

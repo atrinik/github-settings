@@ -126,6 +126,39 @@ repos/atrinik/classic)
     }'
   fi
   ;;
+repos/atrinik/classic/pages)
+  build_type=legacy
+  html_url=https://atrinik.github.io/classic/
+  source='{"branch":"main","path":"/"}'
+  if [[ ${FAKE_GH_SCENARIO} == pages-active ]]; then
+    build_type=workflow
+    source=null
+  elif [[ ${FAKE_GH_SCENARIO} == pages-source-drift ]]; then
+    source='{"branch":"development","path":"/"}'
+  elif [[ ${FAKE_GH_SCENARIO} == pages-identity-drift ]]; then
+    html_url=https://example.test/classic/
+  fi
+  jq -n \
+    --arg build_type "${build_type}" \
+    --arg html_url "${html_url}" \
+    --argjson source "${source}" \
+    '{html_url: $html_url, build_type: $build_type, source: $source,
+      public: true, https_enforced: true, cname: null}'
+  ;;
+"repos/atrinik/classic/contents/.github/workflows/daily-client-performance.yml?ref=main")
+  workflow='name: Daily Classic client performance'
+  if [[ ${FAKE_GH_SCENARIO} == pages-active ||
+    ${FAKE_GH_SCENARIO} == pages-activation-missing ]]; then
+    workflow='uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e'
+  fi
+  if [[ ${FAKE_GH_SCENARIO} == pages-workflow-metadata-drift ]]; then
+    jq -n '{type: "dir", encoding: "none", content: null}'
+  else
+    content=$(printf '%s\n' "${workflow}" | base64 -w0)
+    jq -n --arg content "${content}" \
+      '{type: "file", encoding: "base64", content: $content}'
+  fi
+  ;;
 "orgs/atrinik/installations?per_page=100&page=1")
   if [[ ${FAKE_GH_SCENARIO} == app-api-failure ]]; then
     echo "gh: organization installation administration denied" >&2
@@ -366,6 +399,16 @@ repos/atrinik/classic/environments/discord-release)
     }'
   fi
   ;;
+repos/atrinik/classic/environments/github-pages)
+  jq -n '{
+    name: "github-pages",
+    deployment_branch_policy: {
+      protected_branches: false,
+      custom_branch_policies: true
+    },
+    protection_rules: [{type: "branch_policy"}]
+  }'
+  ;;
 "repos/atrinik/classic/environments/discord-release/deployment-branch-policies?per_page=100&page=1")
   if [[ ${FAKE_GH_SCENARIO} == branch-policy-drift ]]; then
     jq -n '{
@@ -427,6 +470,18 @@ repos/atrinik/classic/environments/discord-release)
     jq -n '{total_count: 0, variables: []}'
   fi
   ;;
+"repos/atrinik/classic/environments/github-pages/deployment-branch-policies?per_page=100&page=1")
+  jq -n '{
+    total_count: 1,
+    branch_policies: [{id: 3, name: "main", type: "branch"}]
+  }'
+  ;;
+"repos/atrinik/classic/environments/github-pages/secrets?per_page=100&page=1")
+  jq -n '{total_count: 0, secrets: []}'
+  ;;
+"repos/atrinik/classic/environments/github-pages/variables?per_page=100&page=1")
+  jq -n '{total_count: 0, variables: []}'
+  ;;
 *) exit 1 ;;
 esac
 EOF
@@ -448,6 +503,9 @@ output=$(run_verify present)
 grep -Fq 'KEEP atrinik/github-settings repository Actions secret ATRINIK_SETTINGS_TOKEN' \
   <<<"${output}"
 grep -Fq 'KEEP atrinik/classic environment discord-release metadata' <<<"${output}"
+grep -Fq 'PENDING atrinik/classic Pages remains on the exact legacy main-root source' \
+  <<<"${output}"
+grep -Fq 'KEEP atrinik/classic environment github-pages metadata' <<<"${output}"
 grep -Fq 'KEEP atrinik-classic-dependency-updater installation metadata and exact permissions' \
   <<<"${output}"
 grep -Fq 'KEEP atrinik/classic repository Actions secret DEPENDENCY_UPDATE_APP_PRIVATE_KEY' \
@@ -455,8 +513,31 @@ grep -Fq 'KEEP atrinik/classic repository Actions secret DEPENDENCY_UPDATE_APP_P
 grep -Fq 'KEEP atrinik/classic repository Actions variable DEPENDENCY_UPDATE_APP_ID' \
   <<<"${output}"
 grep -Fq 'KEEP atrinik organization pins match the exact governed order' <<<"${output}"
-grep -Fq 'Manual settings live credential, GitHub App, environment, and organization pin metadata is present.' \
+grep -Fq 'Manual settings live credential, GitHub App, Pages, environment, and organization pin metadata is present.' \
   <<<"${output}"
+
+: >"${temporary}/gh.log"
+output=$(run_verify pages-active)
+grep -Fq 'KEEP atrinik/classic Pages uses the reviewed Actions workflow source' \
+  <<<"${output}"
+
+for scenario in pages-source-drift pages-identity-drift \
+  pages-activation-missing pages-workflow-metadata-drift; do
+  : >"${temporary}/gh.log"
+  if run_verify "${scenario}" \
+    >"${temporary}/${scenario}.out" 2>"${temporary}/${scenario}.err"; then
+    echo "error: manual-settings verifier accepted ${scenario}" >&2
+    exit 1
+  fi
+done
+grep -Fq 'pending Pages activation has unexpected live source' \
+  "${temporary}/pages-source-drift.err"
+grep -Fq 'Pages identity or HTTPS drift' \
+  "${temporary}/pages-identity-drift.err"
+grep -Fq 'Pages Actions source is not active' \
+  "${temporary}/pages-activation-missing.err"
+grep -Fq 'Pages workflow metadata is invalid' \
+  "${temporary}/pages-workflow-metadata-drift.err"
 
 : >"${temporary}/gh.log"
 output=$(run_verify page2)
@@ -708,4 +789,4 @@ fi
 grep -Fq 'ATRINIK_SETTINGS_TOKEN is unavailable' "${temporary}/empty.err"
 [[ ! -s ${temporary}/gh.log ]]
 
-echo "Manual settings live credential, GitHub App, and environment verification tests passed."
+echo "Manual settings live credential, GitHub App, Pages, and environment verification tests passed."

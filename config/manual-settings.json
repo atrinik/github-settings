@@ -68,6 +68,36 @@
         "DISCORD_APPLICATION_ID"
       ],
       "variable_names": []
+    },
+    {
+      "deployment_branch_policy": {
+        "custom_branch_policies": true,
+        "patterns": [
+          {
+            "name": "main",
+            "type": "branch"
+          }
+        ],
+        "protected_branches": false
+      },
+      "environment": "github-pages",
+      "repository": "atrinik/classic",
+      "repository_id": 1327289971,
+      "required_reviewers": [],
+      "secret_names": [],
+      "variable_names": []
+    }
+  ],
+  "github_pages_sites": [
+    {
+      "activation_marker": "actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e",
+      "build_type": "workflow",
+      "environment": "github-pages",
+      "https_enforced": true,
+      "repository": "atrinik/classic",
+      "repository_id": 1327289971,
+      "site_url": "https://atrinik.github.io/classic/",
+      "workflow_path": ".github/workflows/daily-client-performance.yml"
     }
   ],
   "github_actions_apps": [
@@ -131,5 +161,5 @@
   "github_packages_actions_access": [],
   "require_two_factor_authentication": true,
   "require_secure_two_factor_methods": true,
-  "reason": "The public GitHub API does not expose supported update parameters for every setting in this file, including organization pins and the exact selected-repository set for an organization GitHub App installation to an administrative token, and external credential values must never be stored here. Confirm these settings, the exact ordered pin set, credential lifecycle metadata and live secret-name presence, GitHub App repository selection, Codecov GitHub App repository access, any listed GitHub Actions environments, and GitHub Packages Actions access in the corresponding organization, repository, and package settings UI."
+  "reason": "The public GitHub API does not expose supported update parameters for every setting in this file, including organization pins and the exact selected-repository set for an organization GitHub App installation to an administrative token, and external credential values must never be stored here. Confirm these settings, the exact ordered pin set, credential lifecycle metadata and live secret-name presence, GitHub App repository selection, Codecov GitHub App repository access, any listed GitHub Pages sites and GitHub Actions environments, and GitHub Packages Actions access in the corresponding organization, repository, and package settings UI."
 }
