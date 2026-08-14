@@ -23,6 +23,7 @@ assert_invalid() {
 
 reset_manual_settings() {
   jq '
+    .github_pages_sites = [] |
     .github_actions_environments = [
       {
         deployment_branch_policy: {
@@ -56,8 +57,8 @@ rewrite_manual_settings() {
 }
 
 jq -e '
-  .github_actions_environments == [
-    {
+  (.github_actions_environments | length) == 2 and
+  any(.github_actions_environments[]; . == {
       deployment_branch_policy: {
         custom_branch_policies: true,
         patterns: [
@@ -72,8 +73,30 @@ jq -e '
       required_reviewers: [],
       secret_names: ["DISCORD_APPLICATION_ID"],
       variable_names: []
-    }
-  ]
+    }) and
+  any(.github_actions_environments[]; . == {
+      deployment_branch_policy: {
+        custom_branch_policies: true,
+        patterns: [{name: "main", type: "branch"}],
+        protected_branches: false
+      },
+      environment: "github-pages",
+      repository: "atrinik/classic",
+      repository_id: 1327289971,
+      required_reviewers: [],
+      secret_names: [],
+      variable_names: []
+    }) and
+  .github_pages_sites == [{
+    activation_marker: "actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e",
+    build_type: "workflow",
+    environment: "github-pages",
+    https_enforced: true,
+    repository: "atrinik/classic",
+    repository_id: 1327289971,
+    site_url: "https://atrinik.github.io/classic/",
+    workflow_path: ".github/workflows/daily-client-performance.yml"
+  }]
 ' "${root}/config/manual-settings.json" >/dev/null
 
 "${temporary}/bin/validate" >/dev/null
@@ -174,5 +197,34 @@ reset_manual_settings
 rewrite_manual_settings \
   '.github_actions_environments[0].secret_names = ["external_token"]'
 assert_invalid 'a malformed environment secret name'
+
+reset_manual_settings
+rewrite_manual_settings \
+  '.github_actions_environments[0].secret_names = []'
+assert_invalid 'an empty secret contract outside github-pages'
+
+cp "${root}/config/manual-settings.json" \
+  "${temporary}/config/manual-settings.json"
+rewrite_manual_settings \
+  '.github_pages_sites[0].build_type = "legacy"'
+assert_invalid 'a non-workflow desired Pages source'
+
+cp "${root}/config/manual-settings.json" \
+  "${temporary}/config/manual-settings.json"
+rewrite_manual_settings \
+  '.github_pages_sites[0].site_url = "https://example.test/classic/"'
+assert_invalid 'a Pages URL outside the repository identity'
+
+cp "${root}/config/manual-settings.json" \
+  "${temporary}/config/manual-settings.json"
+rewrite_manual_settings \
+  '.github_pages_sites[0].activation_marker = "actions/deploy-pages@v4"'
+assert_invalid 'a mutable Pages activation marker'
+
+cp "${root}/config/manual-settings.json" \
+  "${temporary}/config/manual-settings.json"
+rewrite_manual_settings \
+  '.github_pages_sites[0].environment = "production"'
+assert_invalid 'a Pages site without its exact environment'
 
 echo "Manual GitHub Actions environment validation tests passed."

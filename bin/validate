@@ -290,6 +290,7 @@ jq -e '
     "github_actions_credentials",
     "github_actions_environments",
     "github_packages_actions_access",
+    "github_pages_sites",
     "members_can_change_repository_visibility",
     "members_can_create_teams",
     "members_can_delete_or_transfer_repositories",
@@ -664,10 +665,10 @@ jq -e \
     (
       .secret_names |
       type == "array" and
-      length > 0 and
       length == (unique | length) and
       all(.[]; type == "string" and test("^[A-Z][A-Z0-9_]*$"))
     ) and
+    ((.secret_names | length) > 0 or .environment == "github-pages") and
     (
       .variable_names as $variables |
       all(.secret_names[]; . as $secret | ($variables | index($secret)) == null)
@@ -680,6 +681,67 @@ jq -e \
       $environments[];
       .repository != $environment.repository or
       .repository_id == $environment.repository_id
+    )
+  )
+' "${manual_settings_config}" >/dev/null
+
+jq -e \
+  --slurpfile repositories "${repositories_config}" '
+  .github_actions_environments as $environments |
+  .github_pages_sites as $sites |
+  ($sites | type == "array") and
+  ([$sites[].repository] | length == (unique | length)) and
+  all(
+    $sites[];
+    (keys == [
+      "activation_marker",
+      "build_type",
+      "environment",
+      "https_enforced",
+      "repository",
+      "repository_id",
+      "site_url",
+      "workflow_path"
+    ]) and
+    (.build_type == "workflow") and
+    (.https_enforced == true) and
+    (.environment == "github-pages") and
+    (
+      .repository |
+      type == "string" and
+      test("^atrinik/[A-Za-z0-9_.-]+$")
+    ) and
+    (
+      .repository as $full_name |
+      ($full_name | split("/")[1]) as $repository |
+      ($repositories[0].pull_request_gate | index($repository)) != null and
+      ($repositories[0].archive | index($repository)) == null
+    ) and
+    (.repository_id | type == "number" and . > 0 and floor == .) and
+    (
+      .repository as $repository |
+      ($repository | split("/")) as $parts |
+      .site_url == ("https://" + $parts[0] + ".github.io/" + $parts[1] + "/")
+    ) and
+    (
+      .workflow_path |
+      type == "string" and
+      test("^\\.github/workflows/[A-Za-z0-9_.-]+\\.ya?ml$")
+    ) and
+    (
+      .activation_marker |
+      type == "string" and
+      test("^actions/deploy-pages@[0-9a-f]{40}$")
+    )
+  ) and
+  all(
+    $sites[];
+    . as $site |
+    any(
+      $environments[];
+      .repository == $site.repository and
+      .repository_id == $site.repository_id and
+      .environment == $site.environment
     )
   )
 ' "${manual_settings_config}" >/dev/null

@@ -99,6 +99,13 @@
   branch policies and reviewer sets, and variable and secret names only. Never
   record credential values. Provision them only after the owning workflow is
   merged and reviewed, and do not imply that `bin/publish` applies them.
+- Record GitHub Pages sites with stable repository identity, exact provider URL,
+  HTTPS enforcement, owning deployment environment, desired Actions source,
+  workflow path, and immutable deployment-action marker. Before that marker is
+  present on the default branch, the verifier permits only the documented
+  legacy source as pending transition state; once merged, anything except the
+  Actions source is drift. Switch the live source only after the consuming
+  workflow is merged and reviewed.
 - Treat `config/codeql-advanced-setup.json` as the exhaustive exception
   inventory for repositories whose component/path-aware CodeQL workflow cannot
   use repository-wide default setup. Keep the advanced security configuration

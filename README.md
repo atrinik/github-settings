@@ -777,6 +777,66 @@ verification to succeed. If any identity, policy, reviewer, name, or count
 differs, stop: do not delete or overwrite unknown live settings. Reconcile the
 reviewed desired-state contract first, then repeat the complete verification.
 
+## Activating the Classic performance Pages site
+
+`atrinik/classic` (repository ID `1327289971`) owns the provider-managed
+`https://atrinik.github.io/classic/` site and the `github-pages` deployment
+environment. The environment permits only the exact `main` branch and has no
+required reviewers, secrets, or variables. The desired Pages build type is
+`workflow`; the consuming workflow is
+`.github/workflows/daily-client-performance.yml`, bound by the immutable
+`actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e` marker.
+
+The live legacy `main`-root source is a bounded pre-activation state only while
+that marker is absent from the default-branch workflow.
+`bin/verify-manual-settings` reports it as `PENDING`. Once the reviewed Classic
+workflow is merged, the same verifier requires the Actions source and fails on
+any lingering legacy source. It never changes the source itself.
+
+Before activation, verify the repository, current Pages site, environment, and
+the merged workflow without changing live state:
+
+```sh
+gh api repos/atrinik/classic --jq '{id,full_name,archived,default_branch}'
+gh api repos/atrinik/classic/pages \
+  --jq '{html_url,build_type,source,public,https_enforced,cname}'
+gh api repos/atrinik/classic/environments/github-pages \
+  --jq '{name,deployment_branch_policy,protection_rule_types:[.protection_rules[].type]}'
+gh api --paginate \
+  'repos/atrinik/classic/environments/github-pages/deployment-branch-policies?per_page=100' \
+  --jq '[.branch_policies[] | {name,type}]'
+gh api repos/atrinik/classic/environments/github-pages/secrets \
+  --jq '{total_count,names:[.secrets[].name]}'
+gh api repos/atrinik/classic/environments/github-pages/variables \
+  --jq '{total_count,names:[.variables[].name]}'
+gh api 'repos/atrinik/classic/contents/.github/workflows/daily-client-performance.yml?ref=main' \
+  --jq -r .content | base64 --decode | \
+  grep -F 'actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e'
+```
+
+Require the stable repository identity and `main` default branch, exact site
+URL, public HTTPS with no custom hostname, the exact custom `main` environment
+branch policy, no other protection rule, and empty secret/variable lists. Stop
+on any difference. Only after the workflow marker is present on `main`, an
+organization owner with repository administration access may switch the exact
+site to the Actions source:
+
+```sh
+printf '%s\n' '{"build_type":"workflow"}' | gh api --method PUT \
+  repos/atrinik/classic/pages --input -
+```
+
+Immediately run `bin/verify-manual-settings` and require `KEEP atrinik/classic
+Pages uses the reviewed Actions workflow source`. Then dispatch `Daily Classic
+client performance` from `main` with checkpoint source `final-benchmark-data`,
+verify the attempt-qualified evidence/checkpoint artifacts and successful
+`github-pages` deployment, and confirm `https://atrinik.github.io/classic/`,
+`trend.json`, `v1/state.json`, and `v1/manifest.json`. Subsequent manual and
+scheduled runs must use the default `pages` checkpoint. If activation or the
+bootstrap run fails, leave or restore the last known-good Pages deployment,
+preserve the final `benchmark-data` commit, and do not delete the historical
+branch.
+
 ## Retiring a manually inventoried Actions environment
 
 Removing an entry from `github_actions_environments` records the desired
