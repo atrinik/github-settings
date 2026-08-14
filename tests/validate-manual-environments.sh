@@ -198,6 +198,11 @@ rewrite_manual_settings \
   '.github_actions_environments[0].secret_names = ["external_token"]'
 assert_invalid 'a malformed environment secret name'
 
+reset_manual_settings
+rewrite_manual_settings \
+  '.github_actions_environments[0].secret_names = []'
+assert_invalid 'an empty secret contract outside github-pages'
+
 cp "${root}/config/manual-settings.json" \
   "${temporary}/config/manual-settings.json"
 rewrite_manual_settings \

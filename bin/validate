@@ -668,6 +668,7 @@ jq -e \
       length == (unique | length) and
       all(.[]; type == "string" and test("^[A-Z][A-Z0-9_]*$"))
     ) and
+    ((.secret_names | length) > 0 or .environment == "github-pages") and
     (
       .variable_names as $variables |
       all(.secret_names[]; . as $secret | ($variables | index($secret)) == null)
