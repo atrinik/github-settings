@@ -962,6 +962,7 @@ while IFS= read -r community_file; do
 done < <(jq -r '.files[].source' "${community_health_config}")
 
 profile_readme=${root}/community-health/profile/README.md
+# shellcheck disable=SC2016 # Markdown code markers are intentionally literal.
 for required_text in \
   '# Atrinik' \
   'Atrinik is an open-source cooperative fantasy role-playing world' \
@@ -971,7 +972,7 @@ for required_text in \
   'Game content and' \
   'media remain separately licensed' \
   '[Tools](https://github.com/atrinik/tools)' \
-  'is MIT by default with a GPL-2.0-or-later map-checker-qt/ exception; historical' \
+  'is MIT by default with a GPL-2.0-or-later `map-checker-qt/` exception; historical' \
   'tools tags and releases remain under the terms that applied when published' \
   'historical MIT provenance registry' \
   'exact, independently separable' \
