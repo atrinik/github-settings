@@ -11,7 +11,9 @@ implementation is being developed with Go, Rust, and Protobuf foundations.
 They do not yet form a complete game release. Game content and
 media remain separately licensed under the terms in their source repositories.
 
-Classic and [tools](https://github.com/atrinik/tools) remain GPL as distributed.
+Classic remains GPL as distributed. [Tools](https://github.com/atrinik/tools)
+is MIT by default with a GPL-2.0-or-later `map-checker-qt/` exception; historical
+tools tags and releases remain under the terms that applied when published.
 Under the
 [historical MIT provenance registry](https://github.com/atrinik/atrinik/blob/main/docs/PROVENANCE.md),
 an MIT destination may inspect exact, independently separable material as

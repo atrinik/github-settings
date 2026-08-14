@@ -34,6 +34,18 @@ sed -i 's/GPL-licensed/GPL-compatible/' "${profile}"
 assert_invalid 'an organization profile without the Classic license boundary'
 reset_repository
 
+sed -i 's/MIT by default/MIT-only/' "${profile}"
+assert_invalid 'an organization profile without the tools mixed-license boundary'
+reset_repository
+
+# shellcheck disable=SC2016 # Markdown code markers are intentionally literal.
+sed -i \
+  's/GPL-2.0-or-later `map-checker-qt\/` exception/GPL-2.0-or-later `wrong-checker\/` exception/' \
+  "${profile}"
+printf '\nUnrelated replacement tracker: map-checker-qt/.\n' >>"${profile}"
+assert_invalid 'an organization profile without the tools path-scoped exception'
+reset_repository
+
 jq 'del(.files[] | select(.target == "profile/README.md"))' \
   "${temporary}/repository/config/community-health.json" \
   >"${temporary}/community-health.json"
