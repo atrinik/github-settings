@@ -1359,4 +1359,10 @@ done < <(jq -r '.archive[]' "${repositories_config}")
 if [[ $(jq -r '.members_can_create_teams' <<<"${organization_metadata}") != false ]]; then
   echo "MANUAL members can still create teams; disable this in Member privileges."
 fi
+while IFS= read -r external_app; do
+  app_slug=$(jq -r '.app_slug' <<<"${external_app}")
+  installation_id=$(jq -r '.installation_id' <<<"${external_app}")
+  repositories=$(jq -r '[.repositories[].repository] | join(", ")' <<<"${external_app}")
+  echo "MANUAL ${app_slug} installation ${installation_id} selected repositories: ${repositories}; publisher does not apply"
+done < <(jq -c '.external_provider_apps[]' "${root}/config/manual-settings.json")
 echo "Manual confirmation required for config/manual-settings.json."

@@ -286,6 +286,7 @@ jq -e '. == {state: "not-configured"}' \
 jq -e '
   (keys == [
     "codecov_github_app_repositories",
+    "external_provider_apps",
     "github_actions_apps",
     "github_actions_credentials",
     "github_actions_environments",
@@ -311,7 +312,77 @@ jq -e \
   def valid_day($value):
     ($value | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")) and
     (try ((day_epoch($value) | strftime("%Y-%m-%d")) == $value) catch false);
+  .external_provider_apps as $external_apps |
   .github_actions_apps as $apps |
+  ($external_apps | type == "array" and length == 1) and
+  ($external_apps[0] | keys == [
+    "app_id",
+    "app_slug",
+    "events",
+    "installation_id",
+    "last_verified_on",
+    "owner",
+    "permissions",
+    "provider",
+    "purpose",
+    "repositories",
+    "repository_scope_verification",
+    "repository_selection",
+    "review_by",
+    "review_cadence_days",
+    "review_owner",
+    "revocation",
+    "runbook",
+    "status_producer"
+  ]) and
+  ($external_apps[0].app_id == 85455) and
+  ($external_apps[0].app_slug == "cloudflare-workers-and-pages") and
+  ($external_apps[0].installation_id == 152311798) and
+  ($external_apps[0].repository_selection == "selected") and
+  ($external_apps[0].repository_scope_verification == "organization_owner_ui") and
+  ($external_apps[0].events == ["pull_request", "push"]) and
+  ($external_apps[0].permissions == {
+    administration: "write",
+    checks: "write",
+    contents: "write",
+    deployments: "write",
+    metadata: "read",
+    pull_requests: "write"
+  }) and
+  ($external_apps[0].provider == "Cloudflare Workers Builds and Pages") and
+  ($external_apps[0].status_producer == "Cloudflare Workers and Pages GitHub App") and
+  ($external_apps[0].repositories == [
+    {
+      purpose: "Preserve the existing Cloudflare Pages website connection.",
+      repository: "atrinik/website",
+      repository_id: 1327107093
+    },
+    {
+      purpose: "Authorize the serialized Workers Builds topology governed by atrinik/metaserver-worker issues 53-56.",
+      repository: "atrinik/metaserver-worker",
+      repository_id: 1324297032
+    }
+  ]) and
+  all(
+    $external_apps[0].repositories[];
+    (.repository | split("/")[1]) as $repository |
+    (.repository | test("^atrinik/[A-Za-z0-9_.-]+$")) and
+    (.repository_id | type == "number" and floor == . and . > 0) and
+    (.purpose | type == "string" and length > 0) and
+    ($repositories[0].pull_request_gate | index($repository)) != null and
+    ($repositories[0].archive | index($repository)) == null
+  ) and
+  ($external_apps[0].owner | type == "string" and length > 0) and
+  ($external_apps[0].purpose | type == "string" and length > 0) and
+  ($external_apps[0].review_owner | type == "string" and length > 0) and
+  ($external_apps[0].revocation | type == "string" and length > 0) and
+  ($external_apps[0].runbook == "README.md#cloudflare-github-app") and
+  ($external_apps[0].review_cadence_days == 90) and
+  valid_day($external_apps[0].last_verified_on) and
+  valid_day($external_apps[0].review_by) and
+  (day_epoch($external_apps[0].last_verified_on) <= day_epoch($today)) and
+  (day_epoch($external_apps[0].review_by) > day_epoch($today)) and
+  ((day_epoch($external_apps[0].review_by) - day_epoch($external_apps[0].last_verified_on)) / 86400 == $external_apps[0].review_cadence_days) and
   ($apps | type == "array" and length > 0) and
   ([$apps[].app_id] | length == (unique | length)) and
   ([$apps[].installation_id] | length == (unique | length)) and

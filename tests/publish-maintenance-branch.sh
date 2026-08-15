@@ -1429,6 +1429,9 @@ grep -F \
 grep -F \
   'PLAN VERIFY /repos/atrinik/classic/immutable-releases => enabled=true,enforced_by_owner=true' \
   "${plan_output}" >/dev/null
+grep -F \
+  'MANUAL cloudflare-workers-and-pages installation 152311798 selected repositories: atrinik/website, atrinik/metaserver-worker; publisher does not apply' \
+  "${plan_output}" >/dev/null
 jq -e '. == {enforced_repositories: "none"}' \
   "${plan_immutable_state}" >/dev/null
 jq -s -e '

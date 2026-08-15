@@ -88,6 +88,30 @@ repos/atrinik/github-settings)
     }'
   fi
   ;;
+repos/atrinik/website)
+  repository_id=1327107093
+  if [[ ${FAKE_GH_SCENARIO} == external-website-identity-drift ]]; then
+    repository_id=1
+  fi
+  jq -n --argjson repository_id "${repository_id}" '{
+    id: $repository_id,
+    full_name: "atrinik/website",
+    archived: false,
+    default_branch: "main"
+  }'
+  ;;
+repos/atrinik/metaserver-worker)
+  repository_id=1324297032
+  if [[ ${FAKE_GH_SCENARIO} == external-metaserver-identity-drift ]]; then
+    repository_id=1
+  fi
+  jq -n --argjson repository_id "${repository_id}" '{
+    id: $repository_id,
+    full_name: "atrinik/metaserver-worker",
+    archived: false,
+    default_branch: "main"
+  }'
+  ;;
 repos/atrinik/classic)
   if [[ ${FAKE_GH_SCENARIO} == environment-identity-drift ]]; then
     jq -n '{
@@ -168,7 +192,7 @@ repos/atrinik/classic/pages)
   elif [[ ${FAKE_GH_SCENARIO} == app-installations-page2 || \
     ${FAKE_GH_SCENARIO} == app-installations-page2-failure ]]; then
     jq -n '{
-      total_count: 101,
+      total_count: 102,
       installations: [range(0; 100) | {
         id: (1000 + .),
         app_id: (2000 + .),
@@ -182,6 +206,28 @@ repos/atrinik/classic/pages)
       }]
     }'
   elif [[ ${FAKE_GH_SCENARIO} == missing-app ]]; then
+    jq -n '{
+      total_count: 1,
+      installations: [{
+        id: 152311798,
+        app_id: 85455,
+        app_slug: "cloudflare-workers-and-pages",
+        target_type: "Organization",
+        account: {login: "atrinik", type: "Organization"},
+        repository_selection: "selected",
+        permissions: {
+          administration: "write",
+          checks: "write",
+          contents: "write",
+          deployments: "write",
+          metadata: "read",
+          pull_requests: "write"
+        },
+        events: ["pull_request", "push"],
+        suspended_at: null
+      }]
+    }'
+  elif [[ ${FAKE_GH_SCENARIO} == missing-external-app ]]; then
     jq -n '{total_count: 0, installations: []}'
   else
     app_id=4564008
@@ -202,6 +248,22 @@ repos/atrinik/classic/pages)
     app-permission-drift) permissions='{"actions":"write","contents":"write","metadata":"read","pull_requests":"write"}' ;;
     app-suspended) suspended_at='"2026-08-11T00:00:00Z"' ;;
     esac
+    external_app_id=85455
+    external_installation_id=152311798
+    external_app_slug=cloudflare-workers-and-pages
+    external_repository_selection=selected
+    external_events='["pull_request","push"]'
+    external_permissions='{"administration":"write","checks":"write","contents":"write","deployments":"write","metadata":"read","pull_requests":"write"}'
+    external_suspended_at=null
+    case ${FAKE_GH_SCENARIO} in
+    external-app-id-drift) external_app_id=1 ;;
+    external-app-installation-id-drift) external_installation_id=1 ;;
+    external-app-slug-drift) external_app_slug=other-app ;;
+    external-app-selection-drift) external_repository_selection=all ;;
+    external-app-events-drift) external_events='["push"]' ;;
+    external-app-permission-drift) external_permissions='{"checks":"write","contents":"write","deployments":"write","metadata":"read","pull_requests":"write"}' ;;
+    external-app-suspended) external_suspended_at='"2026-08-15T00:00:00Z"' ;;
+    esac
     jq -n \
       --argjson app_id "${app_id}" \
       --argjson installation_id "${installation_id}" \
@@ -210,8 +272,15 @@ repos/atrinik/classic/pages)
       --arg account_login "${account_login}" \
       --argjson events "${events}" \
       --argjson permissions "${permissions}" \
-      --argjson suspended_at "${suspended_at}" '{
-        total_count: 1,
+      --argjson suspended_at "${suspended_at}" \
+      --argjson external_app_id "${external_app_id}" \
+      --argjson external_installation_id "${external_installation_id}" \
+      --arg external_app_slug "${external_app_slug}" \
+      --arg external_repository_selection "${external_repository_selection}" \
+      --argjson external_events "${external_events}" \
+      --argjson external_permissions "${external_permissions}" \
+      --argjson external_suspended_at "${external_suspended_at}" '{
+        total_count: 2,
         installations: [{
           id: $installation_id,
           app_id: $app_id,
@@ -222,6 +291,16 @@ repos/atrinik/classic/pages)
           permissions: $permissions,
           events: $events,
           suspended_at: $suspended_at
+        }, {
+          id: $external_installation_id,
+          app_id: $external_app_id,
+          app_slug: $external_app_slug,
+          target_type: "Organization",
+          account: {login: "atrinik", type: "Organization"},
+          repository_selection: $external_repository_selection,
+          permissions: $external_permissions,
+          events: $external_events,
+          suspended_at: $external_suspended_at
         }]
       }'
   fi
@@ -233,7 +312,7 @@ repos/atrinik/classic/pages)
   fi
   [[ ${FAKE_GH_SCENARIO} == app-installations-page2 ]]
   jq -n '{
-    total_count: 101,
+    total_count: 102,
     installations: [{
       id: 153045686,
       app_id: 4564008,
@@ -247,6 +326,23 @@ repos/atrinik/classic/pages)
         pull_requests: "write"
       },
       events: [],
+      suspended_at: null
+    }, {
+      id: 152311798,
+      app_id: 85455,
+      app_slug: "cloudflare-workers-and-pages",
+      target_type: "Organization",
+      account: {login: "atrinik", type: "Organization"},
+      repository_selection: "selected",
+      permissions: {
+        administration: "write",
+        checks: "write",
+        contents: "write",
+        deployments: "write",
+        metadata: "read",
+        pull_requests: "write"
+      },
+      events: ["pull_request", "push"],
       suspended_at: null
     }]
   }'
@@ -494,7 +590,7 @@ run_verify() {
     FAKE_GH_LOG="${temporary}/gh.log" \
     FAKE_GH_SCENARIO="${scenario}" \
     GITHUB_ACTIONS=true GH_TOKEN=test-token \
-    ATRINIK_VALIDATION_TODAY=2026-08-11 \
+    ATRINIK_VALIDATION_TODAY=2026-08-15 \
     "${root}/bin/verify-manual-settings"
 }
 
@@ -506,6 +602,10 @@ grep -Fq 'KEEP atrinik/classic environment discord-release metadata' <<<"${outpu
 grep -Fq 'PENDING atrinik/classic Pages remains on the exact legacy main-root source' \
   <<<"${output}"
 grep -Fq 'KEEP atrinik/classic environment github-pages metadata' <<<"${output}"
+grep -Fq 'KEEP cloudflare-workers-and-pages installation metadata and exact permissions/events' \
+  <<<"${output}"
+grep -Fq 'MANUAL cloudflare-workers-and-pages selected repositories require owner UI proof: atrinik/website and atrinik/metaserver-worker only' \
+  <<<"${output}"
 grep -Fq 'KEEP atrinik-classic-dependency-updater installation metadata and exact permissions' \
   <<<"${output}"
 grep -Fq 'KEEP atrinik/classic repository Actions secret DEPENDENCY_UPDATE_APP_PRIVATE_KEY' \
@@ -513,7 +613,7 @@ grep -Fq 'KEEP atrinik/classic repository Actions secret DEPENDENCY_UPDATE_APP_P
 grep -Fq 'KEEP atrinik/classic repository Actions variable DEPENDENCY_UPDATE_APP_ID' \
   <<<"${output}"
 grep -Fq 'KEEP atrinik organization pins match the exact governed order' <<<"${output}"
-grep -Fq 'Manual settings live credential, GitHub App, Pages, environment, and organization pin metadata is present.' \
+grep -Fq 'Manual settings live credential, GitHub App, external provider App, Pages, environment, and organization pin metadata is present.' \
   <<<"${output}"
 
 : >"${temporary}/gh.log"
@@ -565,7 +665,7 @@ output=$(PATH="${temporary}/bin:${PATH}" \
   FAKE_GH_LOG="${temporary}/gh.log" \
   FAKE_GH_SCENARIO=environment-page2 \
   GITHUB_ACTIONS=true GH_TOKEN=test-token \
-  ATRINIK_VALIDATION_TODAY=2026-08-11 \
+  ATRINIK_VALIDATION_TODAY=2026-08-15 \
   "${environment_page_root}/bin/verify-manual-settings")
 grep -Fq 'KEEP atrinik/classic environment discord-release metadata' <<<"${output}"
 grep -Fq 'deployment-branch-policies?per_page=100&page=2' "${temporary}/gh.log"
@@ -589,7 +689,7 @@ output=$(PATH="${temporary}/bin:${PATH}" \
   FAKE_GH_LOG="${temporary}/gh.log" \
   FAKE_GH_SCENARIO=shared-repository \
   GITHUB_ACTIONS=true GH_TOKEN=test-token \
-  ATRINIK_VALIDATION_TODAY=2026-08-11 \
+  ATRINIK_VALIDATION_TODAY=2026-08-15 \
   "${shared_root}/bin/verify-manual-settings")
 grep -Fq 'SECOND_SETTINGS_TOKEN' <<<"${output}"
 [[ $(grep -Fc 'repos/atrinik/github-settings' "${temporary}/gh.log") == 2 ]]
@@ -613,6 +713,7 @@ for scenario in pin-drift malformed-pins; do
 done
 
 app_failures=(
+  missing-external-app
   missing-app
   app-id-drift
   app-installation-id-drift
@@ -629,6 +730,15 @@ app_failures=(
   app-api-failure
   app-variable-api-failure
   app-installations-page2-failure
+  external-app-id-drift
+  external-app-installation-id-drift
+  external-app-slug-drift
+  external-app-selection-drift
+  external-app-events-drift
+  external-app-permission-drift
+  external-app-suspended
+  external-website-identity-drift
+  external-metaserver-identity-drift
 )
 for scenario in "${app_failures[@]}"; do
   : >"${temporary}/gh.log"
@@ -640,8 +750,14 @@ for scenario in "${app_failures[@]}"; do
 done
 grep -Fq 'GitHub App installation is missing or ambiguous' \
   "${temporary}/missing-app.err"
+grep -Fq 'external provider App installation is missing or ambiguous' \
+  "${temporary}/missing-external-app.err"
 grep -Fq 'GitHub App installation metadata or permission drift' \
   "${temporary}/app-permission-drift.err"
+grep -Fq 'external provider App installation metadata or permission drift' \
+  "${temporary}/external-app-permission-drift.err"
+grep -Fq 'repository identity or active-state drift for atrinik/website' \
+  "${temporary}/external-website-identity-drift.err"
 grep -Fq 'GitHub App Actions secret name is missing' \
   "${temporary}/missing-app-secret.err"
 grep -Fq 'GitHub App Actions variable name is missing' \
@@ -780,7 +896,7 @@ fi
 : >"${temporary}/gh.log"
 if PATH="${temporary}/bin:${PATH}" \
   FAKE_GH_LOG="${temporary}/gh.log" FAKE_GH_SCENARIO=present \
-  GITHUB_ACTIONS=true GH_TOKEN='' ATRINIK_VALIDATION_TODAY=2026-08-11 \
+  GITHUB_ACTIONS=true GH_TOKEN='' ATRINIK_VALIDATION_TODAY=2026-08-15 \
   "${root}/bin/verify-manual-settings" \
   >"${temporary}/empty.out" 2>"${temporary}/empty.err"; then
   echo "error: manual-settings verifier accepted an empty workflow credential" >&2
@@ -789,4 +905,4 @@ fi
 grep -Fq 'ATRINIK_SETTINGS_TOKEN is unavailable' "${temporary}/empty.err"
 [[ ! -s ${temporary}/gh.log ]]
 
-echo "Manual settings live credential, GitHub App, Pages, and environment verification tests passed."
+echo "Manual settings live credential, GitHub App, external provider App, Pages, and environment verification tests passed."

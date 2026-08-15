@@ -90,6 +90,11 @@ read-only and are skipped on later runs.
   intended repository and consumer, credential metadata names, accountable
   owner, verification date, rotation deadline, and runbook. The App private
   key and installation tokens never belong in this repository.
+- External provider GitHub Apps have a distinct value-free inventory. It binds
+  the stable App and installation identities, exact permissions and events,
+  exact selected repository IDs, provider purpose, review owner and deadline,
+  revocation procedure, and status producer. Provider credentials and account
+  coordinates remain outside GitHub and this repository.
 - GitHub Actions defaults to read-only, cannot approve pull requests, and may
   use only Atrinik, GitHub, Codecov coverage, and explicitly allowed Docker
   actions.
@@ -337,6 +342,67 @@ bin/verify-manual-settings
 If any ID, permission, event, suspension state, selected repository, or
 credential name differs, stop. Disable the consumer and reconcile reviewed
 desired state before minting another installation token.
+
+## Cloudflare GitHub App
+
+The existing organization installation for the **Cloudflare Workers and
+Pages** GitHub App is App ID `85455`, installation ID `152311798`, and selected-
+repository mode. Its exact effective GitHub permissions are administration,
+checks, contents, deployments, and pull requests write plus metadata read; its
+event subscriptions are exactly `pull_request` and `push`. These broad App
+permissions are provider-managed GitHub capabilities, not the Cloudflare build
+token or runtime authority. Issue
+[`atrinik/metaserver-worker#56`](https://github.com/atrinik/metaserver-worker/issues/56)
+separately owns the least-privilege Cloudflare identities and provider
+connection.
+
+The selected set must be exactly these two stable repositories:
+
+- `atrinik/website`, ID `1327107093`, preserving its existing Pages
+  integration; and
+- `atrinik/metaserver-worker`, ID `1324297032`, for the serialized Workers
+  Builds topology reviewed in metaserver-worker issues 53-56.
+
+No other repository and never **All repositories** is authorized. GitHub's
+organization-installations API verifies the public installation identity,
+mode, effective permissions, events, organization owner, and suspension state.
+It does not give this administrative token an authoritative enumeration of the
+selected set, so an organization owner must verify that exact two-repository
+set in
+<https://github.com/organizations/atrinik/settings/installations/152311798>.
+`bin/verify-manual-settings` deliberately reports this remaining manual proof;
+it also verifies both repository IDs read-only and never reads a credential
+value.
+
+After the metaserver-worker production and review contracts are merged and
+validated, a separately authorized organization owner may edit only this
+installation: preserve `website`, add only `metaserver-worker`, save selected-
+repository mode, and immediately re-open the selection to confirm the exact
+two entries. Do not change App permissions, events, the website connection,
+repository rulesets, or any unrelated installation. Run
+`bin/verify-manual-settings` before and after the UI step and retain the owner
+confirmation with the #56 provider evidence. `bin/publish` remains plan-only
+for this record and never changes installation access.
+
+The App may publish its native Cloudflare check/deployment result. For
+`metaserver-worker`, `main` remains the sole automatic production branch and a
+normal protected-branch pull-request merge is the routine authorization; do
+not add another production branch, an Actions environment approval, a release
+or tag gate, Deploy Hook, privileged dispatch, bypass actor, or GitHub Actions
+deployment credential. The existing PR-only `main` rule remains unchanged.
+The provider's post-merge production result is evidence, not a pre-merge merge
+gate. Any review-branch result described by issue #55 must be observed as
+stable and unambiguous before a later reviewed governance change can make it a
+required check.
+
+To revoke metaserver access, first disconnect the repository in Cloudflare and
+stop its Builds triggers under the recovery procedure owned by #56. Then merge
+a reviewed desired-state removal and, with separate organization-owner
+authorization, remove only `atrinik/metaserver-worker` from installation
+`152311798`. Preserve `atrinik/website` and selected-repository mode. Re-run the
+verifier, confirm the website still builds through Pages, and confirm the
+metaserver repository no longer appears in the installation UI. Suspending or
+deleting the shared installation is not an acceptable metaserver rollback.
 
 ## Cross-repository planning
 

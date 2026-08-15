@@ -557,6 +557,60 @@ while IFS= read -r app_record; do
   app_id=$(jq -r '.app_id' <<<"${app_record}")
   app_slug=$(jq -r '.app_slug' <<<"${app_record}")
   installation_id=$(jq -r '.installation_id' <<<"${app_record}")
+  expected_permissions=$(jq -c '.permissions' <<<"${app_record}")
+  expected_events=$(jq -c '.events' <<<"${app_record}")
+  installation=$(jq -sc \
+    --argjson app_id "${app_id}" \
+    --argjson installation_id "${installation_id}" '
+      [.[] | select(.app_id == $app_id and .id == $installation_id)] |
+      if length == 1 then .[0] else empty end
+    ' "${installations_file}")
+  if [[ -z ${installation} ]]; then
+    echo "error: external provider App installation is missing or ambiguous for ${app_slug}" >&2
+    exit 1
+  fi
+  if ! jq -e \
+    --arg app_slug "${app_slug}" \
+    --arg organization "${organization}" \
+    --argjson expected_permissions "${expected_permissions}" \
+    --argjson expected_events "${expected_events}" '
+      .app_slug == $app_slug and
+      .target_type == "Organization" and
+      .account.login == $organization and
+      .account.type == "Organization" and
+      .repository_selection == "selected" and
+      .permissions == $expected_permissions and
+      .events == $expected_events and
+      .suspended_at == null
+    ' <<<"${installation}" >/dev/null; then
+    echo "error: external provider App installation metadata or permission drift for ${app_slug}" >&2
+    exit 1
+  fi
+
+  while IFS= read -r repository_record; do
+    repository=$(jq -r '.repository' <<<"${repository_record}")
+    repository_id=$(jq -r '.repository_id' <<<"${repository_record}")
+    repository_owner=${repository%%/*}
+    if [[ ${repository_owner} != "${organization}" ]]; then
+      echo "error: external provider App repository owner does not match ${organization}: ${repository}" >&2
+      exit 1
+    fi
+    if verify_repository_identity "${repository}" "${repository_id}"; then
+      :
+    else
+      status=$?
+      exit "${status}"
+    fi
+  done < <(jq -c '.repositories[]' <<<"${app_record}")
+
+  echo "KEEP ${app_slug} installation metadata and exact permissions/events"
+  echo "MANUAL ${app_slug} selected repositories require owner UI proof: atrinik/website and atrinik/metaserver-worker only"
+done < <(jq -c '.external_provider_apps[]' "${manual_settings}")
+
+while IFS= read -r app_record; do
+  app_id=$(jq -r '.app_id' <<<"${app_record}")
+  app_slug=$(jq -r '.app_slug' <<<"${app_record}")
+  installation_id=$(jq -r '.installation_id' <<<"${app_record}")
   repository=$(jq -r '.repository' <<<"${app_record}")
   repository_owner=${repository%%/*}
   repository_id=$(jq -r '.repository_id' <<<"${app_record}")
@@ -679,4 +733,4 @@ if [[ ${live_pins} != "${desired_pins}" ]]; then
 fi
 echo "KEEP ${organization} organization pins match the exact governed order"
 
-echo "Manual settings live credential, GitHub App, Pages, environment, and organization pin metadata is present."
+echo "Manual settings live credential, GitHub App, external provider App, Pages, environment, and organization pin metadata is present."
