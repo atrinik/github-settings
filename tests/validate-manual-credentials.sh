@@ -15,7 +15,7 @@ cp -R "${root}/.github" "${temporary}/.github"
 assert_invalid() {
   local description=$1
 
-  if ATRINIK_VALIDATION_TODAY=2026-08-11 \
+  if ATRINIK_VALIDATION_TODAY=2026-08-15 \
     "${temporary}/bin/validate" >/dev/null 2>&1; then
     echo "error: validator accepted ${description}" >&2
     exit 1
@@ -36,9 +36,54 @@ rewrite_manual_settings() {
   mv "${output}" "${temporary}/config/manual-settings.json"
 }
 
-ATRINIK_VALIDATION_TODAY=2026-08-11 \
+ATRINIK_VALIDATION_TODAY=2026-08-15 \
   "${temporary}/bin/validate" >/dev/null
 jq -e '
+  .external_provider_apps == [{
+    app_id: 85455,
+    app_slug: "cloudflare-workers-and-pages",
+    events: ["pull_request", "push"],
+    evidence_location: "atrinik/metaserver-worker#56-private-provider-evidence",
+    exceptional_retry: {
+      authorization: "provider-retry-only",
+      long_lived_production_branches: ["main"],
+      source: "exact-sha-still-current-main",
+      stale_policy: "abandon-and-re-evaluate-without-github-bypass"
+    },
+    installation_id: 152311798,
+    last_verified_on: "2026-08-15",
+    owner: "Atrinik organization owners",
+    permissions: {
+      administration: "write",
+      checks: "write",
+      contents: "write",
+      deployments: "write",
+      metadata: "read",
+      pull_requests: "write"
+    },
+    provider: "Cloudflare Workers Builds and Pages",
+    purpose: "Allow the existing website Pages connection and the reviewed metaserver-worker Workers Builds connection to receive GitHub events, read source, and publish provider-owned checks and deployments without access to any other Atrinik repository.",
+    repositories: [
+      {
+        purpose: "Preserve the existing Cloudflare Pages website connection.",
+        repository: "atrinik/website",
+        repository_id: 1327107093
+      },
+      {
+        purpose: "Authorize the serialized Workers Builds topology governed by atrinik/metaserver-worker issues 53-56.",
+        repository: "atrinik/metaserver-worker",
+        repository_id: 1324297032
+      }
+    ],
+    repository_scope_verification: "organization_owner_ui",
+    repository_selection: "selected",
+    review_by: "2026-11-13",
+    review_cadence_days: 90,
+    review_owner: "Atrinik organization owners",
+    revocation: "Remove only atrinik/metaserver-worker from installation 152311798 after disconnecting its Cloudflare repository connection; preserve atrinik/website unless its separately governed Pages connection is retired.",
+    runbook: "README.md#cloudflare-github-app",
+    status_producer: "Cloudflare Workers and Pages GitHub App"
+  }] and
   .github_actions_apps == [{
     app_id: 4564008,
     app_slug: "atrinik-classic-dependency-updater",
@@ -90,6 +135,42 @@ jq -e '
     secret_scope: "repository"
   }]
 ' "${root}/config/manual-settings.json" >/dev/null
+
+rewrite_manual_settings '.external_provider_apps[0].repository_selection = "all"'
+assert_invalid 'an external provider App installed on all repositories'
+reset_manual_settings
+
+rewrite_manual_settings 'del(.external_provider_apps[0].repositories[0])'
+assert_invalid 'an external provider App that drops website access'
+reset_manual_settings
+
+rewrite_manual_settings '.external_provider_apps[0].repositories += [{purpose: "unrelated", repository: "atrinik/classic", repository_id: 1327289971}]'
+assert_invalid 'an external provider App with unrelated repository access'
+reset_manual_settings
+
+rewrite_manual_settings 'del(.external_provider_apps[0].repositories[1])'
+assert_invalid 'an external provider App without metaserver-worker access'
+reset_manual_settings
+
+rewrite_manual_settings '.external_provider_apps[0].permissions.contents = "read"'
+assert_invalid 'external provider App permission drift'
+reset_manual_settings
+
+rewrite_manual_settings '.external_provider_apps[0].events = ["push"]'
+assert_invalid 'external provider App event drift'
+reset_manual_settings
+
+rewrite_manual_settings '.external_provider_apps[0].evidence_location = ""'
+assert_invalid 'an external provider App without its owner evidence location'
+reset_manual_settings
+
+rewrite_manual_settings '.external_provider_apps[0].exceptional_retry.source = "branch"'
+assert_invalid 'an external provider App retry not pinned to exact current main'
+reset_manual_settings
+
+rewrite_manual_settings '.external_provider_apps[0].installation_token = "secret"'
+assert_invalid 'external provider App credential material'
+reset_manual_settings
 
 rewrite_manual_settings \
   '.github_actions_apps += [.github_actions_apps[0]]'
@@ -214,7 +295,7 @@ assert_invalid 'a non-leap-year February 29'
 reset_manual_settings
 
 rewrite_manual_settings \
-  '.github_actions_credentials[0].last_verified_on = "2026-08-12"'
+  '.github_actions_credentials[0].last_verified_on = "2026-08-16"'
 assert_invalid 'a future verification date'
 reset_manual_settings
 
@@ -239,6 +320,8 @@ assert_invalid 'a top-level credential-value field'
 
 reset_manual_settings
 rewrite_manual_settings '
+  .external_provider_apps[0].last_verified_on = "2028-02-29" |
+  .external_provider_apps[0].review_by = "2028-05-29" |
   .github_actions_apps[0].last_verified_on = "2028-02-29" |
   .github_actions_apps[0].rotate_by = "2028-05-29" |
   .github_actions_credentials[0].last_verified_on = "2028-02-29" |

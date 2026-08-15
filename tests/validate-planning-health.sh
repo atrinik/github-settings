@@ -13,14 +13,14 @@ assert_invalid() {
 
   jq "${filter}" "${root}/config/planning-health.json" \
     >"${temporary}/repository/config/planning-health.json"
-  if ATRINIK_VALIDATION_TODAY=2026-08-11 \
+  if ATRINIK_VALIDATION_TODAY=2026-08-15 \
     "${temporary}/repository/bin/validate" >/dev/null 2>&1; then
     echo "error: validator accepted ${description}" >&2
     exit 1
   fi
 }
 
-ATRINIK_VALIDATION_TODAY=2026-08-11 \
+ATRINIK_VALIDATION_TODAY=2026-08-15 \
   "${temporary}/repository/bin/validate" >/dev/null
 
 assert_invalid '.freshness_threshold_minutes = 30' \

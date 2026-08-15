@@ -42,6 +42,15 @@ repository set in GitHub's installation UI. Keep the App out of bypass lists,
 preserve read-only Actions defaults, and prove the consumer's disposable pull
 request receives ordinary checks without self-approval or self-merge.
 
+External provider GitHub Apps use a separate value-free inventory entry with
+stable App, installation, and selected repository IDs; exact permissions and
+events; provider purpose and status producer; accountable review ownership;
+and a revocation runbook. Preserve every existing selected repository unless a
+separate reviewed retirement authorizes its removal, never select all
+repositories, and require organization-owner UI proof of the exact set when
+GitHub's administrative API cannot enumerate it. Provider tokens, account
+coordinates, and credential values do not belong in this repository.
+
 Organization identity changes must preserve the exact public description and
 canonical website in `config/organization.json`, remain delta-aware in plan and
 apply modes, and include unchanged-state coverage. Keep the public profile in

@@ -85,6 +85,11 @@
   never deletes a branch, tag, release, or asset.
 - Preserve the selected-actions entry for Codecov and the manual GitHub App
   repository-access inventory while coverage uploads use OIDC authentication.
+- Preserve external-provider App records as value-free manual state with exact
+  stable identities, permissions, events, and selected repository IDs. A
+  shared installation change must retain every unrelated reviewed repository,
+  must never widen to all repositories, and requires organization-owner UI
+  readback when the administrative API cannot enumerate the selected set.
 - Record cross-repository private-package consumption in
   `config/manual-settings.json` with stable package and repository IDs. Grant
   consumer workflows only the `read` role through the package's **Manage
