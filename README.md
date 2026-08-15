@@ -395,6 +395,13 @@ gate. Any review-branch result described by issue #55 must be observed as
 stable and unambiguous before a later reviewed governance change can make it a
 required check.
 
+Migration or separately authorized control-plane recovery may retry only the
+provider build for the exact SHA that is still current `main`. It is not a
+GitHub branch-policy bypass: never push a recovery ref, create a second
+long-lived production branch, invoke a privileged GitHub dispatch, or weaken
+the pull-request gate. If `main` advances, abandon that retry and re-evaluate
+the new current revision through the provider-owned recovery contract.
+
 To revoke metaserver access, first disconnect the repository in Cloudflare and
 stop its Builds triggers under the recovery procedure owned by #56. Then merge
 a reviewed desired-state removal and, with separate organization-owner

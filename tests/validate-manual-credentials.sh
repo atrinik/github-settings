@@ -43,6 +43,12 @@ jq -e '
     app_id: 85455,
     app_slug: "cloudflare-workers-and-pages",
     events: ["pull_request", "push"],
+    exceptional_retry: {
+      authorization: "provider-retry-only",
+      long_lived_production_branches: ["main"],
+      source: "exact-sha-still-current-main",
+      stale_policy: "abandon-and-re-evaluate-without-github-bypass"
+    },
     installation_id: 152311798,
     last_verified_on: "2026-08-15",
     owner: "Atrinik organization owners",
@@ -151,6 +157,10 @@ reset_manual_settings
 
 rewrite_manual_settings '.external_provider_apps[0].events = ["push"]'
 assert_invalid 'external provider App event drift'
+reset_manual_settings
+
+rewrite_manual_settings '.external_provider_apps[0].exceptional_retry.source = "branch"'
+assert_invalid 'an external provider App retry not pinned to exact current main'
 reset_manual_settings
 
 rewrite_manual_settings '.external_provider_apps[0].installation_token = "secret"'
