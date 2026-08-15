@@ -43,6 +43,7 @@ jq -e '
     app_id: 85455,
     app_slug: "cloudflare-workers-and-pages",
     events: ["pull_request", "push"],
+    evidence_location: "atrinik/metaserver-worker#56-private-provider-evidence",
     exceptional_retry: {
       authorization: "provider-retry-only",
       long_lived_production_branches: ["main"],
@@ -157,6 +158,10 @@ reset_manual_settings
 
 rewrite_manual_settings '.external_provider_apps[0].events = ["push"]'
 assert_invalid 'external provider App event drift'
+reset_manual_settings
+
+rewrite_manual_settings '.external_provider_apps[0].evidence_location = ""'
+assert_invalid 'an external provider App without its owner evidence location'
 reset_manual_settings
 
 rewrite_manual_settings '.external_provider_apps[0].exceptional_retry.source = "branch"'

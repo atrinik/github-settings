@@ -319,6 +319,7 @@ jq -e \
     "app_id",
     "app_slug",
     "events",
+    "evidence_location",
     "exceptional_retry",
     "installation_id",
     "last_verified_on",
@@ -342,6 +343,7 @@ jq -e \
   ($external_apps[0].repository_selection == "selected") and
   ($external_apps[0].repository_scope_verification == "organization_owner_ui") and
   ($external_apps[0].events == ["pull_request", "push"]) and
+  ($external_apps[0].evidence_location == "atrinik/metaserver-worker#56-private-provider-evidence") and
   ($external_apps[0].exceptional_retry == {
     authorization: "provider-retry-only",
     long_lived_production_branches: ["main"],

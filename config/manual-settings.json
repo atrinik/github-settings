@@ -52,6 +52,7 @@
         "pull_request",
         "push"
       ],
+      "evidence_location": "atrinik/metaserver-worker#56-private-provider-evidence",
       "exceptional_retry": {
         "authorization": "provider-retry-only",
         "long_lived_production_branches": [

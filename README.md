@@ -381,8 +381,11 @@ repository mode, and immediately re-open the selection to confirm the exact
 two entries. Do not change App permissions, events, the website connection,
 repository rulesets, or any unrelated installation. Run
 `bin/verify-manual-settings` before and after the UI step and retain the owner
-confirmation with the #56 provider evidence. `bin/publish` remains plan-only
-for this record and never changes installation access.
+confirmation in the owner-controlled
+`atrinik/metaserver-worker#56-private-provider-evidence` record. That stable
+coordinate is public governance metadata; the evidence contents remain private
+and contain no credential values. `bin/publish` remains plan-only for this
+record and never changes installation access.
 
 The App may publish its native Cloudflare check/deployment result. For
 `metaserver-worker`, `main` remains the sole automatic production branch and a
