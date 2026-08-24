@@ -9,6 +9,7 @@
     "editor",
     "github-settings",
     "metaserver-worker",
+    "observatory",
     "playtester",
     "protocol",
     "renderer",
@@ -78,6 +79,10 @@
     ],
     "metaserver-worker": [
       "verify",
+      "Conventional PR title"
+    ],
+    "observatory": [
+      "Validate dashboard and Workers",
       "Conventional PR title"
     ],
     "playtester": [

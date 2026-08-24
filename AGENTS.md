@@ -142,7 +142,9 @@
 - Run `bin/validate`, `bash -n`, ShellCheck on governance scripts, the publisher
   policy-scope tests, actionlint for workflows, inspect plan output, and finish
   with `git diff --check`.
-- Commits and pull-request titles use Conventional Commits. Every squash merge
-  is released by semantic-release.
+- Commits and pull-request titles use Conventional Commits. Repositories with
+  `release_policy: semantic-release` are released by semantic-release; active
+  services without a release contract remain pull-request governed with
+  `release_policy: none` and are omitted from `release_tags`.
 - Update this `AGENTS.md` in the same change when major rework alters governance
   ownership, policy scope, publisher behavior, required checks, or validation.
