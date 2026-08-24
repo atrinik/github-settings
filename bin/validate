@@ -1059,7 +1059,16 @@ jq -e \
       $repositories[0].pull_request_gate[];
       . as $repository |
       $config.repositories[$repository].lifecycle != "archived" and
-      $config.repositories[$repository].release_policy == "semantic-release"
+      (
+        (
+          ($repositories[0].release_tags | index($repository)) != null and
+          $config.repositories[$repository].release_policy == "semantic-release"
+        ) or
+        (
+          ($repositories[0].release_tags | index($repository)) == null and
+          $config.repositories[$repository].release_policy == "none"
+        )
+      )
     ) and
     $config.repositories[".github"] == {
       component_role: ["governance"],

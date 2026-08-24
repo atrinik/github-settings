@@ -41,6 +41,10 @@ read-only and are skipped on later runs.
   require linear history and pull requests, and require only checks already
   emitted for that branch.
 - Release tags in release-producing repositories cannot be moved or deleted.
+- Active services without an established release contract may use
+  `release_policy: none` while remaining in the pull-request and required-CI
+  inventories; they must be omitted from `release_tags` until that contract
+  exists.
 - Published releases in the exhaustive `config/immutable-releases.json`
   inventory are owner-enforced immutable releases. The inventory initially
   selects only `atrinik/classic` by its stable repository ID. This organization
