@@ -93,7 +93,61 @@
       "review_owner": "Atrinik organization owners",
       "revocation": "Remove only atrinik/metaserver-worker from installation 152311798 after disconnecting its Cloudflare repository connection; preserve atrinik/website unless its separately governed Pages connection is retired.",
       "runbook": "README.md#cloudflare-github-app",
+      "status": "active",
       "status_producer": "Cloudflare Workers and Pages GitHub App"
+    },
+    {
+      "app_id": null,
+      "app_slug": "atrinik-deploy-control",
+      "control_plane_repository": {
+        "default_branch": "main",
+        "license": "MIT",
+        "repository": "atrinik/deploy-control",
+        "repository_id": 1352850539,
+        "visibility": "public"
+      },
+      "events": [
+        "workflow_run"
+      ],
+      "evidence_location": "atrinik/deploy-control#3",
+      "exceptional_retry": null,
+      "installation_id": null,
+      "last_verified_on": "2026-08-31",
+      "owner": "Atrinik organization owners",
+      "permissions": {
+        "actions": "read",
+        "metadata": "read"
+      },
+      "provider": "Cloudflare Workers deploy-control control plane",
+      "purpose": "Receive only successful workflow_run events from atrinik/classic for the reviewed deploy-control staging-image handoff; do not authorize source, package, environment, metaserver, or organization-wide access.",
+      "repositories": [
+        {
+          "purpose": "Authorize only the Classic workflow-run source for the deploy-control control plane.",
+          "repository": "atrinik/classic",
+          "repository_id": 1327289971
+        }
+      ],
+      "repository_scope_verification": "pending_provisioning",
+      "repository_selection": "selected",
+      "review_by": "2026-11-29",
+      "review_cadence_days": 90,
+      "review_owner": "Atrinik organization owners",
+      "revocation": "Before retiring the control plane, disable its workflow-run delivery, revoke the App keys and webhook secret, remove only the named control-plane secret/variable slots, and verify the App installation no longer selects atrinik/classic; leave the Cloudflare Workers and Pages installation and metaserver boundary unchanged.",
+      "runbook": "README.md#deploy-control-github-app",
+      "secret_names": [
+        "DEPLOY_CONTROL_AGENT_ENROLLMENT_SECRET",
+        "DEPLOY_CONTROL_GITHUB_APP_PRIVATE_KEY",
+        "DEPLOY_CONTROL_GITHUB_WEBHOOK_SECRET"
+      ],
+      "status": "planned",
+      "status_producer": "Atrinik deploy-control control-plane owner",
+      "variable_names": [
+        "CLOUDFLARE_ACCOUNT_ID",
+        "CLOUDFLARE_DURABLE_OBJECT_BINDING",
+        "CLOUDFLARE_WORKER_NAME",
+        "DEPLOY_CONTROL_GITHUB_APP_ID",
+        "DEPLOY_CONTROL_GITHUB_INSTALLATION_ID"
+      ]
     }
   ],
   "github_actions_environments": [

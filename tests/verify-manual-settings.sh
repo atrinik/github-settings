@@ -88,6 +88,28 @@ repos/atrinik/github-settings)
     }'
   fi
   ;;
+repos/atrinik/deploy-control)
+  repository_id=1352850539
+  repository_visibility=public
+  repository_license=MIT
+  if [[ ${FAKE_GH_SCENARIO} == planned-control-identity-drift ]]; then
+    repository_id=1
+  fi
+  if [[ ${FAKE_GH_SCENARIO} == planned-control-license-drift ]]; then
+    repository_license=GPL-2.0
+  fi
+  jq -n \
+    --argjson repository_id "${repository_id}" \
+    --arg repository_visibility "${repository_visibility}" \
+    --arg repository_license "${repository_license}" '{
+    id: $repository_id,
+    full_name: "atrinik/deploy-control",
+    archived: false,
+    default_branch: "main",
+    visibility: $repository_visibility,
+    license: {spdx_id: $repository_license}
+  }'
+  ;;
 repos/atrinik/website)
   repository_id=1327107093
   if [[ ${FAKE_GH_SCENARIO} == external-website-identity-drift ]]; then
@@ -264,6 +286,8 @@ repos/atrinik/classic/pages)
     external-app-permission-drift) external_permissions='{"checks":"write","contents":"write","deployments":"write","metadata":"read","pull_requests":"write"}' ;;
     external-app-suspended) external_suspended_at='"2026-08-15T00:00:00Z"' ;;
     esac
+    planned_control=false
+    [[ ${FAKE_GH_SCENARIO} == planned-control-installed ]] && planned_control=true
     jq -n \
       --argjson app_id "${app_id}" \
       --argjson installation_id "${installation_id}" \
@@ -279,9 +303,9 @@ repos/atrinik/classic/pages)
       --arg external_repository_selection "${external_repository_selection}" \
       --argjson external_events "${external_events}" \
       --argjson external_permissions "${external_permissions}" \
-      --argjson external_suspended_at "${external_suspended_at}" '{
-        total_count: 2,
-        installations: [{
+      --argjson external_suspended_at "${external_suspended_at}" \
+      --argjson planned_control "${planned_control}" '(
+        [{
           id: $installation_id,
           app_id: $app_id,
           app_slug: $app_slug,
@@ -301,8 +325,19 @@ repos/atrinik/classic/pages)
           permissions: $external_permissions,
           events: $external_events,
           suspended_at: $external_suspended_at
-        }]
-      }'
+        }] + (if $planned_control then [{
+          id: 154000001,
+          app_id: 85500001,
+          app_slug: "atrinik-deploy-control",
+          target_type: "Organization",
+          account: {login: "atrinik", type: "Organization"},
+          repository_selection: "selected",
+          permissions: {actions: "read", metadata: "read"},
+          events: ["workflow_run"],
+          suspended_at: null
+        }] else [] end)
+      ) as $installations |
+      {total_count: ($installations | length), installations: $installations}'
   fi
   ;;
 "orgs/atrinik/installations?per_page=100&page=2")
@@ -590,7 +625,7 @@ run_verify() {
     FAKE_GH_LOG="${temporary}/gh.log" \
     FAKE_GH_SCENARIO="${scenario}" \
     GITHUB_ACTIONS=true GH_TOKEN=test-token \
-    ATRINIK_VALIDATION_TODAY=2026-08-15 \
+    ATRINIK_VALIDATION_TODAY=2026-08-31 \
     "${root}/bin/verify-manual-settings"
 }
 
@@ -606,6 +641,8 @@ grep -Fq 'KEEP cloudflare-workers-and-pages installation metadata and exact perm
   <<<"${output}"
 grep -Fq 'MANUAL cloudflare-workers-and-pages selected repositories require owner UI proof: atrinik/website and atrinik/metaserver-worker only' \
   <<<"${output}"
+grep -Fq 'PENDING atrinik-deploy-control GitHub App installation and credentials; owner UI proof is required for atrinik/deploy-control and selected repository atrinik/classic only' \
+  <<<"${output}"
 grep -Fq 'KEEP atrinik-classic-dependency-updater installation metadata and exact permissions' \
   <<<"${output}"
 grep -Fq 'KEEP atrinik/classic repository Actions secret DEPENDENCY_UPDATE_APP_PRIVATE_KEY' \
@@ -613,7 +650,7 @@ grep -Fq 'KEEP atrinik/classic repository Actions secret DEPENDENCY_UPDATE_APP_P
 grep -Fq 'KEEP atrinik/classic repository Actions variable DEPENDENCY_UPDATE_APP_ID' \
   <<<"${output}"
 grep -Fq 'KEEP atrinik organization pins match the exact governed order' <<<"${output}"
-grep -Fq 'Manual settings live credential, GitHub App, external provider App, Pages, environment, and organization pin metadata is present.' \
+grep -Fq 'Manual settings live credential, GitHub App, external provider App, Pages, environment, and organization pin metadata is present; planned integrations are recorded without live provisioning.' \
   <<<"${output}"
 
 : >"${temporary}/gh.log"
@@ -665,7 +702,7 @@ output=$(PATH="${temporary}/bin:${PATH}" \
   FAKE_GH_LOG="${temporary}/gh.log" \
   FAKE_GH_SCENARIO=environment-page2 \
   GITHUB_ACTIONS=true GH_TOKEN=test-token \
-  ATRINIK_VALIDATION_TODAY=2026-08-15 \
+  ATRINIK_VALIDATION_TODAY=2026-08-31 \
   "${environment_page_root}/bin/verify-manual-settings")
 grep -Fq 'KEEP atrinik/classic environment discord-release metadata' <<<"${output}"
 grep -Fq 'deployment-branch-policies?per_page=100&page=2' "${temporary}/gh.log"
@@ -689,7 +726,7 @@ output=$(PATH="${temporary}/bin:${PATH}" \
   FAKE_GH_LOG="${temporary}/gh.log" \
   FAKE_GH_SCENARIO=shared-repository \
   GITHUB_ACTIONS=true GH_TOKEN=test-token \
-  ATRINIK_VALIDATION_TODAY=2026-08-15 \
+  ATRINIK_VALIDATION_TODAY=2026-08-31 \
   "${shared_root}/bin/verify-manual-settings")
 grep -Fq 'SECOND_SETTINGS_TOKEN' <<<"${output}"
 [[ $(grep -Fc 'repos/atrinik/github-settings' "${temporary}/gh.log") == 2 ]]
@@ -737,6 +774,9 @@ app_failures=(
   external-app-events-drift
   external-app-permission-drift
   external-app-suspended
+  planned-control-installed
+  planned-control-identity-drift
+  planned-control-license-drift
   external-website-identity-drift
   external-metaserver-identity-drift
 )
@@ -758,6 +798,12 @@ grep -Fq 'external provider App installation metadata or permission drift' \
   "${temporary}/external-app-permission-drift.err"
 grep -Fq 'repository identity or active-state drift for atrinik/website' \
   "${temporary}/external-website-identity-drift.err"
+grep -Fq 'repository identity or active-state drift for atrinik/deploy-control' \
+  "${temporary}/planned-control-identity-drift.err"
+grep -Fq 'planned external provider App has a live installation for atrinik-deploy-control' \
+  "${temporary}/planned-control-installed.err"
+grep -Fq 'repository visibility or license drift for atrinik/deploy-control' \
+  "${temporary}/planned-control-license-drift.err"
 grep -Fq 'GitHub App Actions secret name is missing' \
   "${temporary}/missing-app-secret.err"
 grep -Fq 'GitHub App Actions variable name is missing' \
@@ -896,7 +942,7 @@ fi
 : >"${temporary}/gh.log"
 if PATH="${temporary}/bin:${PATH}" \
   FAKE_GH_LOG="${temporary}/gh.log" FAKE_GH_SCENARIO=present \
-  GITHUB_ACTIONS=true GH_TOKEN='' ATRINIK_VALIDATION_TODAY=2026-08-15 \
+  GITHUB_ACTIONS=true GH_TOKEN='' ATRINIK_VALIDATION_TODAY=2026-08-31 \
   "${root}/bin/verify-manual-settings" \
   >"${temporary}/empty.out" 2>"${temporary}/empty.err"; then
   echo "error: manual-settings verifier accepted an empty workflow credential" >&2
@@ -905,4 +951,4 @@ fi
 grep -Fq 'ATRINIK_SETTINGS_TOKEN is unavailable' "${temporary}/empty.err"
 [[ ! -s ${temporary}/gh.log ]]
 
-echo "Manual settings live credential, GitHub App, external provider App, Pages, and environment verification tests passed."
+echo "Manual settings live credential, GitHub App, external provider App, planned integration, Pages, and environment verification tests passed."

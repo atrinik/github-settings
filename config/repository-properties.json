@@ -136,6 +136,16 @@
       "lifecycle": "active",
       "release_policy": "semantic-release"
     },
+    "deploy-control": {
+      "component_role": [
+        "service"
+      ],
+      "provider_set": [
+        "replacement"
+      ],
+      "lifecycle": "seed",
+      "release_policy": "none"
+    },
     "devcontainer": {
       "component_role": [
         "infrastructure"
