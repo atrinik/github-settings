@@ -5,6 +5,7 @@
     "client",
     "content",
     "content-toolkit",
+    "deploy-control",
     "devcontainer",
     "editor",
     "github-settings",
@@ -63,6 +64,10 @@
     ],
     "content": [
       "Content validation",
+      "Conventional PR title"
+    ],
+    "deploy-control": [
+      "Deploy-control validation",
       "Conventional PR title"
     ],
     "resources": [

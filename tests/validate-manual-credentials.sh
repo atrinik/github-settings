@@ -15,7 +15,7 @@ cp -R "${root}/.github" "${temporary}/.github"
 assert_invalid() {
   local description=$1
 
-  if ATRINIK_VALIDATION_TODAY=2026-08-15 \
+  if ATRINIK_VALIDATION_TODAY=2026-08-31 \
     "${temporary}/bin/validate" >/dev/null 2>&1; then
     echo "error: validator accepted ${description}" >&2
     exit 1
@@ -36,7 +36,7 @@ rewrite_manual_settings() {
   mv "${output}" "${temporary}/config/manual-settings.json"
 }
 
-ATRINIK_VALIDATION_TODAY=2026-08-15 \
+ATRINIK_VALIDATION_TODAY=2026-08-31 \
   "${temporary}/bin/validate" >/dev/null
 jq -e '
   .external_provider_apps == [{
@@ -82,7 +82,56 @@ jq -e '
     review_owner: "Atrinik organization owners",
     revocation: "Remove only atrinik/metaserver-worker from installation 152311798 after disconnecting its Cloudflare repository connection; preserve atrinik/website unless its separately governed Pages connection is retired.",
     runbook: "README.md#cloudflare-github-app",
+    status: "active",
     status_producer: "Cloudflare Workers and Pages GitHub App"
+  }, {
+    app_id: null,
+    app_slug: "atrinik-deploy-control",
+    control_plane_repository: {
+      default_branch: "main",
+      license: "MIT",
+      repository: "atrinik/deploy-control",
+      repository_id: 1352850539,
+      visibility: "public"
+    },
+    events: ["workflow_run"],
+    evidence_location: "atrinik/deploy-control#3",
+    exceptional_retry: null,
+    installation_id: null,
+    last_verified_on: "2026-08-31",
+    owner: "Atrinik organization owners",
+    permissions: {
+      actions: "read",
+      metadata: "read"
+    },
+    provider: "Cloudflare Workers deploy-control control plane",
+    purpose: "Receive only successful workflow_run events from atrinik/classic for the reviewed deploy-control staging-image handoff; do not authorize source, package, environment, metaserver, or organization-wide access.",
+    repositories: [{
+      purpose: "Authorize only the Classic workflow-run source for the deploy-control control plane.",
+      repository: "atrinik/classic",
+      repository_id: 1327289971
+    }],
+    repository_scope_verification: "pending_provisioning",
+    repository_selection: "selected",
+    review_by: "2026-11-29",
+    review_cadence_days: 90,
+    review_owner: "Atrinik organization owners",
+    revocation: "Before retiring the control plane, disable its workflow-run delivery, revoke the App keys and webhook secret, remove only the named control-plane secret/variable slots, and verify the App installation no longer selects atrinik/classic; leave the Cloudflare Workers and Pages installation and metaserver boundary unchanged.",
+    runbook: "README.md#deploy-control-github-app",
+    secret_names: [
+      "DEPLOY_CONTROL_AGENT_ENROLLMENT_SECRET",
+      "DEPLOY_CONTROL_GITHUB_APP_PRIVATE_KEY",
+      "DEPLOY_CONTROL_GITHUB_WEBHOOK_SECRET"
+    ],
+    status: "planned",
+    status_producer: "Atrinik deploy-control control-plane owner",
+    variable_names: [
+      "CLOUDFLARE_ACCOUNT_ID",
+      "CLOUDFLARE_DURABLE_OBJECT_BINDING",
+      "CLOUDFLARE_WORKER_NAME",
+      "DEPLOY_CONTROL_GITHUB_APP_ID",
+      "DEPLOY_CONTROL_GITHUB_INSTALLATION_ID"
+    ]
   }] and
   .github_actions_apps == [{
     app_id: 4564008,
@@ -170,6 +219,42 @@ reset_manual_settings
 
 rewrite_manual_settings '.external_provider_apps[0].installation_token = "secret"'
 assert_invalid 'external provider App credential material'
+reset_manual_settings
+
+rewrite_manual_settings '.external_provider_apps[1].app_id = 123'
+assert_invalid 'a planned external provider App with a fabricated App ID'
+reset_manual_settings
+
+rewrite_manual_settings '.external_provider_apps[1].installation_id = 123'
+assert_invalid 'a planned external provider App with a fabricated installation ID'
+reset_manual_settings
+
+rewrite_manual_settings '.external_provider_apps[1].permissions.actions = "write"'
+assert_invalid 'a planned external provider App with write Actions permission'
+reset_manual_settings
+
+rewrite_manual_settings '.external_provider_apps[1].events = ["push"]'
+assert_invalid 'a planned external provider App with an unexpected event'
+reset_manual_settings
+
+rewrite_manual_settings '.external_provider_apps[1].repositories[0].repository_id = 1'
+assert_invalid 'a planned external provider App with a wrong selected repository ID'
+reset_manual_settings
+
+rewrite_manual_settings '.external_provider_apps[1].secret_names[0] = "private-key"'
+assert_invalid 'a planned external provider App with a malformed secret name'
+reset_manual_settings
+
+rewrite_manual_settings '.external_provider_apps[1].secret_names[0] = "DEPLOY_CONTROL_AGENT_TOKEN"'
+assert_invalid 'a planned external provider App with an unexpected secret name'
+reset_manual_settings
+
+rewrite_manual_settings '.external_provider_apps[1].variable_names[0] = "CLOUDFLARE_ACCOUNT"'
+assert_invalid 'a planned external provider App with an unexpected variable name'
+reset_manual_settings
+
+rewrite_manual_settings '.external_provider_apps[1].private_key = "secret"'
+assert_invalid 'a planned external provider App with credential material'
 reset_manual_settings
 
 rewrite_manual_settings \
@@ -295,7 +380,7 @@ assert_invalid 'a non-leap-year February 29'
 reset_manual_settings
 
 rewrite_manual_settings \
-  '.github_actions_credentials[0].last_verified_on = "2026-08-16"'
+  '.github_actions_credentials[0].last_verified_on = "2026-09-01"'
 assert_invalid 'a future verification date'
 reset_manual_settings
 
@@ -322,6 +407,8 @@ reset_manual_settings
 rewrite_manual_settings '
   .external_provider_apps[0].last_verified_on = "2028-02-29" |
   .external_provider_apps[0].review_by = "2028-05-29" |
+  .external_provider_apps[1].last_verified_on = "2028-02-29" |
+  .external_provider_apps[1].review_by = "2028-05-29" |
   .github_actions_apps[0].last_verified_on = "2028-02-29" |
   .github_actions_apps[0].rotate_by = "2028-05-29" |
   .github_actions_credentials[0].last_verified_on = "2028-02-29" |

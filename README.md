@@ -94,11 +94,13 @@ read-only and are skipped on later runs.
   intended repository and consumer, credential metadata names, accountable
   owner, verification date, rotation deadline, and runbook. The App private
   key and installation tokens never belong in this repository.
-- External provider GitHub Apps have a distinct value-free inventory. It binds
-  the stable App and installation identities, exact permissions and events,
-  exact selected repository IDs, provider purpose, review owner and deadline,
-  revocation procedure, and status producer. Provider credentials and account
-  coordinates remain outside GitHub and this repository.
+- External provider GitHub Apps have a distinct value-free inventory. Active
+  installations bind stable App and installation identities, exact permissions
+  and events, exact selected repository IDs, provider purpose, review owner and
+  deadline, revocation procedure, and status producer. Planned integrations
+  explicitly retain null live IDs, the proposed selected set, and a pending
+  owner-UI verification state. Provider credentials and account coordinates
+  remain outside GitHub and this repository.
 - GitHub Actions defaults to read-only, cannot approve pull requests, and may
   use only Atrinik, GitHub, Codecov coverage, and explicitly allowed Docker
   actions.
@@ -417,6 +419,73 @@ authorization, remove only `atrinik/metaserver-worker` from installation
 verifier, confirm the website still builds through Pages, and confirm the
 metaserver repository no longer appears in the installation UI. Suspending or
 deleting the shared installation is not an acceptable metaserver rollback.
+
+## Deploy-control repository and GitHub App
+
+`atrinik/deploy-control` is a public MIT seed repository with stable repository
+ID `1352850539`, default branch `main`, and no release-tag or semantic-release
+contract. Its desired repository properties are `service`, `replacement`,
+`seed`, and `none`. It remains pull-request governed and requires the two
+contexts emitted by its current workflows:
+
+- `Deploy-control validation`, from the Check workflow's `npm run check` job;
+  and
+- `Conventional PR title`, from the Pull Request Policy workflow.
+
+The repository's Dependabot and CodeQL workflows remain enabled, but they are
+not merge gates until a stable aggregate check contract exists. The existing
+Actions allowlist, read-only default permissions, merge settings, security
+baseline, community-health defaults, and Team-compatible rulesets apply. No
+Cloudflare resource, package grant, environment, or deployment is part of this
+repository registration.
+
+The future control-plane integration is recorded in
+`config/manual-settings.json` as the planned GitHub App
+`atrinik-deploy-control`. The App and installation do not exist yet: both live
+numeric IDs are deliberately `null`, while the control-plane repository is
+recorded as `atrinik/deploy-control`, ID `1352850539`. After owner provisioning,
+the installation must select exactly one repository, `atrinik/classic`, ID
+`1327289971`, and subscribe only to `workflow_run` with these exact read-only
+permissions:
+
+- `actions: read`;
+- `metadata: read`.
+
+The App is intended to receive successful Classic workflow-run completion for
+the reviewed staging-image handoff. It has no authorization for metaserver,
+packages, environments, organization-wide selection, source writes, or any
+other repository. Its value-free name-only slots are:
+
+- secrets: `DEPLOY_CONTROL_AGENT_ENROLLMENT_SECRET`,
+  `DEPLOY_CONTROL_GITHUB_APP_PRIVATE_KEY`, and
+  `DEPLOY_CONTROL_GITHUB_WEBHOOK_SECRET`;
+- variables: `CLOUDFLARE_ACCOUNT_ID`,
+  `CLOUDFLARE_DURABLE_OBJECT_BINDING`, `CLOUDFLARE_WORKER_NAME`,
+  `DEPLOY_CONTROL_GITHUB_APP_ID`, and
+  `DEPLOY_CONTROL_GITHUB_INSTALLATION_ID`.
+
+These are future secret and variable names only; no values, private key,
+installation token, webhook payload, Cloudflare binding, or account credential
+is recorded. Atrinik organization owners own the record and review it every 90
+days. `atrinik/deploy-control#3` owns the control-plane follow-up and the
+provisioning runbook. `repository_scope_verification` remains
+`pending_provisioning` until an owner creates the App, installs it in selected
+mode, and reads back the exact Classic-only selection in the GitHub UI.
+
+GitHub App creation and installation remain owner-only manual UI operations on
+Team. `bin/verify-manual-settings` verifies the stable repository identities and
+reports this planned integration as `PENDING`; it does not pretend that an
+absent App is live. `bin/publish` remains plan-only for this record and never
+creates the App or changes an installation. The existing Cloudflare Workers and
+Pages installation and its `atrinik/metaserver-worker` boundary remain
+unchanged.
+
+To revoke the future integration, first stop workflow-run delivery and disable
+the control-plane consumer, revoke the App keys and webhook secret, remove only
+the named control-plane secret and variable slots, uninstall the App from Classic,
+and verify the selected set is empty. Preserve the existing Cloudflare
+installation and metaserver access record; do not use this runbook to alter
+unrelated Apps or repositories.
 
 ## Cross-repository planning
 

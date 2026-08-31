@@ -314,7 +314,8 @@ jq -e \
     (try ((day_epoch($value) | strftime("%Y-%m-%d")) == $value) catch false);
   .external_provider_apps as $external_apps |
   .github_actions_apps as $apps |
-  ($external_apps | type == "array" and length == 1) and
+  ($external_apps | type == "array" and length == 2) and
+  ([$external_apps[].status] == ["active", "planned"]) and
   ($external_apps[0] | keys == [
     "app_id",
     "app_slug",
@@ -335,8 +336,10 @@ jq -e \
     "review_owner",
     "revocation",
     "runbook",
+    "status",
     "status_producer"
   ]) and
+  ($external_apps[0].status == "active") and
   ($external_apps[0].app_id == 85455) and
   ($external_apps[0].app_slug == "cloudflare-workers-and-pages") and
   ($external_apps[0].installation_id == 152311798) and
@@ -392,6 +395,97 @@ jq -e \
   (day_epoch($external_apps[0].last_verified_on) <= day_epoch($today)) and
   (day_epoch($external_apps[0].review_by) > day_epoch($today)) and
   ((day_epoch($external_apps[0].review_by) - day_epoch($external_apps[0].last_verified_on)) / 86400 == $external_apps[0].review_cadence_days) and
+  ($external_apps[1] | keys == [
+    "app_id",
+    "app_slug",
+    "control_plane_repository",
+    "events",
+    "evidence_location",
+    "exceptional_retry",
+    "installation_id",
+    "last_verified_on",
+    "owner",
+    "permissions",
+    "provider",
+    "purpose",
+    "repositories",
+    "repository_scope_verification",
+    "repository_selection",
+    "review_by",
+    "review_cadence_days",
+    "review_owner",
+    "revocation",
+    "runbook",
+    "secret_names",
+    "status",
+    "status_producer",
+    "variable_names"
+  ]) and
+  ($external_apps[1].status == "planned") and
+  ($external_apps[1].app_id == null) and
+  ($external_apps[1].app_slug == "atrinik-deploy-control") and
+  ($external_apps[1].control_plane_repository == {
+    default_branch: "main",
+    license: "MIT",
+    repository: "atrinik/deploy-control",
+    repository_id: 1352850539,
+    visibility: "public"
+  }) and
+  ($external_apps[1].installation_id == null) and
+  ($external_apps[1].repository_selection == "selected") and
+  ($external_apps[1].repository_scope_verification == "pending_provisioning") and
+  ($external_apps[1].events == ["workflow_run"]) and
+  ($external_apps[1].exceptional_retry == null) and
+  ($external_apps[1].permissions == {
+    actions: "read",
+    metadata: "read"
+  }) and
+  ($external_apps[1].provider == "Cloudflare Workers deploy-control control plane") and
+  ($external_apps[1].status_producer == "Atrinik deploy-control control-plane owner") and
+  ($external_apps[1].repositories == [{
+    purpose: "Authorize only the Classic workflow-run source for the deploy-control control plane.",
+    repository: "atrinik/classic",
+    repository_id: 1327289971
+  }]) and
+  ($external_apps[1].control_plane_repository.repository | test("^atrinik/[A-Za-z0-9_.-]+$")) and
+  ($external_apps[1].control_plane_repository.repository_id | type == "number" and floor == . and . > 0) and
+  all(
+    $external_apps[1].repositories[];
+    . as $repository_record |
+    ($repository_record.repository | split("/")[1]) as $repository |
+    ($repository_record.repository | test("^atrinik/[A-Za-z0-9_.-]+$")) and
+    ($repository_record.repository_id | type == "number" and floor == . and . > 0) and
+    ($repository_record.purpose | type == "string" and length > 0) and
+    ($repositories[0].pull_request_gate | index($repository)) != null and
+    ($repositories[0].archive | index($repository)) == null
+  ) and
+  ($external_apps[1].owner | type == "string" and length > 0) and
+  ($external_apps[1].purpose | type == "string" and length > 0) and
+  ($external_apps[1].evidence_location | type == "string" and length > 0) and
+  ($external_apps[1].review_owner | type == "string" and length > 0) and
+  ($external_apps[1].revocation | type == "string" and length > 0) and
+  ($external_apps[1].runbook == "README.md#deploy-control-github-app") and
+  ($external_apps[1].review_cadence_days == 90) and
+  valid_day($external_apps[1].last_verified_on) and
+  valid_day($external_apps[1].review_by) and
+  (day_epoch($external_apps[1].last_verified_on) <= day_epoch($today)) and
+  (day_epoch($external_apps[1].review_by) > day_epoch($today)) and
+  ((day_epoch($external_apps[1].review_by) - day_epoch($external_apps[1].last_verified_on)) / 86400 == $external_apps[1].review_cadence_days) and
+  ($external_apps[1].secret_names | type == "array" and length > 0 and . == (sort | unique) and all(.[]; type == "string" and test("^[A-Z][A-Z0-9_]*$"))) and
+  ($external_apps[1].variable_names | type == "array" and length > 0 and . == (sort | unique) and all(.[]; type == "string" and test("^[A-Z][A-Z0-9_]*$"))) and
+  ($external_apps[1].secret_names == [
+    "DEPLOY_CONTROL_AGENT_ENROLLMENT_SECRET",
+    "DEPLOY_CONTROL_GITHUB_APP_PRIVATE_KEY",
+    "DEPLOY_CONTROL_GITHUB_WEBHOOK_SECRET"
+  ]) and
+  ($external_apps[1].variable_names == [
+    "CLOUDFLARE_ACCOUNT_ID",
+    "CLOUDFLARE_DURABLE_OBJECT_BINDING",
+    "CLOUDFLARE_WORKER_NAME",
+    "DEPLOY_CONTROL_GITHUB_APP_ID",
+    "DEPLOY_CONTROL_GITHUB_INSTALLATION_ID"
+  ]) and
+  all($external_apps[1].secret_names[]; . as $secret | ($external_apps[1].variable_names | index($secret)) == null) and
   ($apps | type == "array" and length > 0) and
   ([$apps[].app_id] | length == (unique | length)) and
   ([$apps[].installation_id] | length == (unique | length)) and

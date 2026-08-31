@@ -554,11 +554,59 @@ else
 fi
 
 while IFS= read -r app_record; do
+  app_status=$(jq -r '.status' <<<"${app_record}")
   app_id=$(jq -r '.app_id' <<<"${app_record}")
   app_slug=$(jq -r '.app_slug' <<<"${app_record}")
   installation_id=$(jq -r '.installation_id' <<<"${app_record}")
   expected_permissions=$(jq -c '.permissions' <<<"${app_record}")
   expected_events=$(jq -c '.events' <<<"${app_record}")
+
+  if [[ ${app_status} == planned ]]; then
+    if jq -s -e --arg app_slug "${app_slug}" \
+      'any(.[]; .app_slug == $app_slug)' "${installations_file}" \
+      >/dev/null; then
+      echo "error: planned external provider App has a live installation for ${app_slug}" >&2
+      exit 1
+    fi
+    control_plane_repository=$(jq -r '.control_plane_repository.repository' <<<"${app_record}")
+    control_plane_repository_id=$(jq -r '.control_plane_repository.repository_id' <<<"${app_record}")
+    if verify_repository_identity "${control_plane_repository}" "${control_plane_repository_id}"; then
+      :
+    else
+      status=$?
+      exit "${status}"
+    fi
+    control_plane_repository_visibility=$(jq -r '.control_plane_repository.visibility' <<<"${app_record}")
+    control_plane_repository_license=$(jq -r '.control_plane_repository.license' <<<"${app_record}")
+    if ! jq -e \
+      --arg visibility "${control_plane_repository_visibility}" \
+      --arg license "${control_plane_repository_license}" \
+      '.visibility == $visibility and .license.spdx_id == $license' \
+      "${repository_data_files["${control_plane_repository}"]}" >/dev/null; then
+      echo "error: repository visibility or license drift for ${control_plane_repository}" >&2
+      exit 1
+    fi
+
+    while IFS= read -r repository_record; do
+      repository=$(jq -r '.repository' <<<"${repository_record}")
+      repository_id=$(jq -r '.repository_id' <<<"${repository_record}")
+      repository_owner=${repository%%/*}
+      if [[ ${repository_owner} != "${organization}" ]]; then
+        echo "error: planned external provider App repository owner does not match ${organization}: ${repository}" >&2
+        exit 1
+      fi
+      if verify_repository_identity "${repository}" "${repository_id}"; then
+        :
+      else
+        status=$?
+        exit "${status}"
+      fi
+    done < <(jq -c '.repositories[]' <<<"${app_record}")
+
+    echo "PENDING ${app_slug} GitHub App installation and credentials; owner UI proof is required for ${control_plane_repository} and selected repository atrinik/classic only"
+    continue
+  fi
+
   installation=$(jq -sc \
     --argjson app_id "${app_id}" \
     --argjson installation_id "${installation_id}" '
@@ -733,4 +781,4 @@ if [[ ${live_pins} != "${desired_pins}" ]]; then
 fi
 echo "KEEP ${organization} organization pins match the exact governed order"
 
-echo "Manual settings live credential, GitHub App, external provider App, Pages, environment, and organization pin metadata is present."
+echo "Manual settings live credential, GitHub App, external provider App, Pages, environment, and organization pin metadata is present; planned integrations are recorded without live provisioning."
