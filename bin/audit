@@ -1,0 +1,260 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+organization=${ATRINIK_ORGANIZATION:-atrinik}
+api_version=2026-03-10
+
+for command in gh grep jq sort; do
+  if ! command -v "${command}" >/dev/null 2>&1; then
+    echo "error: ${command} is required" >&2
+    exit 1
+  fi
+done
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+repositories_config=${root}/config/repositories.json
+repository_defaults=${root}/config/repository-defaults.json
+repository_properties=${root}/config/repository-properties.json
+advisory_windows=${root}/config/advisory-merge-windows.json
+temporary=$(mktemp -d)
+trap 'rm -rf "${temporary}"' EXIT
+
+"${root}/bin/validate" >/dev/null
+
+github_api() {
+  gh api -H "X-GitHub-Api-Version: ${api_version}" "$@"
+}
+
+declare -a findings=()
+
+record_finding() {
+  findings+=("$1")
+}
+
+is_temporary_security_advisory_repository() {
+  local repository=$1
+  local private=$2
+  local visibility=$3
+  local disabled=$4
+  local fork=$5
+  local has_issues=$6
+  local has_projects=$7
+  local has_wiki=$8
+  local base_repository
+
+  if [[ ${repository} =~ ^(.+)-ghsa-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}$ ]]; then
+    base_repository=${BASH_REMATCH[1]}
+  else
+    return 1
+  fi
+
+  [[ ${private} == true ]] &&
+    [[ ${visibility} == private ]] &&
+    [[ ${disabled} == false ]] &&
+    [[ ${fork} == false ]] &&
+    [[ ${has_issues} == false ]] &&
+    [[ ${has_projects} == false ]] &&
+    [[ ${has_wiki} == false ]] &&
+    jq -e --arg repository "${base_repository}" \
+      '(.pull_request_gate | index($repository)) != null' \
+      "${repositories_config}" >/dev/null
+}
+
+declare -A live_archived=()
+while IFS=$'\t' read -r \
+  repository archived private visibility disabled fork has_issues has_projects has_wiki; do
+  [[ -n ${repository} ]] || continue
+  if is_temporary_security_advisory_repository \
+    "${repository}" "${private}" "${visibility}" "${disabled}" "${fork}" \
+    "${has_issues}" "${has_projects}" "${has_wiki}"; then
+    continue
+  fi
+  live_archived["${repository}"]=${archived}
+done < <(
+  github_api --paginate "orgs/${organization}/repos?per_page=100&type=all" \
+    --jq '
+      .[] |
+      [
+        .name,
+        (.archived | tostring),
+        (.private | tostring),
+        .visibility,
+        (.disabled | tostring),
+        (.fork | tostring),
+        (.has_issues | tostring),
+        (.has_projects | tostring),
+        (.has_wiki | tostring)
+      ] |
+      @tsv
+    '
+)
+
+declare -A expected_active=()
+declare -A expected_archived=()
+while IFS=$'\t' read -r repository lifecycle; do
+  if [[ ${lifecycle} == archived ]]; then
+    expected_archived["${repository}"]=true
+  else
+    expected_active["${repository}"]=true
+  fi
+done < <(
+  jq -r '.repositories | to_entries[] | [.key, .value.lifecycle] | @tsv' \
+    "${repository_properties}"
+)
+
+desired_property_schema=$(jq -c '
+  .definitions |
+  map({property_name, value_type, required, default_value, description, allowed_values}) |
+  sort_by(.property_name)
+' "${repository_properties}")
+if current_property_schema=$(github_api \
+  "orgs/${organization}/properties/schema" | \
+  jq -c 'map({property_name, value_type, required, default_value, description, allowed_values}) | sort_by(.property_name)'); then
+  if [[ ${current_property_schema} != "${desired_property_schema}" ]]; then
+    record_finding "organization custom-property schema drift: ${organization}"
+  fi
+else
+  record_finding "organization custom-property schema could not be read: ${organization}"
+fi
+
+for repository in "${!live_archived[@]}"; do
+  if [[ ${live_archived["${repository}"]} == false ]] &&
+    [[ ! -v expected_active["${repository}"] ]]; then
+    record_finding "active repository is not in the desired-state inventory: ${organization}/${repository}"
+  fi
+done
+
+for repository in "${!expected_active[@]}"; do
+  if [[ ! -v live_archived["${repository}"] ]]; then
+    record_finding "governed active repository is missing: ${organization}/${repository}"
+  elif [[ ${live_archived["${repository}"]} != false ]]; then
+    record_finding "governed active repository is archived: ${organization}/${repository}"
+  fi
+done
+
+for repository in "${!expected_archived[@]}"; do
+  if [[ -v live_archived["${repository}"] ]] &&
+    [[ ${live_archived["${repository}"]} != true ]]; then
+    record_finding "archived inventory repository is not archived: ${organization}/${repository}"
+  fi
+done
+
+expected_rule_name() {
+  local repository=$1
+  local base=$2
+
+  if jq -e --arg repository "${repository}" \
+    '.repositories | index($repository) != null' "${advisory_windows}" \
+    >/dev/null; then
+    printf '%s - classic\n' "${base}"
+  else
+    printf '%s\n' "${base}"
+  fi
+}
+
+has_configured_repository() {
+  local property=$1
+  local repository=$2
+
+  jq -e --arg repository "${repository}" \
+    "${property} | index(\$repository) != null" "${repositories_config}" \
+    >/dev/null
+}
+
+has_required_ci() {
+  local repository=$1
+  jq -e --arg repository "${repository}" \
+    '.required_ci | has($repository)' "${repositories_config}" >/dev/null
+}
+
+has_release_tags() {
+  local repository=$1
+  jq -e --arg repository "${repository}" \
+    '.release_tags | index($repository) != null' "${repositories_config}" \
+    >/dev/null
+}
+
+for repository in "${!expected_active[@]}"; do
+  [[ -v live_archived["${repository}"] ]] || continue
+  [[ ${live_archived["${repository}"]} == false ]] || continue
+
+  metadata_file=${temporary}/${repository}.json
+  if ! github_api "repos/${organization}/${repository}" >"${metadata_file}"; then
+    record_finding "repository metadata could not be read: ${organization}/${repository}"
+    continue
+  fi
+
+  if ! jq -e --slurpfile desired "${repository_defaults}" '
+    .archived == false and
+    .default_branch == $desired[0].default_branch and
+    .allow_merge_commit == $desired[0].allow_merge_commit and
+    .allow_rebase_merge == $desired[0].allow_rebase_merge and
+    .allow_squash_merge == $desired[0].allow_squash_merge and
+    .delete_branch_on_merge == $desired[0].delete_branch_on_merge and
+    .squash_merge_commit_title == $desired[0].squash_merge_commit_title and
+    .squash_merge_commit_message == $desired[0].squash_merge_commit_message
+  ' "${metadata_file}" >/dev/null; then
+    record_finding "repository merge policy drift: ${organization}/${repository}"
+  fi
+
+  desired_properties=$(jq -c --arg repository "${repository}" '
+    .repositories[$repository] |
+    to_entries |
+    map({property_name: .key, value: .value}) |
+    sort_by(.property_name)
+  ' "${repository_properties}")
+  if current_properties=$(github_api \
+    "repos/${organization}/${repository}/properties/values" | \
+    jq -c 'map({property_name, value}) | sort_by(.property_name)'); then
+    if [[ ${current_properties} != "${desired_properties}" ]]; then
+      record_finding "repository custom-property drift: ${organization}/${repository}"
+    fi
+  else
+    record_finding "repository custom properties could not be read: ${organization}/${repository}"
+  fi
+
+  if rulesets=$(github_api \
+    "repos/${organization}/${repository}/rulesets?includes_parents=true" | \
+    jq -r '.[].name' | sort); then
+    required_rulesets=(
+      "$(expected_rule_name "${repository}" "01 - Default branch integrity")"
+      "$(expected_rule_name "${repository}" "01 - Default branch linear history")"
+    )
+    if has_configured_repository '.pull_request_gate' "${repository}"; then
+      required_rulesets+=(
+        "$(expected_rule_name "${repository}" "02 - Changes through pull requests")"
+      )
+    fi
+    if has_required_ci "${repository}"; then
+      required_rulesets+=("03 - Required CI - ${repository}")
+    fi
+    if has_release_tags "${repository}"; then
+      required_rulesets+=("04 - Immutable release tags")
+    fi
+    for ruleset in "${required_rulesets[@]}"; do
+      if ! grep -Fxq -- "${ruleset}" <<<"${rulesets}"; then
+        record_finding "missing inherited ruleset '${ruleset}': ${organization}/${repository}"
+      fi
+    done
+  else
+    record_finding "inherited rulesets could not be read: ${organization}/${repository}"
+  fi
+
+  if ! jq -e '
+    .security_and_analysis.secret_scanning.status == "enabled" and
+    .security_and_analysis.secret_scanning_push_protection.status == "enabled" and
+    .security_and_analysis.secret_scanning_validity_checks.status == "enabled" and
+    .security_and_analysis.dependabot_security_updates.status == "enabled"
+  ' "${metadata_file}" >/dev/null; then
+    record_finding "exposed security baseline drift: ${organization}/${repository}"
+  fi
+done
+
+if ((${#findings[@]})); then
+  printf 'DRIFT %s\n' "${findings[@]}" | sort -u
+  echo "Governance audit failed: ${#findings[@]} finding(s)." >&2
+  exit 1
+fi
+
+echo "Governance audit passed: ${#expected_active[@]} active repositories checked."

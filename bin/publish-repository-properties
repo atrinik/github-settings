@@ -15,7 +15,7 @@ case ${1:-} in
   ;;
 esac
 
-for command in gh jq; do
+for command in gh jq sort; do
   if ! command -v "${command}" >/dev/null 2>&1; then
     echo "error: ${command} is required" >&2
     exit 1
@@ -31,6 +31,35 @@ trap 'rm -f "${temporary_files[@]}"' EXIT
 
 github_api() {
   gh api -H "X-GitHub-Api-Version: ${api_version}" "$@"
+}
+
+is_temporary_security_advisory_repository() {
+  local repository=$1
+  local private=$2
+  local visibility=$3
+  local disabled=$4
+  local fork=$5
+  local has_issues=$6
+  local has_projects=$7
+  local has_wiki=$8
+  local base_repository
+
+  if [[ ${repository} =~ ^(.+)-ghsa-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}$ ]]; then
+    base_repository=${BASH_REMATCH[1]}
+  else
+    return 1
+  fi
+
+  [[ ${private} == true ]] &&
+    [[ ${visibility} == private ]] &&
+    [[ ${disabled} == false ]] &&
+    [[ ${fork} == false ]] &&
+    [[ ${has_issues} == false ]] &&
+    [[ ${has_projects} == false ]] &&
+    [[ ${has_wiki} == false ]] &&
+    jq -e --arg repository "${base_repository}" \
+      '(.pull_request_gate | index($repository)) != null' \
+      "${root}/config/repositories.json" >/dev/null
 }
 
 run_api() {
@@ -85,6 +114,7 @@ while IFS= read -r definition; do
 done < <(jq -c '.definitions[]' "${properties_config}")
 
 declare -A live_repositories=()
+declare -A live_active_repositories=()
 while IFS= read -r repository; do
   live_repositories["${repository}"]=true
 done < <(
@@ -92,8 +122,60 @@ done < <(
     --jq '.[].name'
 )
 
+while IFS=$'\t' read -r \
+  repository archived private visibility disabled fork has_issues has_projects has_wiki; do
+  if [[ ${archived} == false ]] &&
+    ! is_temporary_security_advisory_repository \
+      "${repository}" "${private}" "${visibility}" "${disabled}" "${fork}" \
+      "${has_issues}" "${has_projects}" "${has_wiki}"; then
+    live_active_repositories["${repository}"]=true
+  fi
+done < <(
+  github_api --paginate "orgs/${organization}/repos?per_page=100&type=all" \
+    --jq '
+      .[] |
+      [
+        .name,
+        (.archived | tostring),
+        (.private | tostring),
+        .visibility,
+        (.disabled | tostring),
+        (.fork | tostring),
+        (.has_issues | tostring),
+        (.has_projects | tostring),
+        (.has_wiki | tostring)
+      ] |
+      @tsv
+    '
+)
+
+while IFS= read -r repository; do
+  if [[ ! -v live_active_repositories["${repository}"] ]]; then
+    echo "error: governed active repository is missing or archived: ${organization}/${repository}" >&2
+    exit 1
+  fi
+done < <(
+  jq -r '.repositories | to_entries[] | select(.value.lifecycle != "archived") | .key' \
+    "${properties_config}"
+)
+
+while IFS= read -r repository; do
+  if [[ -v live_active_repositories["${repository}"] ]] &&
+    ! jq -e --arg repository "${repository}" \
+      '.repositories | has($repository)' "${properties_config}" >/dev/null; then
+    echo "error: live active repository is not in the property inventory: ${organization}/${repository}" >&2
+    exit 1
+  fi
+done < <(printf '%s\n' "${!live_active_repositories[@]}" | sort)
+
 while IFS= read -r repository; do
   if [[ ! -v live_repositories["${repository}"] ]]; then
+    lifecycle=$(jq -r --arg repository "${repository}" \
+      '.repositories[$repository].lifecycle' "${properties_config}")
+    if [[ ${lifecycle} == archived ]]; then
+      echo "SKIP ${organization}/${repository} is an absent archived repository"
+      continue
+    fi
     echo "error: repository property inventory is not live: ${organization}/${repository}" >&2
     exit 1
   fi

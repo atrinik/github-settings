@@ -42,3 +42,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.ATRINIK_SETTINGS_TOKEN }}
         run: bin/publish-repository-properties --apply
+
+      - name: Verify applied governance
+        env:
+          GH_TOKEN: ${{ secrets.ATRINIK_SETTINGS_TOKEN }}
+        run: bin/audit
