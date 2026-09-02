@@ -612,6 +612,21 @@ and assigns the complete desired value set to every repository. It runs after
 the generated `.github` repository exists so the inventory and live repository
 set agree.
 
+`bin/audit` is the read-only live drift check. It compares every active
+repository with the merge defaults, custom-property inventory, inherited
+organization rulesets, and exposed security baseline. It also fails when an
+active repository is missing from the desired-state inventory or when a
+governed active repository is absent or archived. The `Governance drift audit`
+workflow runs it on the default branch and on a schedule; repository creation
+must therefore be followed by a desired-state change before the new repository
+can pass the audit.
+
+When creating a repository, register it in `config/repositories.json` and
+`config/repository-properties.json` in the same pull request. Add required
+status checks only after the repository emits the named workflow jobs. Review
+`bin/publish` and `bin/publish-repository-properties` in plan mode, apply them
+with the organization settings credential, and finish with `bin/audit`.
+
 The manual `Publish planning` workflow performs those four apply steps in the
 same order. Both planning workflows use `ATRINIK_SETTINGS_TOKEN`; in addition
 to the existing organization and repository administration access, that token

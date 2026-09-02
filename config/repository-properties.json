@@ -341,6 +341,16 @@
       ],
       "lifecycle": "active",
       "release_policy": "semantic-release"
+    },
+    "web-platform": {
+      "component_role": [
+        "library"
+      ],
+      "provider_set": [
+        "shared"
+      ],
+      "lifecycle": "seed",
+      "release_policy": "none"
     }
   }
 }

@@ -37,7 +37,7 @@ auto | organization | repository) ;;
   ;;
 esac
 
-for command in gh git jq; do
+for command in gh git jq sort; do
   if ! command -v "${command}" >/dev/null 2>&1; then
     echo "error: ${command} is required" >&2
     exit 1
@@ -1290,6 +1290,20 @@ done < <(
       @tsv
     '
 )
+
+declare -A governed_active_repositories=()
+while IFS= read -r repository; do
+  governed_active_repositories["${repository}"]=true
+done < <(
+  jq -r '[".github"] + .pull_request_gate | .[]' "${repositories_config}"
+)
+
+while IFS= read -r repository; do
+  if [[ ! -v governed_active_repositories["${repository}"] ]]; then
+    echo "error: live active repository is not in the governance inventory: ${organization}/${repository}" >&2
+    exit 1
+  fi
+done < <(printf '%s\n' "${active_repositories[@]}" | sort)
 
 while IFS= read -r repository; do
   if [[ ! -v active_repository_ids["${repository}"] ]]; then

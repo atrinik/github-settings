@@ -61,6 +61,15 @@
 - Keep required workflow job names synchronized with rulesets. Workflow or
   permissions changes also require actionlint, least-privilege review, and
   immutable action references according to policy.
+- `bin/audit` is the read-only live drift check for the complete active
+  repository inventory. Run it after governance changes and on its scheduled
+  workflow; it must fail closed on an unregistered active repository, merge
+  policy drift, custom-property drift, missing inherited rulesets, or exposed
+  security-baseline drift.
+- New repositories must be registered in the desired-state inventories before
+  they are treated as governed. The publishers fail closed when an active
+  repository is absent from those inventories; absent archived repositories
+  remain historical evidence and are skipped by the property publisher.
 - Keep default-branch deletion and non-fast-forward rules non-bypassable during
   normal operation. Isolate the organization-owner security-advisory exception
   to the explicitly authorized window, and use pull-request-only bypass mode
