@@ -3,7 +3,8 @@
 > A world of crystal, memory, and unfinished paths.
 
 Atrinik is an open-source cooperative fantasy role-playing world of islands,
-ruins, and crystal-lit mysteries.
+ruins, and crystal-lit mysteries. Founded by
+[Zoey Seraphina Rose](https://zoeysr.com), it is built with its community.
 
 The maintained GPL-licensed [Atrinik Classic](https://github.com/atrinik/classic)
 line keeps the world playable today. In parallel, a next-generation MIT

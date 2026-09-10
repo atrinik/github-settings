@@ -241,7 +241,7 @@ case "${endpoint}|${jq_filter}" in
   else
     jq -n '{
       plan: {name: "team"},
-      description: "A cooperative fantasy world of islands, ruins, and crystal-lit mysteries—open source, playable in Classic, and rebuilding for the future.",
+      description: "A cooperative, open-source fantasy world founded by Zoey Seraphina Rose (https://zoeysr.com). Playable in Classic and rebuilding for the future.",
       blog: "https://atrinik.org",
       default_repository_permission: "none",
       members_can_create_repositories: false,
@@ -1132,7 +1132,7 @@ jq -s -e '
     select(.method == "PATCH" and .endpoint == "orgs/atrinik") |
     .payload
   ] == [{
-    description: "A cooperative fantasy world of islands, ruins, and crystal-lit mysteries—open source, playable in Classic, and rebuilding for the future.",
+    description: "A cooperative, open-source fantasy world founded by Zoey Seraphina Rose (https://zoeysr.com). Playable in Classic and rebuilding for the future.",
     blog: "https://atrinik.org",
     default_repository_permission: "none",
     members_can_create_repositories: false,
@@ -1400,7 +1400,7 @@ GH_API_LOG=${temporary}/plan.jsonl \
   ATRINIK_POLICY_SCOPE=organization \
   "${root}/bin/publish" >"${plan_output}"
 grep -F \
-  'DRIFT /orgs/atrinik description live="" desired="A cooperative fantasy world of islands, ruins, and crystal-lit mysteries—open source, playable in Classic, and rebuilding for the future."' \
+  'DRIFT /orgs/atrinik description live="" desired="A cooperative, open-source fantasy world founded by Zoey Seraphina Rose (https://zoeysr.com). Playable in Classic and rebuilding for the future."' \
   "${plan_output}" >/dev/null
 grep -F \
   'PLAN PATCH /orgs/atrinik <= config/organization.json' \

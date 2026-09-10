@@ -1,5 +1,8 @@
 # Contributing to Atrinik
 
+Atrinik was founded by [Zoey Seraphina Rose](https://zoeysr.com) and grows
+through the work of its community.
+
 Thank you for helping Atrinik. Search existing issues and the
 [Atrinik work project](https://github.com/orgs/atrinik/projects) before opening
 new work so related efforts can share one discussion.

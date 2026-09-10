@@ -42,7 +42,7 @@ done < <(find "${root}/config" -name '*.json' -print0 | sort -z)
 
 jq -e '
   . == {
-    description: "A cooperative fantasy world of islands, ruins, and crystal-lit mysteries—open source, playable in Classic, and rebuilding for the future.",
+    description: "A cooperative, open-source fantasy world founded by Zoey Seraphina Rose (https://zoeysr.com). Playable in Classic and rebuilding for the future.",
     blog: "https://atrinik.org",
     default_repository_permission: "none",
     members_can_create_repositories: false,
