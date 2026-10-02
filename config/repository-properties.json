@@ -80,6 +80,16 @@
       "lifecycle": "active",
       "release_policy": "none"
     },
+    "agent-integrations": {
+      "component_role": [
+        "tooling"
+      ],
+      "provider_set": [
+        "organization"
+      ],
+      "lifecycle": "active",
+      "release_policy": "none"
+    },
     "atrinik": {
       "component_role": [
         "coordination"
