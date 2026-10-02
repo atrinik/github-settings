@@ -102,7 +102,15 @@ if ! jq -e '.workflow_runs | type == "array"' \
 fi
 
 latest_run=$(jq -c '.workflow_runs[0] // null' <<<"${runs}")
-last_success=$(jq -c '.workflow_runs[0] // null' <<<"${successful_runs}")
+# The filtered endpoint can lag the unfiltered history. Compare completion
+# timestamps so an older filtered result cannot hide a recent successful sync;
+# retain it as a fallback when success is outside the recent 100-run window.
+last_success=$(jq -cn --argjson recent "${runs}" \
+  --argjson successful "${successful_runs}" '
+  [$recent.workflow_runs[], $successful.workflow_runs[] |
+    select(.status == "completed" and .conclusion == "success")]
+  | max_by(.updated_at | fromdateiso8601) // null
+')
 consecutive_failures=$(jq -r '
   reduce .workflow_runs[] as $run (
     {count: 0, stopped: false};
