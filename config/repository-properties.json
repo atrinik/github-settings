@@ -361,6 +361,16 @@
       ],
       "lifecycle": "seed",
       "release_policy": "none"
+    },
+    "agent-skills": {
+      "component_role": [
+        "tooling"
+      ],
+      "provider_set": [
+        "organization"
+      ],
+      "lifecycle": "active",
+      "release_policy": "none"
     }
   }
 }
