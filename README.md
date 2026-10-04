@@ -102,8 +102,8 @@ read-only and are skipped on later runs.
   owner-UI verification state. Provider credentials and account coordinates
   remain outside GitHub and this repository.
 - GitHub Actions defaults to read-only, cannot approve pull requests, and may
-  use only Atrinik, GitHub, Codecov coverage, and explicitly allowed Docker
-  actions.
+  use only Atrinik, GitHub, Codecov coverage, explicitly allowed Docker
+  actions, and the exact reviewed crates.io authentication action commit.
 - Historical repositories listed in `config/repositories.json` are archived.
   The five former standalone classic component repositories are already
   archived read-only after their history, active work, issues, and release
@@ -1075,3 +1075,70 @@ must not list an obsolete `atrinik/classic` Actions-access grant; remove only
 that exact entry if it remains after the visibility transition. Finally, run a
 real fork pull request and require its digest pulls and complete required
 checks to succeed without package permissions or registry authentication.
+
+## Protocol crate Trusted Publishing
+
+`config/manual-settings.json` records a **pending**, value-free crates.io
+Trusted Publishing contract for `atrinik-protocol`. It binds
+`atrinik/protocol` (repository ID `1327106950`), the workflow filename
+`publish-crate.yml`, and the `crates-io-release` environment. The workflow is
+manual (`workflow_dispatch`) on `refs/heads/main` only. The desired environment
+allows only the selected `main` branch, requires reviewer `zoeyrose` (User ID
+`3865595`), permits that maintainer to review their own manually initiated run,
+and disallows administrator bypass. It has no secret or variable slots.
+The owner identity and current repository admin permission were verified on
+2026-10-04; the verifier checks both identity and maintainer permission again.
+This record does not claim that the environment or Trusted Publisher exists.
+The existing `crates-io-bootstrap` environment and published 0.1 crate are
+separate historical state and are not changed by this contract.
+
+The Actions allowlist adds only
+`rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18`,
+verified against upstream `v1.0.5`. The
+[pinned official action](https://github.com/rust-lang/crates-io-auth-action/blob/c6f97d42243bad5fab37ca0427f495c86d5b1a18/README.md)
+exchanges GitHub OIDC for a temporary crates.io token and revokes it in its
+post step. Only the owning workflow's upload job may request `id-token: write`,
+with `contents: read`; only the Cargo upload step receives the returned token.
+Do not store a crates.io token in GitHub secrets or credential files.
+The [GitHub environment controls](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)
+allow this public repository's manual reviewer, branch restriction, and bypass
+policy on GitHub Team. The [crates.io documentation](https://crates.io/docs/trusted-publishing)
+owns the external registration procedure.
+
+Activation is a later, separately authorized operation:
+
+1. Merge and review the protocol workflow and governance source. Keep the
+   protocol release policy at `pending-source-release` with null release pins
+   until the actual source release exists; the upload path must fail before
+   requesting an OIDC token while those prerequisites are missing.
+2. Use credential-free preparation to bind the actual published tag and source
+   revision to a reproducible crate digest and its release asset/manifest proof.
+   Review and commit those exact coordinates through the protocol repository.
+   No future release SHA or crate digest belongs in this planning record.
+3. Review `bin/publish` and apply only the merged, authorized desired-state
+   policy. The organization allowlist applies to all governed repositories, but
+   the one added authentication-action pattern matches only that exact commit.
+   Check the complete plan for unrelated drift before requesting apply.
+4. With separate owner authorization, provision `crates-io-release` with the
+   exact desired reviewer/branch/bypass settings and register a crates.io
+   Trusted Publisher for `atrinik/protocol`, `publish-crate.yml`, and that
+   environment. Verify live identity and protection settings, then record the
+   observed activation through a reviewed governance update. This pending-only
+   schema deliberately cannot represent activation by changing a status string.
+5. Obtain separate workflow-dispatch authorization and use the reviewed manual
+   publication workflow. Environment approval remains the maintainer's action.
+
+`bin/publish` prints the manual pending requirement; it does not create an
+environment or register a publisher. `bin/verify-manual-settings` verifies the
+repository and reviewer identities/permission, then reports `PENDING`. It does
+not inspect token values or claim the future source release, environment,
+external registration, or publication is ready. Missing reviewer access or
+identity drift fails closed. Existing environment contracts retain their exact
+reviewer restrictions.
+
+Rollback of this unactivated plan is a reviewed removal of this manual record
+and the single action pattern, followed by a plan review. Once activated, stop
+new manual publication, revoke the exact crates.io Trusted Publisher through
+its supported owner UI, and separately review removal of the matching release
+environment/action allowance. Never mutate existing crate versions, release
+assets, tags, unrelated environments, or other action allowlist entries.

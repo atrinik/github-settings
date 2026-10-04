@@ -71,6 +71,28 @@ graphql)
     }}}'
   fi
   ;;
+repos/atrinik/protocol)
+  repository_id=1327106950
+  if [[ ${FAKE_GH_SCENARIO} == crate-repository-drift ]]; then
+    repository_id=1
+  fi
+  jq -n --argjson id "${repository_id}" \
+    '{id: $id, full_name: "atrinik/protocol", archived: false, default_branch: "main"}'
+  ;;
+users/zoeyrose)
+  reviewer_id=3865595
+  if [[ ${FAKE_GH_SCENARIO} == crate-reviewer-drift ]]; then
+    reviewer_id=1
+  fi
+  jq -n --argjson id "${reviewer_id}" '{id: $id, login: "zoeyrose"}'
+  ;;
+repos/atrinik/protocol/collaborators/zoeyrose/permission)
+  permission=admin
+  if [[ ${FAKE_GH_SCENARIO} == crate-reviewer-permission ]]; then
+    permission=read
+  fi
+  jq -n --arg permission "${permission}" '{permission: $permission}'
+  ;;
 repos/atrinik/github-settings)
   if [[ ${FAKE_GH_SCENARIO} == identity-drift ]]; then
     jq -n '{
@@ -631,6 +653,18 @@ run_verify() {
 
 : >"${temporary}/gh.log"
 output=$(run_verify present)
+grep -Fq 'PENDING atrinik/protocol crates.io atrinik-protocol via publish-crate.yml / crates-io-release' <<<"${output}"
+if grep -Eq 'protocol/environments|crates.io|/trusted-publishers' "${temporary}/gh.log"; then
+  echo "error: planned crate contract inspected or mutated unprovisioned state" >&2
+  exit 1
+fi
+for scenario in crate-repository-drift crate-reviewer-drift crate-reviewer-permission; do
+  if run_verify "${scenario}" >"${temporary}/${scenario}.out" 2>"${temporary}/${scenario}.err"; then
+    echo "error: verifier accepted ${scenario}" >&2
+    exit 1
+  fi
+done
+
 grep -Fq 'KEEP atrinik/github-settings repository Actions secret ATRINIK_SETTINGS_TOKEN' \
   <<<"${output}"
 grep -Fq 'KEEP atrinik/classic environment discord-release metadata' <<<"${output}"

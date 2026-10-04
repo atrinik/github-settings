@@ -44,6 +44,45 @@
     "renderer",
     "server"
   ],
+  "crates_io_trusted_publishing": [
+    {
+      "activation_state": "pending-source-release",
+      "authentication_action": "rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18",
+      "crate": "atrinik-protocol",
+      "environment": {
+        "can_admins_bypass": false,
+        "deployment_branch_policy": {
+          "custom_branch_policies": true,
+          "patterns": [
+            {
+              "name": "main",
+              "type": "branch"
+            }
+          ],
+          "protected_branches": false
+        },
+        "name": "crates-io-release",
+        "prevent_self_review": false,
+        "required_reviewers": [
+          {
+            "type": "User",
+            "id": 3865595,
+            "login": "zoeyrose"
+          }
+        ],
+        "reviewer_requirement": "repository-maintainer",
+        "secret_names": [],
+        "variable_names": []
+      },
+      "provider": "github",
+      "repository": "atrinik/protocol",
+      "repository_id": 1327106950,
+      "runbook": "README.md#protocol-crate-trusted-publishing",
+      "workflow_filename": "publish-crate.yml",
+      "workflow_ref": "refs/heads/main",
+      "workflow_trigger": "workflow_dispatch"
+    }
+  ],
   "external_provider_apps": [
     {
       "app_id": 85455,

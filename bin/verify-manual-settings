@@ -406,6 +406,36 @@ while IFS= read -r pages_record; do
   fi
 done < <(jq -c '.github_pages_sites[]' "${manual_settings}")
 
+# Planned registration has no live publisher/environment identity yet. Verify
+# only its repository identity and report the unresolved activation explicitly.
+while IFS= read -r crate_record; do
+  repository=$(jq -r '.repository' <<<"${crate_record}")
+  repository_id=$(jq -r '.repository_id' <<<"${crate_record}")
+  if [[ ${repository%%/*} != "${organization}" ]]; then
+    echo "error: crate publisher repository owner does not match ${organization}" >&2
+    exit 1
+  fi
+  if verify_repository_identity "${repository}" "${repository_id}"; then
+    :
+  else
+    status=$?
+    exit "${status}"
+  fi
+  reviewer_identity=$(github_api "read crate publishing reviewer identity" "users/zoeyrose")
+  if ! jq -e '.login == "zoeyrose" and .id == 3865595' <<<"${reviewer_identity}" >/dev/null; then
+    echo "error: crate publishing reviewer identity drift" >&2
+    exit 1
+  fi
+  reviewer_permission=$(github_api "read crate publishing reviewer permission" \
+    "repos/${repository}/collaborators/zoeyrose/permission")
+  if ! jq -e '.permission == "admin" or .permission == "maintain"' \
+    <<<"${reviewer_permission}" >/dev/null; then
+    echo "error: crate publishing reviewer is not a repository maintainer" >&2
+    exit 1
+  fi
+  echo "PENDING ${repository} crates.io atrinik-protocol via publish-crate.yml / crates-io-release: source release and owner setup remain unverified; no registration or environment applied"
+done < <(jq -c '.crates_io_trusted_publishing[]' "${manual_settings}")
+
 while IFS= read -r environment_record; do
   repository=$(jq -r '.repository' <<<"${environment_record}")
   repository_owner=${repository%%/*}
