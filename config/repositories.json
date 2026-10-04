@@ -1,7 +1,6 @@
 {
   "pull_request_gate": [
     "agent-integrations",
-    "codex-integration",
     "atrinik",
     "classic",
     "client",
@@ -24,10 +23,6 @@
     "website"
   ],
   "required_ci": {
-    "codex-integration": [
-      "Required checks",
-      "Conventional PR title"
-    ],
     "atrinik": [
       "Integration validation",
       "Conventional PR title"
@@ -103,6 +98,10 @@
     ],
     "github-settings": [
       "Policy validation",
+      "Conventional PR title"
+    ],
+    "agent-integrations": [
+      "Required checks",
       "Conventional PR title"
     ]
   },
