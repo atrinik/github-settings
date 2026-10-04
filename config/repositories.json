@@ -1,5 +1,6 @@
 {
   "pull_request_gate": [
+    "agent-integrations",
     "atrinik",
     "classic",
     "client",
@@ -97,6 +98,10 @@
     ],
     "github-settings": [
       "Policy validation",
+      "Conventional PR title"
+    ],
+    "agent-integrations": [
+      "Required checks",
       "Conventional PR title"
     ]
   },

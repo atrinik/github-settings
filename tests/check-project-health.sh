@@ -60,7 +60,8 @@ case ${endpoint} in
 "repos/atrinik/github-settings/actions/workflows/sync-project.yml/runs?per_page=100")
   case ${FAKE_GH_SCENARIO} in
   healthy | missing-settings | recovery | recurrence-before | reopen | \
-    incident-api-failure)
+    incident-api-failure | filtered-stale | filtered-empty | filtered-newer | \
+    filtered-recovery | filtered-before-episode | filtered-pending | future-success)
     jq -n '{workflow_runs: [{
       status: "completed", conclusion: "success",
       created_at: "2026-08-10T04:49:00Z",
@@ -68,6 +69,32 @@ case ${endpoint} in
       html_url: "https://github.com/atrinik/github-settings/actions/runs/100",
       head_sha: "SUCCESS"
     }]}'
+    ;;
+  unordered-successes)
+    jq -n '{workflow_runs: [
+      {
+        status: "completed", conclusion: "success",
+        created_at: "2026-08-10T04:39:00Z",
+        updated_at: "2026-08-10T04:40:00Z",
+        html_url: "https://github.com/atrinik/github-settings/actions/runs/100",
+        head_sha: "EARLIER-SUCCESS"
+      },
+      {
+        status: "completed", conclusion: "success",
+        created_at: "2026-08-09T04:39:00Z",
+        updated_at: "2026-08-10T04:50:00Z",
+        html_url: "https://github.com/atrinik/github-settings/actions/runs/90",
+        head_sha: "RERUN-SUCCESS"
+      },
+      {
+        status: "completed", conclusion: "failure",
+        updated_at: "2026-08-10T04:59:00Z"
+      },
+      {
+        status: "in_progress", conclusion: null,
+        updated_at: "2026-08-10T05:00:00Z"
+      }
+    ]}'
     ;;
   repeated-failure)
     jq -n '{workflow_runs: [
@@ -157,7 +184,8 @@ case ${endpoint} in
       head_sha: "SUCCESS"
     }]}'
     ;;
-  stale | sync-failure | foreign | multiple-managed | alert-api-failure)
+  stale | sync-failure | foreign | multiple-managed | alert-api-failure | \
+    filtered-stale | filtered-recovery | filtered-before-episode | filtered-pending)
     jq -n '{workflow_runs: [{
       status: "completed", conclusion: "success",
       created_at: "2026-08-10T01:59:00Z",
@@ -184,13 +212,25 @@ case ${endpoint} in
       head_sha: "OLD-SUCCESS"
     }]}'
     ;;
-  no-success | never-ran) jq -n '{workflow_runs: []}' ;;
+  filtered-newer | future-success)
+    timestamp=2026-08-10T04:58:00Z
+    [[ ${FAKE_GH_SCENARIO} == future-success ]] && timestamp=2026-08-10T05:01:00Z
+    jq -n --arg timestamp "${timestamp}" '{workflow_runs: [{
+      status: "completed", conclusion: "success",
+      created_at: "2026-08-10T04:57:00Z",
+      updated_at: $timestamp,
+      html_url: "https://github.com/atrinik/github-settings/actions/runs/104",
+      head_sha: "NEW-SUCCESS"
+    }]}'
+    ;;
+  no-success | never-ran | filtered-empty | unordered-successes) jq -n '{workflow_runs: []}' ;;
   *) exit 1 ;;
   esac
   ;;
 "repos/atrinik/github-settings/issues?state=all&per_page=100&page=1")
   case ${FAKE_GH_SCENARIO} in
-  recovery | stale | recurrence-before | recurrence-after)
+  recovery | stale | recurrence-before | recurrence-after | filtered-recovery | \
+    filtered-before-episode | filtered-pending)
     jq -n '[range(0; 100) | {
       number: (. + 1000),
       state: "closed",
@@ -231,10 +271,12 @@ case ${endpoint} in
   ;;
 "repos/atrinik/github-settings/issues?state=all&per_page=100&page=2")
   case ${FAKE_GH_SCENARIO} in
-  recovery | stale | recurrence-before | recurrence-after)
+  recovery | stale | recurrence-before | recurrence-after | filtered-recovery | \
+    filtered-before-episode | filtered-pending)
     episode="2026-08-10T04:00:00Z"
     [[ ${FAKE_GH_SCENARIO} == recurrence-before || \
-      ${FAKE_GH_SCENARIO} == recurrence-after ]] && \
+      ${FAKE_GH_SCENARIO} == recurrence-after || \
+      ${FAKE_GH_SCENARIO} == filtered-before-episode ]] && \
       episode="2026-08-10T04:55:00Z"
     jq -n --arg episode "${episode}" '{
       number: 70,
@@ -324,6 +366,57 @@ grep -Fq 'State: **healthy**' <<<"${output}"
 grep -Fq 'Convergence: converged; mutations 0' <<<"${output}"
 grep -Fq 'State: **healthy**' "${temporary}/step-summary"
 [[ $(wc -l <"${temporary}/gh.log") == 2 ]]
+
+# Recent successful runs must win over stale or empty filtered history, while
+# a newer filtered response must still win if the run completed between reads.
+for scenario in filtered-stale filtered-empty filtered-newer unordered-successes; do
+  : >"${temporary}/gh.log"
+  output=$(run_health "${scenario}" zero)
+  grep -Fq 'State: **healthy**' <<<"${output}"
+  expected_time=2026-08-10T04:50:00Z
+  [[ ${scenario} == filtered-newer ]] && expected_time=2026-08-10T04:58:00Z
+  grep -Fq "Last successful run: [${expected_time}]" <<<"${output}"
+  if grep -Eq '^(POST|PATCH)' "${temporary}/gh.log"; then
+    echo "error: plan-only health check wrote an incident" >&2
+    exit 1
+  fi
+done
+
+: >"${temporary}/gh.log"
+output=$(run_health filtered-recovery zero --apply)
+grep -Fq 'RECOVERED managed Project health incident #70' <<<"${output}"
+grep -Fq 'Last successful run: [2026-08-10T04:50:00Z]' <<<"${output}"
+
+# The combined evidence must still respect both outage and convergence fences.
+for scenario in filtered-before-episode filtered-pending; do
+  : >"${temporary}/gh.log"
+  sync_scenario=zero
+  [[ ${scenario} == filtered-pending ]] && sync_scenario=pending
+  if run_health "${scenario}" "${sync_scenario}" --apply \
+    >"${temporary}/${scenario}.out" 2>"${temporary}/${scenario}.err"; then
+    echo "error: ${scenario} resolved an unproven recovery" >&2
+    exit 1
+  fi
+  grep -Fq 'remains open until a newer successful run' "${temporary}/${scenario}.out"
+  if grep -Fq 'state_reason' "${temporary}/gh.log"; then
+    echo "error: unproven recovery closed an incident" >&2
+    exit 1
+  fi
+done
+
+: >"${temporary}/gh.log"
+: >"${temporary}/sync.log"
+if run_health future-success zero --apply \
+  >"${temporary}/future-success.out" 2>"${temporary}/future-success.err"; then
+  echo "error: health check accepted success newer than its clock" >&2
+  exit 1
+fi
+grep -Fq 'newer than the health-check clock' "${temporary}/future-success.err"
+[[ ! -s ${temporary}/sync.log ]]
+if grep -Eq '^(POST|PATCH)' "${temporary}/gh.log"; then
+  echo "error: invalid success timestamp allowed an incident write" >&2
+  exit 1
+fi
 
 for failure in runs-api-failure:45:plan \
   incident-api-failure:46:apply alert-api-failure:47:apply; do
