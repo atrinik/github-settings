@@ -24,6 +24,10 @@
     "website"
   ],
   "required_ci": {
+    "codex-integration": [
+      "Required checks",
+      "Conventional PR title"
+    ],
     "atrinik": [
       "Integration validation",
       "Conventional PR title"
