@@ -57,60 +57,84 @@ if [[ -n ${GITHUB_REPOSITORY:-} && ${GITHUB_REPOSITORY} != "${repository}" ]]; t
   exit 1
 fi
 
-github_api() {
+github_api_to_file() {
   local operation=$1
-  local response
+  local response_file=$2
   local status
 
-  shift
-  if response=$(gh api -H "X-GitHub-Api-Version: ${api_version}" "$@"); then
+  shift 2
+  if gh api -H "X-GitHub-Api-Version: ${api_version}" "$@" \
+    >"${response_file}"; then
     :
   else
     status=$?
     echo "error: GitHub API operation failed: ${operation}" >&2
     return "${status}"
   fi
-  if ! jq -e '.' <<<"${response}" >/dev/null; then
+  if ! jq -e '.' "${response_file}" >/dev/null; then
     echo "error: GitHub API operation returned invalid JSON: ${operation}" >&2
     return 1
   fi
-  printf '%s\n' "${response}"
 }
 
-if runs=$(github_api "read ${sync_workflow} workflow runs" \
-  "repos/${repository}/actions/workflows/${sync_workflow}/runs?per_page=100"); then
+github_api() {
+  local operation=$1
+  local response_file=${temporary}/github-api-response
+
+  shift
+  github_api_to_file "${operation}" "${response_file}" "$@" || return
+  cat "${response_file}"
+}
+
+workflow_runs_file=${temporary}/workflow-runs.json
+successful_runs_file=${temporary}/successful-workflow-runs.json
+if github_api_to_file "read ${sync_workflow} workflow runs" \
+  "${workflow_runs_file}" \
+  "repos/${repository}/actions/workflows/${sync_workflow}/runs?per_page=100"; then
   :
 else
   status=$?
   exit "${status}"
 fi
-if successful_runs=$(github_api "read latest successful ${sync_workflow} run" \
-  "repos/${repository}/actions/workflows/${sync_workflow}/runs?status=success&per_page=1"); then
+if github_api_to_file "read latest successful ${sync_workflow} run" \
+  "${successful_runs_file}" \
+  "repos/${repository}/actions/workflows/${sync_workflow}/runs?status=success&per_page=1"; then
   :
 else
   status=$?
   exit "${status}"
 fi
-if ! jq -e '.workflow_runs | type == "array"' <<<"${runs}" >/dev/null; then
+if ! jq -se '
+  length == 1 and (.[0].workflow_runs | type == "array")
+' "${workflow_runs_file}" >/dev/null; then
   echo "error: workflow-runs response omitted workflow_runs" >&2
   exit 1
 fi
-if ! jq -e '.workflow_runs | type == "array"' \
-  <<<"${successful_runs}" >/dev/null; then
+if ! jq -se '
+  length == 1 and (.[0].workflow_runs | type == "array")
+' "${successful_runs_file}" >/dev/null; then
   echo "error: successful workflow-runs response omitted workflow_runs" >&2
   exit 1
 fi
 
-latest_run=$(jq -c '.workflow_runs[0] // null' <<<"${runs}")
+latest_run=$(jq -c '
+  .workflow_runs[0] // null |
+  if . == null then null
+  else {html_url, conclusion, status, head_sha}
+  end
+' "${workflow_runs_file}")
 # The filtered endpoint can lag the unfiltered history. Compare completion
 # timestamps so an older filtered result cannot hide a recent successful sync;
 # retain it as a fallback when success is outside the recent 100-run window.
-last_success=$(jq -cn --argjson recent "${runs}" \
-  --argjson successful "${successful_runs}" '
+last_success=$(jq -cs '
+  .[0] as $recent | .[1] as $successful |
   [$recent.workflow_runs[], $successful.workflow_runs[] |
     select(.status == "completed" and .conclusion == "success")]
   | max_by(.updated_at | fromdateiso8601) // null
-')
+  | if . == null then null
+    else {html_url, updated_at, head_sha}
+    end
+' "${workflow_runs_file}" "${successful_runs_file}")
 consecutive_failures=$(jq -r '
   reduce .workflow_runs[] as $run (
     {count: 0, stopped: false};
@@ -121,7 +145,7 @@ consecutive_failures=$(jq -r '
       .count += 1
     else . end
   ) | .count
-' <<<"${runs}")
+' "${workflow_runs_file}")
 
 latest_url=$(jq -r '.html_url // "none"' <<<"${latest_run}")
 latest_conclusion=$(jq -r '.conclusion // .status // "none"' <<<"${latest_run}")

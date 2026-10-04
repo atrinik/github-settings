@@ -59,9 +59,74 @@ fi
 case ${endpoint} in
 "repos/atrinik/github-settings/actions/workflows/sync-project.yml/runs?per_page=100")
   case ${FAKE_GH_SCENARIO} in
+  large-healthy)
+    jq -n --argjson size "${FAKE_LARGE_RESPONSE_BYTES}" '{workflow_runs: [{
+      status: "completed", conclusion: "success",
+      created_at: "2026-08-10T04:49:00Z",
+      updated_at: "2026-08-10T04:50:00Z",
+      html_url: "https://github.com/atrinik/github-settings/actions/runs/100",
+      head_sha: "SUCCESS",
+      log: ("x" * $size)
+    }]}'
+    ;;
+  large-repeated-failure)
+    jq -n --argjson size "${FAKE_LARGE_RESPONSE_BYTES}" '{workflow_runs: [
+      {
+        status: "completed", conclusion: "failure",
+        updated_at: "2026-08-10T04:59:00Z",
+        html_url: "https://github.com/atrinik/github-settings/actions/runs/102",
+        head_sha: "FAIL2",
+        log: ("x" * $size)
+      },
+      {
+        status: "completed", conclusion: "failure",
+        updated_at: "2026-08-10T04:49:00Z",
+        html_url: "https://github.com/atrinik/github-settings/actions/runs/101",
+        head_sha: "FAIL1"
+      },
+      {
+        status: "completed", conclusion: "success",
+        updated_at: "2026-08-10T04:40:00Z",
+        html_url: "https://github.com/atrinik/github-settings/actions/runs/100",
+        head_sha: "SUCCESS"
+      }
+    ]}'
+    ;;
+  large-invalid-response)
+    jq -nr --argjson size "${FAKE_LARGE_RESPONSE_BYTES}" \
+      '"{\"workflow_runs\":[" + ("x" * $size)'
+    ;;
+  runs-malformed)
+    printf '{'
+    ;;
+  runs-empty)
+    :
+    ;;
+  runs-whitespace)
+    printf '  \n\t'
+    ;;
+  runs-null)
+    jq -n 'null'
+    ;;
+  runs-false)
+    jq -n 'false'
+    ;;
+  runs-object)
+    jq -n '{}'
+    ;;
+  runs-wrong-type)
+    jq -n '{workflow_runs: {}}'
+    ;;
+  multi-document-runs)
+    jq -n '{workflow_runs: []}'
+    jq -n '{workflow_runs: []}'
+    ;;
   healthy | missing-settings | recovery | recurrence-before | reopen | \
     incident-api-failure | filtered-stale | filtered-empty | filtered-newer | \
-    filtered-recovery | filtered-before-episode | filtered-pending | future-success)
+    filtered-recovery | filtered-before-episode | filtered-pending | future-success | \
+    multi-document-success | success-malformed | success-empty | \
+    success-whitespace | success-null | success-false | success-object | \
+    success-wrong-type)
     jq -n '{workflow_runs: [{
       status: "completed", conclusion: "success",
       created_at: "2026-08-10T04:49:00Z",
@@ -121,7 +186,9 @@ case ${endpoint} in
       }
     ]}'
     ;;
-  stale | sync-failure | foreign | multiple-managed | alert-api-failure)
+  stale | sync-failure | foreign | multiple-managed | alert-api-failure | \
+    alert-malformed-response | alert-empty-response | alert-null-response | \
+    alert-false-response)
     jq -n '{workflow_runs: [{
       status: "completed", conclusion: "success",
       created_at: "2026-08-10T01:59:00Z",
@@ -165,8 +232,43 @@ case ${endpoint} in
   ;;
 "repos/atrinik/github-settings/actions/workflows/sync-project.yml/runs?status=success&per_page=1")
   case ${FAKE_GH_SCENARIO} in
+  large-healthy | large-repeated-failure)
+    jq -n --argjson size "${FAKE_LARGE_RESPONSE_BYTES}" '{workflow_runs: [{
+      status: "completed", conclusion: "success",
+      created_at: "2026-08-10T04:39:00Z",
+      updated_at: "2026-08-10T04:40:00Z",
+      html_url: "https://github.com/atrinik/github-settings/actions/runs/100",
+      head_sha: "SUCCESS",
+      log: ("x" * $size)
+    }]}'
+    ;;
+  multi-document-success)
+    jq -n '{workflow_runs: []}'
+    jq -n '{workflow_runs: []}'
+    ;;
+  success-malformed)
+    printf '{'
+    ;;
+  success-empty)
+    :
+    ;;
+  success-whitespace)
+    printf '  \n\t'
+    ;;
+  success-null)
+    jq -n 'null'
+    ;;
+  success-false)
+    jq -n 'false'
+    ;;
+  success-object)
+    jq -n '{}'
+    ;;
+  success-wrong-type)
+    jq -n '{workflow_runs: {}}'
+    ;;
   healthy | missing-settings | recovery | recurrence-before | reopen | \
-    incident-api-failure)
+    incident-api-failure | multi-document-runs | runs-object | runs-wrong-type)
     jq -n '{workflow_runs: [{
       status: "completed", conclusion: "success",
       created_at: "2026-08-10T04:49:00Z",
@@ -185,6 +287,8 @@ case ${endpoint} in
     }]}'
     ;;
   stale | sync-failure | foreign | multiple-managed | alert-api-failure | \
+    alert-malformed-response | alert-empty-response | alert-null-response | \
+    alert-false-response | \
     filtered-stale | filtered-recovery | filtered-before-episode | filtered-pending)
     jq -n '{workflow_runs: [{
       status: "completed", conclusion: "success",
@@ -291,7 +395,13 @@ case ${endpoint} in
   ;;
 repos/atrinik/github-settings/issues)
   [[ ${method} == POST ]]
-  jq -n '{number: 70, state: "open"}'
+  case ${FAKE_GH_SCENARIO} in
+  alert-malformed-response) printf '{' ;;
+  alert-empty-response) : ;;
+  alert-null-response) jq -n 'null' ;;
+  alert-false-response) jq -n 'false' ;;
+  *) jq -n '{number: 70, state: "open"}' ;;
+  esac
   ;;
 repos/atrinik/github-settings/issues/70)
   [[ ${method} == PATCH ]]
@@ -336,6 +446,8 @@ PLAN
 EOF
 chmod +x "${temporary}/bin/sync-plan"
 
+large_response_bytes=$(($(getconf ARG_MAX) + 65536))
+
 run_health() {
   local gh_scenario=$1
   local sync_scenario=$2
@@ -345,6 +457,7 @@ run_health() {
     FAKE_GH_LOG="${temporary}/gh.log" \
     FAKE_GH_BODY="${temporary}/gh-body" \
     FAKE_GH_SCENARIO="${gh_scenario}" \
+    FAKE_LARGE_RESPONSE_BYTES="${large_response_bytes}" \
     FAKE_SYNC_LOG="${temporary}/sync.log" \
     FAKE_SYNC_SCENARIO="${sync_scenario}" \
     GITHUB_ACTIONS=true \
@@ -366,6 +479,67 @@ grep -Fq 'State: **healthy**' <<<"${output}"
 grep -Fq 'Convergence: converged; mutations 0' <<<"${output}"
 grep -Fq 'State: **healthy**' "${temporary}/step-summary"
 [[ $(wc -l <"${temporary}/gh.log") == 2 ]]
+
+# Both workflow-run endpoints can exceed the host's entire command argument
+# limit when run metadata contains large logs. The monitor must parse those
+# responses without placing either JSON document on a child-process argv.
+: >"${temporary}/gh.log"
+output=$(run_health large-healthy zero)
+grep -Fq 'State: **healthy**' <<<"${output}"
+grep -Fq 'Last successful run: [2026-08-10T04:50:00Z]' <<<"${output}"
+
+: >"${temporary}/gh.log"
+if run_health large-repeated-failure zero --apply \
+  >"${temporary}/large-failure.out" 2>"${temporary}/large-failure.err"; then
+  echo "error: health check accepted large repeated synchronization failures" >&2
+  exit 1
+fi
+grep -Fq '2 consecutive synchronization runs failed' \
+  "${temporary}/large-failure.out"
+grep -Fq 'ALERT created managed Project health incident' \
+  "${temporary}/large-failure.out"
+
+: >"${temporary}/gh.log"
+: >"${temporary}/sync.log"
+if run_health large-invalid-response zero \
+  >"${temporary}/large-invalid.out" 2>"${temporary}/large-invalid.err"; then
+  echo "error: health check accepted a large invalid API response" >&2
+  exit 1
+fi
+grep -Fq 'GitHub API operation returned invalid JSON' \
+  "${temporary}/large-invalid.err"
+[[ ! -s ${temporary}/sync.log ]]
+
+for scenario in runs-malformed runs-empty runs-whitespace runs-null runs-false \
+  success-malformed success-empty success-whitespace success-null success-false; do
+  : >"${temporary}/gh.log"
+  : >"${temporary}/sync.log"
+  if run_health "${scenario}" zero \
+    >"${temporary}/${scenario}.out" 2>"${temporary}/${scenario}.err"; then
+    echo "error: health check accepted ${scenario} API response" >&2
+    exit 1
+  fi
+  grep -Fq 'GitHub API operation returned invalid JSON' \
+    "${temporary}/${scenario}.err"
+  [[ ! -s ${temporary}/sync.log ]]
+done
+
+for scenario in multi-document-runs runs-object runs-wrong-type \
+  multi-document-success success-object success-wrong-type; do
+  : >"${temporary}/gh.log"
+  : >"${temporary}/sync.log"
+  if run_health "${scenario}" zero \
+    >"${temporary}/${scenario}.out" 2>"${temporary}/${scenario}.err"; then
+    echo "error: health check accepted ${scenario} workflow response" >&2
+    exit 1
+  fi
+  expected_error='workflow-runs response omitted workflow_runs'
+  if [[ ${scenario} == *success* ]]; then
+    expected_error='successful workflow-runs response omitted workflow_runs'
+  fi
+  grep -Fq "${expected_error}" "${temporary}/${scenario}.err"
+  [[ ! -s ${temporary}/sync.log ]]
+done
 
 # Recent successful runs must win over stale or empty filtered history, while
 # a newer filtered response must still win if the run completed between reads.
@@ -445,6 +619,18 @@ grep -Fq 'list Project health incidents (page 1)' \
   "${temporary}/incident-api-failure.err"
 grep -Fq 'create Project health incident' \
   "${temporary}/alert-api-failure.err"
+
+for scenario in alert-malformed-response alert-empty-response \
+  alert-null-response alert-false-response; do
+  : >"${temporary}/gh.log"
+  if run_health "${scenario}" zero --apply \
+    >"${temporary}/${scenario}.out" 2>"${temporary}/${scenario}.err"; then
+    echo "error: health check accepted ${scenario} from incident creation" >&2
+    exit 1
+  fi
+  grep -Fq 'GitHub API operation returned invalid JSON: create Project health incident' \
+    "${temporary}/${scenario}.err"
+done
 
 : >"${temporary}/gh.log"
 : >"${temporary}/sync.log"
