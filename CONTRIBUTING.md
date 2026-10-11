@@ -138,7 +138,16 @@ secrets. Keep pending onboarding distinct from observed source/environment and
 owner-observed external registration; verify live protected main and exact
 refs. First owner-local API-token bootstrap is restricted to the fourteen
 listed renderer/toolkit libraries and ends with revocation; subsequent releases
-use OIDC only. Protocol 0.2 retains its approved manual path. Dependency-update
+use OIDC only. Protocol 0.2 retains its approved manual path. Crate
+publication must qualify both exact-main workflows, isolate inert source
+signing from build/semantic-release OIDC, and keep automatic verify permissions
+read-only. The inert publisher alone adds contents write for the global
+crate/version upload intent and receives its intent token only in the upload
+step. Runtime certificate/source-run verification and create-only reservation
+readback precede upload; an existing/ambiguous intent blocks absent-version
+retries and is never automatically reset. Activate immutable-release policy
+only through the documented narrow snapshot/readback/verified-rollback window;
+do not broad-apply unrelated publisher-plan mutations. Dependency-update
 App setup is client/editor only, exact contents/PR write and metadata read,
 repository credential names only, registry readiness before owned PR creation,
 and ordinary review/checks without auto-merge. Distinguish observed installation

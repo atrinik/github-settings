@@ -433,9 +433,14 @@ while IFS= read -r crate_record; do
       "repos/${repository}/contents/.github/workflows/publish-crate.yml?ref=${branch_sha}")
     workflow_source=$(jq -er 'select(.encoding == "base64" and .type == "file") | .content' \
       <<<"${workflow}" | base64 --decode)
+    source_workflow=$(github_api "read ${repository} source signing workflow at exact main" \
+      "repos/${repository}/contents/.github/workflows/release.yml?ref=${branch_sha}")
+    source_workflow_file=${temporary}/${repository##*/}-source-release.yml
+    jq -er 'select(.encoding == "base64" and .type == "file") | .content' \
+      <<<"${source_workflow}" | base64 --decode >"${source_workflow_file}"
     python3 "${root}/lib/verify_crate_workflow.py" --repository "${repository}" \
-      --repository-id "${repository_id}" <<<"${workflow_source}"
-    echo "KEEP ${repository} reviewed publication workflow at ${branch_sha}"
+      --repository-id "${repository_id}" --source-workflow-file "${source_workflow_file}" <<<"${workflow_source}"
+    echo "KEEP ${repository} reviewed publication and source signing workflows at ${branch_sha}"
   fi
   crates=$(jq -r '.crates | join(",")' <<<"${crate_record}")
   echo "KEEP ${repository} exact protected main publication identity"

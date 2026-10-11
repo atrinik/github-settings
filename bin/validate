@@ -806,8 +806,8 @@ jq -e \
     $inventory[$name] as $expected |
     (keys == ["authentication_action", "bootstrap_crates", "bootstrap_policy", "crates",
       "environment", "environment_state", "provider", "publisher_registration", "release_approval",
-      "repository", "repository_id", "runbook", "source_state", "workflow_filename",
-      "workflow_ref", "workflow_trigger"]) and
+      "repository", "repository_id", "runbook", "source_evidence_policy", "source_state",
+      "source_workflow_filename", "upload_intent_policy", "workflow_filename", "workflow_ref", "workflow_trigger"]) and
     $expected != null and .repository == ("atrinik/" + $name) and
     .repository_id == $expected.id and .crates == $expected.crates and
     .bootstrap_crates == (if $expected.bootstrap == true then $expected.crates else [] end) and
@@ -821,9 +821,13 @@ jq -e \
       (($patterns | index($action)) != null or
        ($patterns | index("rust-lang/crates-io-auth-action@*")) != null)) and
     .provider == "github" and
+    $actions[0].github_owned_allowed == true and
     ($repositories[0].pull_request_gate | index($name)) != null and
     ($repositories[0].archive | index($name)) == null and
     .workflow_filename == "publish-crate.yml" and
+    .source_workflow_filename == "release.yml" and
+    .source_evidence_policy == "github-attested-protected-main-manifest" and
+    .upload_intent_policy == "create-only-global-git-ref-before-upload" and
     .workflow_ref == "refs/heads/main" and .workflow_trigger == "workflow_dispatch" and
     .runbook == "README.md#automatic-crate-trusted-publishing" and
     .release_approval == "reviewed-source-and-version-merge" and

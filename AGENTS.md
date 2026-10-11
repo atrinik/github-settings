@@ -125,11 +125,19 @@
   automatic future publication; environments have zero reviewers/wait and no
   registry secrets. Keep pending source/environment/registration distinct from
   observations; verify live repository/ref/protection and observed environments.
-  Parse observed exact-main workflows structurally with the declared
+  Parse both observed exact-main `publish-crate.yml` and `release.yml` structurally with the declared
   `requirements-validation.txt` dependency; comments/plain text or disabled
   jobs are not executable source proof. External registration remains sanitized
   owner evidence, not a GitHub API fact, and can precede a pending later
   automatic source/environment transition.
+  Source signing alone may request attestation writes/OIDC in a separate inert
+  job; build and semantic-release jobs have no OIDC. Automatic verification
+  uses only contents/actions/checks/attestations read, while the isolated inert
+  publisher adds contents write for atomic upload intent and OIDC. Require
+  actual protected-main manifest provenance and immutable source-release proof
+  in the producer helper. Before registry PUT, atomically reserve the global
+  crate/version Git-reference coordinate; existing/ambiguous reservations block
+  absent-version retries and must never be automatically deleted or reset.
   First owner-local API-token publication is limited to the fourteen declared
   renderer/toolkit libraries; exclude CLIs, revoke bootstrap credentials, and
   use OIDC only afterward. Protocol 0.2 retains its approved manual path.
@@ -179,6 +187,11 @@
   merged and qualified. Every registry upload must prove that its actual source
   release is immutable; ordinary workflow tokens cannot read administrative
   immutability settings, so do not add an unsupported pre-tag settings query. Never apply immutable-release policy from an unmerged branch.
+  This release delivery activates only the exact immutable-release API policy
+  after a complete snapshot, identity and freshness check, exact readback and
+  verified rollback. Preserve foreign live state; do not broad-apply the
+  publisher plan. Suspend only the three producer source-release workflows in
+  the reviewed reversible window, retaining and restoring their original states.
 - Never print or commit administrative tokens, live secrets, or API responses
   containing credentials.
 - Run `bin/validate`, `bash -n`, ShellCheck on governance scripts, the publisher

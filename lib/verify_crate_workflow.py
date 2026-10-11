@@ -5,6 +5,7 @@ import argparse
 import re
 import shlex
 import sys
+from pathlib import Path
 
 try:
     import yaml
@@ -92,6 +93,8 @@ def verify(source, repository, repository_id):
             "dispatch must offer the automatic operation")
     require(workflow.get("permissions") == {"contents": "read"},
             "workflow default permission must be contents read only")
+    require(workflow.get("env", {}) in ({}, {"PYTHONDONTWRITEBYTECODE": "1"}),
+            "publication workflow must not override helper execution through global environment")
     require("CARGO_REGISTRY_TOKEN" not in workflow.get("env", {}),
             "registry token must not be workflow scoped")
     jobs = workflow.get("jobs")
@@ -122,17 +125,20 @@ def verify(source, repository, repository_id):
         terms = expression(job.get("if")).split("&&")
         require(len(terms) == len(guard) and {term.strip() for term in terms} == guard,
                 f"{name} must enforce exactly the repository/id/main/dispatch/automatic guard")
-        require(isinstance(job.get("runs-on"), (str, list)) and bool(job["runs-on"]),
-                f"{name} has no runner")
+        require(job.get("runs-on") == "ubuntu-24.04" and "container" not in job and "services" not in job,
+                f"{name} must use the reviewed hosted runner without execution overrides")
         require("CARGO_REGISTRY_TOKEN" not in job.get("env", {}),
                 f"{name} must not scope the registry token to the job")
         for key, value in {
+            "GH_READ_TOKEN": "${{ github.token }}",
             "SOURCE_RELEASE_ID": "${{ inputs.source_release_id }}",
             "SOURCE_REVISION": "${{ inputs.source_revision }}",
             "MANIFEST_SHA256": "${{ inputs.manifest_sha256 }}",
         }.items():
             require(job.get("env", {}).get(key) == value,
                     f"{name} must bind {key} to the reviewed dispatch input")
+        require(set(job.get("env", {})) == {"GH_READ_TOKEN", "SOURCE_RELEASE_ID", "SOURCE_REVISION", "MANIFEST_SHA256"},
+                f"{name} must not override helper execution through extra environment")
         steps = job.get("steps")
         require(isinstance(steps, list) and steps, f"{name} has no executable steps")
         checkouts = [step for step in steps if isinstance(step, dict)
@@ -143,6 +149,9 @@ def verify(source, repository, repository_id):
         require(re.fullmatch(r"actions/checkout@[0-9a-f]{40}", checkout["uses"]) is not None
                 and checkout.get("with", {}).get("ref") == "${{ github.sha }}"
                 and str(checkout.get("with", {}).get("persist-credentials")).lower() == "false"
+                and set(checkout.get("with", {})) <= {"ref", "persist-credentials", "fetch-depth"}
+                and str(checkout.get("with", {}).get("fetch-depth", "0")) == "0"
+                and "env" not in checkout and "run" not in checkout
                 and "if" not in checkout, f"{name} checkout identity/credential drift")
         for step in steps:
             require(isinstance(step, dict), f"invalid {name} step")
@@ -155,22 +164,24 @@ def verify(source, repository, repository_id):
             if helper_run(step, "verify"):
                 critical_step(step, f"{name} verification")
     verify_job = jobs[verify_name]
-    require(verify_job.get("permissions", workflow["permissions"]) == {"contents": "read"},
-            "automatic verification must not request OIDC")
+    read_permissions = {"contents": "read", "actions": "read", "checks": "read", "attestations": "read"}
+    require(verify_job.get("permissions") == read_permissions,
+            "automatic verification needs only source/provenance/run/check read permissions")
     require(any(helper_run(step, "verify") for step in verify_job["steps"]),
             "automatic verification helper must run unconditionally")
     publish = jobs[publish_name]
     require(publish.get("needs") in (verify_name, [verify_name]),
             "automatic publication must depend on credential-free verification")
     require(publish.get("environment") == "crates-io-release", "wrong publication environment")
-    require(publish.get("permissions") == {"contents": "read", "id-token": "write"},
-            "automatic upload needs exactly contents read and OIDC write")
+    require(publish.get("permissions") == dict(read_permissions, contents="write", **{"id-token": "write"}),
+            "automatic upload needs only provenance reads, upload-intent contents write and OIDC write")
     auth_steps = [(index, step) for index, step in enumerate(publish["steps"])
                   if str(step.get("uses", "")).startswith("rust-lang/crates-io-auth-action@")]
     require(len(auth_steps) == 1, "automatic upload needs one official authentication action")
     auth_index, auth = auth_steps[0]
     critical_step(auth, "official authentication step")
-    require(auth.get("id") == "auth" and "if" not in auth,
+    require(auth.get("id") == "auth" and "if" not in auth
+            and "with" not in auth and "env" not in auth and "run" not in auth,
             "official authentication step must be executable and have id auth")
     require(any(helper_run(step, "verify") for step in publish["steps"][:auth_index]),
             "upload must reverify bytes before requesting OIDC")
@@ -181,10 +192,36 @@ def verify(source, repository, repository_id):
     critical_step(upload, "registry upload step")
     require(upload_index > auth_index and upload.get("id") in (None, "upload") and "if" not in upload
             and upload["env"]["CARGO_REGISTRY_TOKEN"] == "${{ steps.auth.outputs.token }}"
+            and upload["env"].get("GH_INTENT_TOKEN") == "${{ github.token }}"
             and helper_run(upload, "upload"),
             "upload must execute after auth with only the returned temporary token")
+    for name in (verify_name, publish_name):
+        require(jobs[name].get("env", {}).get("GH_READ_TOKEN") == "${{ github.token }}"
+                and "GH_INTENT_TOKEN" not in jobs[name].get("env", {})
+                and "GH_INTENT_TOKEN" not in workflow.get("env", {}),
+                "read authority must be explicit; upload-intent token must be step scoped")
+        for step in jobs[name]["steps"]:
+            if step is upload:
+                require(set(step.get("env", {})) == {"CARGO_REGISTRY_TOKEN", "GH_INTENT_TOKEN"},
+                        "upload step must receive only the temporary registry and intent tokens")
+                continue
+            require("GH_INTENT_TOKEN" not in step.get("env", {}),
+                    "only upload may receive the intent token")
+            if "uses" in step:
+                require(str(step["uses"]).startswith("actions/checkout@") or step is auth,
+                        "automatic jobs may run only immutable checkout and official authentication actions")
+            else:
+                critical_step(step, f"{name} inert helper")
+                require("env" not in step, "verification/confirmation must not override helper environment")
+                confirm = dict(step)
+                confirm.pop("if", None)
+                require(helper_run(step, "verify") or (name == publish_name
+                        and helper_run(confirm, "confirm") and step.get("if") in (
+                        "${{ !cancelled() }}",
+                        "${{ !cancelled() && (steps.upload.outcome == 'success' || steps.upload.outcome == 'failure') }}")),
+                        "automatic jobs may execute only the inert verify/upload/confirm helpers")
     for name, job in jobs.items():
-        if name == publish_name:
+        if name in (verify_name, publish_name):
             continue
         if repository == "atrinik/protocol" and name == "publish":
             # Protocol 0.2 retains its separately reviewed manual upload path.
@@ -206,19 +243,101 @@ def verify(source, repository, repository_id):
         permissions = job.get("permissions", workflow["permissions"])
         require(isinstance(permissions, dict) and permissions.get("id-token", "none") == "none",
                 f"unexpected OIDC permission on {name}")
+        require(permissions.get("attestations", "none") == "none",
+                f"unexpected attestation permission on {name}")
     return auth["uses"]
+
+
+def verify_source_release(source, repository):
+    """Qualify the signing boundary; runtime certificate/claim checks belong to the producer."""
+    workflow = yaml.load(source, Loader=UniqueLoader)
+    require(isinstance(workflow, dict), "source release must be a YAML mapping")
+    run_configuration(workflow, "source workflow")
+    require(workflow.get("permissions") == {"contents": "read"},
+            "source workflow default must be contents read only")
+    require(not workflow.get("env", {}), "source workflow must not supply signing environment overrides")
+    triggers = workflow.get("on")
+    require(isinstance(triggers, dict) and set(triggers) == {"push", "workflow_dispatch"}
+            and triggers["push"].get("branches") == ["main", "[0-9]+.[0-9]+.x"],
+            "source release must use the reviewed main/maintenance push and dispatch triggers")
+    jobs = workflow.get("jobs")
+    require(isinstance(jobs, dict) and jobs, "missing source release jobs")
+    signers = []
+    for name, job in jobs.items():
+        require(isinstance(job, dict), "invalid source release job")
+        permissions = job.get("permissions", workflow["permissions"])
+        require(isinstance(permissions, dict), "invalid source permissions")
+        if permissions.get("id-token", "none") != "none" or permissions.get("attestations", "none") != "none":
+            require(permissions == {"contents": "read", "id-token": "write", "attestations": "write"},
+                    "only the isolated signer may request OIDC and attestation writes")
+            signers.append(name)
+    require(len(signers) == 1, "source release needs exactly one isolated signer")
+    signer_name = signers[0]
+    signer = jobs[signer_name]
+    run_configuration(signer, "source signer")
+    require(signer.get("continue-on-error", "false") == "false", "signer must fail on errors")
+    require(not signer.get("env", {}), "signer must not override inert execution environment")
+    require(signer.get("runs-on") == "ubuntu-24.04" and "container" not in signer and "services" not in signer,
+            "signer must use the reviewed hosted runner without execution overrides")
+    package_name = signer.get("needs")
+    expected_package = "source-package" if repository == "atrinik/renderer" else "package"
+    require(package_name == expected_package and package_name in jobs,
+            "signer must depend on one credential-free package job")
+    package = jobs[package_name]
+    require(package.get("permissions", workflow["permissions"]) == {"contents": "read"},
+            "source package preparation must be credential-free")
+    require(package.get("continue-on-error", "false") == "false", "package preparation must fail on errors")
+    guard = (f"needs.{package_name}.outputs.release == 'true'" if repository == "atrinik/renderer"
+             else f"needs.{package_name}.outputs.version != ''")
+    require(expression(signer.get("if")) == guard, "signer must use the package version readiness guard")
+    release = jobs.get("release", {})
+    require(set(release.get("needs", [])) == {package_name, signer_name}
+            and expression(release.get("if")) == guard
+            and release.get("continue-on-error", "false") == "false",
+            "source publication must depend on successful package preparation and signing")
+    steps = signer.get("steps")
+    require(isinstance(steps, list) and len(steps) == 4,
+            "signer must contain only checkout, payload download, inert finalization and official attestation")
+    checkout, download, finalize, attest = steps
+    for step in steps:
+        require(isinstance(step, dict) and "if" not in step, "signing steps must be unconditional")
+        critical_step(step, "source signing step")
+    revision = "${{ needs." + package_name + ".outputs.revision }}"
+    version = "${{ needs." + package_name + ".outputs.version }}"
+    artifact = ("prepared-renderer-release-${{ github.sha }}" if repository == "atrinik/renderer"
+                else "source-release-${{ github.sha }}")
+    require(re.fullmatch(r"actions/checkout@[0-9a-f]{40}", str(checkout.get("uses"))) is not None
+            and checkout.get("with") == {"ref": revision, "persist-credentials": "false"},
+            "signer checkout must use the exact prepared revision without persisted credentials")
+    require(re.fullmatch(r"actions/download-artifact@[0-9a-f]{40}", str(download.get("uses"))) is not None
+            and download.get("with") == {"name": artifact, "path": "build/release/"},
+            "signer must download only its same-run prepared payload")
+    require(finalize.get("env") == {"ATRINIK_RELEASE_BRANCH": "${{ github.ref_name }}",
+            "EXPECTED_SOURCE_REVISION": revision, "EXPECTED_SOURCE_VERSION": version}
+            and shlex.split(finalize.get("run", "")) == ["python3", "tools/crate_release.py", "finalize",
+            "--source-tag", "v${EXPECTED_SOURCE_VERSION}", "--archives", "build/release"],
+            "signer may run only the inert payload finalizer with exact prepared inputs")
+    require(re.fullmatch(r"actions/attest-build-provenance@[0-9a-f]{40}", str(attest.get("uses"))) is not None
+            and attest.get("with") == {"subject-path": "build/release/crate-release.json", "push-to-registry": "false"},
+            "signer must attest the exact manifest through the immutable official action")
+    for step in (checkout, download, attest):
+        require("run" not in step and "env" not in step,
+                "source signing action must not execute extra commands or receive credential overrides")
+    return attest["uses"]
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repository", required=True)
     parser.add_argument("--repository-id", required=True)
+    parser.add_argument("--source-workflow-file", required=True)
     args = parser.parse_args()
     try:
         action = verify(sys.stdin.read(), args.repository, args.repository_id)
-    except (ValueError, KeyError, TypeError, yaml.YAMLError) as error:
+        signer_action = verify_source_release(Path(args.source_workflow_file).read_text(), args.repository)
+    except (ValueError, KeyError, TypeError, OSError, yaml.YAMLError) as error:
         sys.exit(f"error: crate publication executable workflow drift: {error}")
-    print(f"Executable automatic publication contract verified; immutable auth action {action}")
+    print(f"Executable automatic publication and inert source signing contracts verified; immutable actions {action}, {signer_action}")
 
 
 if __name__ == "__main__":

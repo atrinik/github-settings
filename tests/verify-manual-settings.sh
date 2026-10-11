@@ -102,55 +102,7 @@ repos/atrinik/*/git/ref/heads/main)
   jq -n --arg sha "${sha}" '{ref:"refs/heads/main",object:{type:"commit",sha:$sha}}'
   ;;
 repos/atrinik/protocol/contents/.github/workflows/publish-crate.yml\?ref=*)
-  source=$(cat <<'WORKFLOW'
-on:
-  workflow_dispatch:
-    inputs:
-      operation:
-        type: choice
-        options: [automatic]
-permissions:
-  contents: read
-jobs:
-  automatic-verify:
-    if: github.repository == 'atrinik/protocol' && github.repository_id == '1327106950' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.operation == 'automatic'
-    runs-on: ubuntu-24.04
-    env:
-      SOURCE_RELEASE_ID: ${{ inputs.source_release_id }}
-      SOURCE_REVISION: ${{ inputs.source_revision }}
-      MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
-    steps:
-      - uses: actions/checkout@1111111111111111111111111111111111111111
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - run: python3 tools/crate_release.py verify --release-id "$SOURCE_RELEASE_ID" --revision "$SOURCE_REVISION" --manifest-sha256 "$MANIFEST_SHA256"
-  automatic-publish:
-    needs: automatic-verify
-    if: github.repository == 'atrinik/protocol' && github.repository_id == '1327106950' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.operation == 'automatic'
-    environment: crates-io-release
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      id-token: write
-    env:
-      SOURCE_RELEASE_ID: ${{ inputs.source_release_id }}
-      SOURCE_REVISION: ${{ inputs.source_revision }}
-      MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
-    steps:
-      - uses: actions/checkout@1111111111111111111111111111111111111111
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - run: python3 tools/crate_release.py verify --release-id "$SOURCE_RELEASE_ID" --revision "$SOURCE_REVISION" --manifest-sha256 "$MANIFEST_SHA256"
-      - id: auth
-        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18
-      - id: upload
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-        run: python3 tools/crate_release.py upload --release-id "$SOURCE_RELEASE_ID" --revision "$SOURCE_REVISION" --manifest-sha256 "$MANIFEST_SHA256"
-WORKFLOW
-)
+  source=$(cat "${FAKE_CRATE_FIXTURES}/crate-publication.yml")
   case ${FAKE_GH_SCENARIO} in
   crate-workflow-drift) source=${source//rust-lang\/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18/rust-lang\/crates-io-auth-action@v1} ;;
   crate-workflow-future-pin) source=${source//c6f97d42243bad5fab37ca0427f495c86d5b1a18/2222222222222222222222222222222222222222} ;;
@@ -164,6 +116,17 @@ WORKFLOW
   crate-workflow-default-shell) source=$(printf 'defaults:\n  run:\n    shell: echo {0}\n%s\n' "${source}") ;;
   crate-workflow-job-default-shell) source=$(sed '/    runs-on: ubuntu-24.04/a\    defaults:\n      run:\n        shell: echo {0}' <<<"${source}") ;;
   crate-workflow-comment-run) source=${source//run: python3/run: \"# python3}; source=${source//\"\$DIGEST\"/\"\$DIGEST\"\"} ;;
+  esac
+  jq -n --arg content "$(printf '%s' "${source}" | base64)" \
+    '{type:"file",encoding:"base64",content:$content}'
+  ;;
+repos/atrinik/protocol/contents/.github/workflows/release.yml\?ref=*)
+  source=$(cat "${FAKE_CRATE_FIXTURES}/crate-source-release.yml")
+  case ${FAKE_GH_SCENARIO} in
+  crate-source-workflow-comments) source="# id-token: write actions/attest-build-provenance@1111111111111111111111111111111111111111" ;;
+  crate-source-workflow-oidc-build) source=$(sed '/  package:/a\    permissions: {contents: read, id-token: write}' <<<"${source}") ;;
+  crate-source-workflow-build-signer) source=${source//python3 tools\/crate_release.py finalize/npm install} ;;
+  crate-source-workflow-bypass-signer) source=$(sed '/    - attest/d' <<<"${source}") ;;
   esac
   jq -n --arg content "$(printf '%s' "${source}" | base64)" \
     '{type:"file",encoding:"base64",content:$content}'
@@ -782,6 +745,7 @@ run_verify() {
   PATH="${temporary}/bin:${PATH}" \
     FAKE_GH_LOG="${temporary}/gh.log" \
     FAKE_GH_SCENARIO="${scenario}" \
+    FAKE_CRATE_FIXTURES="${root}/tests/fixtures" \
     GITHUB_ACTIONS=true GH_TOKEN=test-token \
     ATRINIK_VALIDATION_TODAY=2026-10-11 \
     "${verification_root}/bin/verify-manual-settings"
@@ -811,14 +775,16 @@ jq '.crates_io_trusted_publishing[0] |= (
   >"${observed_root}/config/manual-settings.json"
 observed_output=$(run_verify present "${observed_root}")
 future_output=$(run_verify crate-workflow-future-pin "${observed_root}")
-grep -Fq "immutable auth action rust-lang/crates-io-auth-action@2222222222222222222222222222222222222222" <<<"${future_output}"
+grep -Fq "immutable actions rust-lang/crates-io-auth-action@2222222222222222222222222222222222222222" <<<"${future_output}"
 grep -Fq 'KEEP atrinik/protocol environment crates-io-release metadata' <<<"${observed_output}"
 grep -Fq 'GitHub metadata does not verify external registration' <<<"${observed_output}"
 for scenario in crate-workflow-drift crate-env-wait crate-env-reviewer crate-env-bypass \
   crate-env-branch crate-env-secret crate-workflow-comments crate-workflow-plaintext \
   crate-workflow-disabled crate-workflow-no-oidc crate-workflow-shell \
   crate-workflow-ignored-step-failure crate-workflow-ignored-job-failure \
-  crate-workflow-default-shell crate-workflow-job-default-shell; do
+  crate-workflow-default-shell crate-workflow-job-default-shell \
+  crate-source-workflow-comments crate-source-workflow-oidc-build \
+  crate-source-workflow-build-signer crate-source-workflow-bypass-signer; do
   if run_verify "${scenario}" "${observed_root}" >"${temporary}/${scenario}.out" \
     2>"${temporary}/${scenario}.err"; then
     echo "error: verifier accepted ${scenario}" >&2

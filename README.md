@@ -817,42 +817,68 @@ and the complete asset payload. A configured flag alone is not release proof.
 Qualification includes build, packaging, draft assembly, retry/recovery,
 actual immutable-release upload gating, and publication paths.
 
-Use this rollout order:
+Use this narrow rollout order for this release activation:
 
-1. Review, merge, and qualify each owning release workflow before activating
-   its selection. Confirm draft creation/recovery and complete asset assembly;
-   preserve Classic. Retain exact source revision and producer validation
-   evidence, including rejection of mutable source releases before registry
-   authentication or upload.
-2. Merge this governance policy. Run `bin/publish` and inspect the exact
-   `PUT /orgs/atrinik/settings/immutable-releases` payload. It must select only
-   `[1327106950,1327106998,1327107043,1327289971]` in this inventory.
-   Preserve any additional previously accepted selection during future edits.
-3. With explicit deployment authorization, run `bin/publish --apply`. The
-   publisher verifies the organization selection and the repository's
-   `enabled=true,enforced_by_owner=true` state before continuing.
-4. Confirm the exact full live selection and each repository independently,
-   then rerun the failed source workflow and verify its complete immutable
-   release and registry readiness:
+1. Qualify each reviewed draft-first producer candidate and retain its exact
+   revision and validation evidence. Before merging, inspect the three
+   Semantic Release workflows, verify no in-flight run, record their original
+   enabled states, and temporarily disable only those three workflows. This
+   reversible window prevents a first mutable automatic source release while
+   immutable policy awaits activation; preserve Classic and all other workflows.
+2. Merge the accepted producer and governance source. Run `bin/publish` in
+   read-only plan mode and inspect every mutation. The broad plan can include
+   unrelated drift, so **do not run `bin/publish --apply` for this activation**.
+   Provision crate environments only after their owning workflows are merged.
+3. The authorized coordinator verifies the live organization and repository
+   identities and snapshots `GET /orgs/atrinik/settings/immutable-releases`
+   plus the complete paginated
+   `GET /orgs/atrinik/settings/immutable-releases/repositories` selection.
+   Normalize the snapshot exactly as `current_immutable_release_payload` in
+   `bin/publish`: mode `all`/`none`, or mode `selected` with the complete sorted
+   unique selected IDs. Retain the snapshot privately for verified rollback.
+4. Derive the targeted payload from the merged desired inventory, adding only
+   the three producer IDs and retaining the complete accepted prior selection.
+   For this inventory it is `enforced_repositories: selected` and
+   `selected_repository_ids: [1327106950,1327106998,1327107043,1327289971]`.
+   Require all four current names/IDs to match and preserve Classic. Re-read the
+   complete live policy immediately before writing; it must still equal the
+   snapshot. Unexpected mode, unknown selection, identity or concurrent drift
+   stops activation until the accepted desired state is reconciled.
+5. Issue only `PUT /orgs/atrinik/settings/immutable-releases` with that reviewed
+   payload through the supported API and the coordinator's existing authority.
+   Do not apply repository settings, rulesets, other Actions policy or other
+   organization changes from the broad plan. Re-read the organization mode and
+   complete selection, require exact equality with the attempted payload, then
+   require every selected repository's immutable-release readback to report
+   `enabled=true,enforced_by_owner=true`.
+6. Restore only the three workflows to their recorded enabled states. Dispatch
+   exact merged main as authorized and verify a complete immutable source
+   release, its protected-main provenance, and registry readiness before any
+   upload or downstream migration.
 
-   ```sh
-   gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
-     orgs/atrinik/settings/immutable-releases
-   gh api --paginate -H 'X-GitHub-Api-Version: 2026-03-10' \
-     'orgs/atrinik/settings/immutable-releases/repositories?per_page=100' \
-     --jq '.repositories[] | [.name, .id]'
-   for repository in classic protocol renderer content-toolkit; do
-     gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
-       "repos/atrinik/${repository}/immutable-releases"
-   done
-   ```
+Readback uses the same supported endpoints as the publisher:
 
-If the apply or its verification fails, the publisher automatically sends the
-pre-change mode and complete selected-ID set back to GitHub and verifies the
-rollback. Preserve its full error output and stop; do not retry with an ad hoc
-payload. For a later intentional rollback, review and merge a desired-state
-change first, then run the normal plan and explicitly authorized apply flow so
-the previous selection is not guessed or partially overwritten.
+```sh
+gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
+  orgs/atrinik/settings/immutable-releases
+gh api --paginate -H 'X-GitHub-Api-Version: 2026-03-10' \
+  'orgs/atrinik/settings/immutable-releases/repositories?per_page=100' \
+  --jq '.repositories[] | [.name, .id]'
+for repository in classic protocol renderer content-toolkit; do
+  gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
+    "repos/atrinik/${repository}/immutable-releases"
+done
+```
+
+If the targeted write or verification fails, keep the producer workflows
+suspended and read the policy again. Restore the exact pre-change snapshot only
+when the live state still matches the attempted payload in the coordinator's
+owned window; verify the complete restored mode and selection before restoring
+workflow states. Ambiguous readback or concurrent foreign drift is a stop
+condition, not permission to overwrite it. Retain bounded sanitized evidence
+and resolve the conflict before retrying. A later intentional policy removal
+requires reviewed desired source and the same narrow snapshot/readback/rollback
+procedure. Preserve published releases, tags, assets and durable upload intents.
 
 ## Provisioning the Classic Discord release environment
 
@@ -1140,9 +1166,15 @@ reference is `rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d
 The
 [pinned official action](https://github.com/rust-lang/crates-io-auth-action/blob/c6f97d42243bad5fab37ca0427f495c86d5b1a18/README.md)
 exchanges GitHub OIDC for a temporary crates.io token and revokes it in its
-post step. Only the guarded upload job requests `id-token: write`; preparation
-and reconciliation have no OIDC permission. Only the Cargo upload step receives
-the temporary token. Preserve the other action allowances and GitHub-owned
+post step. Within `publish-crate.yml`, only the guarded automatic and retained historical
+protocol 0.2 upload jobs request
+`id-token: write`; crate preparation
+and reconciliation have no OIDC permission. The source workflow has a separate
+inert manifest-signing job with only contents read, OIDC write and attestation
+write; its build and semantic-release jobs have no OIDC. The automatic publisher
+requests only contents write for durable upload intent, actions/checks/attestations
+read and OIDC write. Only the inert upload helper receives the temporary registry
+token and the step-scoped Git-reference intent token; it runs no Cargo, npm or builds. Preserve the other action allowances and GitHub-owned
 Actions access. Registry credentials never belong in GitHub secrets, inventory,
 workflow inputs, logs, or committed credential files.
 
@@ -1150,11 +1182,13 @@ The [GitHub environment controls](https://docs.github.com/en/actions/reference/w
 and [crates.io Trusted Publishing documentation](https://crates.io/docs/trusted-publishing)
 are the supported provisioning references. Activation proceeds in this order:
 
-1. Review and merge governance and owning workflow source. Run the complete
-   `bin/publish` read-only plan and inspect every planned mutation; apply only
-   the authorized merged policy. Preserve unrelated live Actions policy.
+1. Qualify and merge governance and owning workflow source using the narrow
+   reversible immutable-release activation window above. Run the complete
+   `bin/publish` read-only plan and inspect every planned mutation; activate only
+   the authorized exact policy through scoped API/UI operations. Preserve
+   unrelated live policy and never broad-apply this release delivery.
 2. Verify live repository ID/name, active status, default branch, exact main
-   ref, protected main, and the merged publication workflow. Record
+   ref, protected main, and both merged publication/source-signing workflows. Record
    `source_state: observed-reviewed-workflow` only after that observation.
 3. The fourteen renderer and toolkit names above require a first owner-local
    publication because Trusted Publishing cannot create their initial crate
@@ -1181,7 +1215,8 @@ are the supported provisioning references. Activation proceeds in this order:
 `bin/publish` reports this manual setup but never performs it.
 `bin/verify-manual-settings` always checks actual repository identity, exact
 main ref, and protected main. Pending source/environment/registration states
-remain explicit. Observed source is parsed structurally on that exact main revision by
+remain explicit. Observed source parses both `publish-crate.yml` and `release.yml` on the same
+exact main revision through
 `lib/verify_crate_workflow.py`. Install the declared
 `requirements-validation.txt` dependency before local observed-source checks;
 the policy and publication workflows install it before verification. The
@@ -1192,12 +1227,34 @@ failures, and skipped verification/auth/upload steps.
 It verifies executable dispatch, repository/ID/protected-main conditions,
 credential-free dependency, environment, scoped permissions, an unconditional
 full-SHA official auth action, and only the returned temporary upload token.
+Source qualification also verifies a separate inert signer, successful package
+and signer dependencies, exact prepared revision/same-run payload, and the
+full-SHA official `actions/attest-build-provenance` action over
+`build/release/crate-release.json`. Existing `github_owned_allowed: true` covers
+that official action and its internal `actions/attest` dependency; actual refs
+stay immutable and ordinary Dependabot updates need no central SHA lock.
 Safe schedule reconciliation may coexist; its jobs receive no OIDC. Observed
 environments require the exact selected main branch, no reviewer or wait
 protection rule, disabled administrator bypass, and empty secret/variable name
 metadata. Any identity/protection drift fails closed. The verifier reports
 crates.io registration as owner-observed evidence: GitHub metadata cannot prove
 external registration, token scope, successful upload, or future readiness.
+Runtime qualification belongs to the producer helper. It cryptographically
+verifies the actual manifest attestation against the exact repository ID,
+protected main source/signer revision, source workflow and run attempt; matching
+asset digests alone cannot authenticate uploaded release metadata. It also
+requires the actual source release to be immutable before registry upload.
+Before each new crate PUT, the inert upload helper atomically creates only the
+global `refs/tags/crate-upload-intent/<crate>/<version>` coordinate through the
+Git-reference API. Only a successful create response plus exact readback permits
+that upload. An existing or ambiguous reservation with an absent registry version
+blocks retries, including a retry from another source release; registry absence
+alone cannot authorize another PUT. Do not automatically delete/reset these
+intents. Reconcile an interrupted upload with owner-observed registry evidence
+and the documented producer recovery procedure before any separately reviewed
+recovery action. Structural workflow verification does not duplicate runtime
+certificate or reservation logic or prove that those live operations succeeded.
+
 Change each pending state only through reviewed source with its corresponding
 observation. External registration can be observed before a later automatic
 source/environment transition; it does not activate that transition. A status

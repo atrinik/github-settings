@@ -31,6 +31,9 @@ for filter in \
   '.crates_io_trusted_publishing[0].repository = "atrinik/classic"' \
   '.crates_io_trusted_publishing[0].repository_id = 1' \
   '.crates_io_trusted_publishing[0].workflow_filename = "../publish-crate.yml"' \
+  '.crates_io_trusted_publishing[0].source_workflow_filename = "../release.yml"' \
+  '.crates_io_trusted_publishing[0].source_evidence_policy = "release-asset-digest-only"' \
+  '.crates_io_trusted_publishing[0].upload_intent_policy = "retry-on-registry-404"' \
   '.crates_io_trusted_publishing[0].workflow_ref = "refs/tags/v1.0.0"' \
   '.crates_io_trusted_publishing[0].workflow_trigger = "push"' \
   '.crates_io_trusted_publishing[0].environment_state = "active"' \
@@ -78,6 +81,14 @@ jq '.patterns_allowed += ["rust-lang/*"]' "${root}/config/actions-selected.json"
   >"${temporary}/config/actions-selected.json"
 if "${temporary}/bin/validate" >/dev/null 2>&1; then
   echo "error: accepted broader Rust action access beside the exact pin" >&2
+  exit 1
+fi
+reset_policy
+# GitHub-owned official signing actions remain permitted without central SHA locks.
+jq '.github_owned_allowed = false' "${root}/config/actions-selected.json" \
+  >"${temporary}/config/actions-selected.json"
+if "${temporary}/bin/validate" >/dev/null 2>&1; then
+  echo "error: accepted source provenance signing without GitHub-owned Actions access" >&2
   exit 1
 fi
 reset_policy
