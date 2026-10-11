@@ -401,6 +401,82 @@ def merge_check_run(coordinate, check, pr, merges, proofs, recovered):
     return True
 
 
+def canary_actions_policy(coordinate, metadata):
+    organization = coordinate.split('/')[0]
+    if type(metadata["id"]) is not int or metadata["id"] < 1:
+        raise EvidenceError("canary repository identity malformed")
+    current = api(f"orgs/{organization}/actions/permissions")
+    if (current["allowed_actions"] not in {"all", "local_only", "selected"}
+            or current["enabled_repositories"] not in {"all", "none", "selected"}):
+        raise EvidenceError("organization Actions permissions malformed")
+    require(current["allowed_actions"] == "selected", "organization Actions selected policy is not active")
+    require(current["enabled_repositories"] != "none", "organization Actions are disabled")
+    membership = []
+    if current["enabled_repositories"] == "selected":
+        membership = pages(f"orgs/{organization}/actions/permissions/repositories", "repositories")
+        require(any(item["id"] == metadata["id"] and item["full_name"].lower() == coordinate.lower()
+                    for item in membership), "canary repository is not enabled for organization Actions")
+    repository_policy = api(f"repos/{coordinate}/actions/permissions")
+    if (not isinstance(repository_policy["enabled"], bool)
+            or repository_policy["allowed_actions"] not in {"all", "local_only", "selected"}):
+        raise EvidenceError("repository Actions permissions malformed")
+    require(repository_policy["enabled"] and repository_policy["allowed_actions"] != "local_only",
+            "canary repository does not allow external Actions")
+    # Repository 'all' cannot relax the organization's selected-actions ceiling.
+    selected = api(f"orgs/{organization}/actions/permissions/selected-actions")
+    desired = config("actions-selected.json")
+    require(desired["github_owned_allowed"] is True and desired["verified_allowed"] is False,
+            "desired selected-actions policy is not conservative")
+    for value in (selected, desired):
+        if (not isinstance(value["github_owned_allowed"], bool)
+                or not isinstance(value["verified_allowed"], bool)
+                or not isinstance(value["patterns_allowed"], list)
+                or not all(isinstance(item, str) for item in value["patterns_allowed"])):
+            raise EvidenceError("selected-actions policy malformed")
+    require(selected["github_owned_allowed"] is True and selected["verified_allowed"] is False
+            and sorted(selected["patterns_allowed"]) == sorted(desired["patterns_allowed"]),
+            "live selected-actions policy differs from desired policy")
+    return {"mode": current["allowed_actions"], "enabled": current["enabled_repositories"],
+            "membership": sorted((item["id"], item["full_name"]) for item in membership),
+            "repository": repository_policy, "selected": selected}
+
+
+def canary_required_checks(coordinate, branch):
+    rules = pages(f"repos/{coordinate}/rules/branches/{quote(branch, safe='')}")
+    entries = []
+    for rule in rules:
+        if rule["type"] == "required_status_checks":
+            entries.extend((item["context"], item["integration_id"])
+                           for item in rule["parameters"]["required_status_checks"])
+    try:
+        legacy = api(f"repos/{coordinate}/branches/{quote(branch, safe='')}/protection/required_status_checks")
+    except APIError as exc:
+        if exc.status != 404:
+            raise
+        legacy = None
+    if legacy is not None:
+        if (not isinstance(legacy["checks"], list) or not isinstance(legacy["contexts"], list)
+                or not all(isinstance(value, str) and value for value in legacy["contexts"])):
+            raise EvidenceError("legacy required status checks malformed")
+        entries.extend((item["context"], item["app_id"]) for item in legacy["checks"])
+        entries.extend((context, None) for context in legacy["contexts"])
+    for context, app in entries:
+        if not isinstance(context, str) or not context or (app is not None and type(app) is not int):
+            raise EvidenceError("effective required status check malformed")
+        require(app in (None, -1, ACTION_APP),
+                f"effective required check is bound to a non-Actions app: {context}")
+    repository_name = coordinate.split('/')[1]
+    configured = config("repositories.json")["required_ci"].get(repository_name)
+    require(bool(configured), "canary has no configured required contexts")
+    if not isinstance(configured, list) or not all(isinstance(value, str) and value for value in configured):
+        raise EvidenceError("configured required checks malformed")
+    required = set(configured) | {context for context, _ in entries}
+    if repository_name in config("security-merge-protection.json")["dependency_review"]:
+        required.add("Dependency review")
+    return (list(dict.fromkeys(configured)) + sorted(required - set(configured)),
+            sorted(json.dumps(item) for item in entries))
+
+
 def sha(coordinate, number):
     metadata = repository(coordinate)
     pr = api(f"repos/{coordinate}/pulls/{number}")
@@ -410,15 +486,9 @@ def sha(coordinate, number):
             and pr["base"]["ref"] == metadata["default_branch"],
             "canary does not target default branch")
     require(bool(SHA.fullmatch(pr["head"]["sha"])), "canary head SHA missing")
+    actions_policy = canary_actions_policy(coordinate, metadata)
     selected = config("actions-selected.json")
-    live = api(f"orgs/{coordinate.split('/')[0]}/actions/permissions/selected-actions")
-    require(selected["github_owned_allowed"] is True and selected["verified_allowed"] is False,
-            "desired selected-actions policy is not conservative")
-    require(live["github_owned_allowed"] is True and live["verified_allowed"] is False
-            and sorted(live["patterns_allowed"]) == sorted(selected["patterns_allowed"]),
-            "live selected-actions policy differs from desired policy")
-    required = config("repositories.json")["required_ci"].get(coordinate.split('/')[1])
-    require(bool(required), "canary has no configured required contexts")
+    required, required_evidence = canary_required_checks(coordinate, metadata["default_branch"])
     files = pages(f"repos/{coordinate}/pulls/{number}/files")
     require(bool(files) and len(files) == pr["changed_files"], "canary file evidence incomplete")
     updates = 0
@@ -515,12 +585,13 @@ def sha(coordinate, number):
             and fresh.get("merge_commit_sha") == pr.get("merge_commit_sha")
             and fresh["state"] == pr["state"] and fresh["merged"] == pr["merged"]
             and (fresh["merged"] or not fresh["draft"]), "canary changed during preflight")
-    fresh_live = api(f"orgs/{coordinate.split('/')[0]}/actions/permissions/selected-actions")
-    require(fresh_live["github_owned_allowed"] is True and fresh_live["verified_allowed"] is False
-            and sorted(fresh_live["patterns_allowed"]) == sorted(selected["patterns_allowed"]),
-            "live selected-actions policy changed during preflight")
-    require(repository(coordinate)["default_branch"] == metadata["default_branch"],
-            "repository default branch changed during preflight")
+    require(canary_actions_policy(coordinate, metadata) == actions_policy,
+            "live Actions permissions changed during preflight")
+    require(canary_required_checks(coordinate, metadata["default_branch"])
+            == (required, required_evidence), "effective required checks changed during preflight")
+    fresh_metadata = repository(coordinate)
+    require(fresh_metadata["default_branch"] == metadata["default_branch"]
+            and fresh_metadata["id"] == metadata["id"], "repository identity/default branch changed during preflight")
     return f"ordinary action-update PR #{number}: {updates} allowed full-SHA updates; required checks passed"
 
 
@@ -556,11 +627,18 @@ def newest_analysis_pages(coordinate, branch):
             return
 
 
+def configured_codeql_languages(setup):
+    values = setup["languages"]
+    if not isinstance(values, list) or not all(isinstance(item, str) and item for item in values):
+        raise EvidenceError("CodeQL default-setup languages malformed")
+    return {canonical_language(value) for value in values}
+
+
 def default_codeql(coordinate, branch, head, minima):
     endpoint = f"repos/{coordinate}/code-scanning/default-setup"
     setup = api(endpoint)
     require(setup["state"] == "configured", "CodeQL default setup not configured")
-    languages = {canonical_language(value) for value in setup["languages"]}
+    languages = configured_codeql_languages(setup)
     require(bool(languages), "CodeQL default setup has no configured languages")
     require(set(minima) <= languages, "required CodeQL languages not configured")
     found = set()
@@ -581,7 +659,7 @@ def default_codeql(coordinate, branch, head, minima):
         if found == languages:
             fresh = api(endpoint)
             require(fresh["state"] == setup["state"]
-                    and {canonical_language(value) for value in fresh["languages"]} == languages,
+                    and configured_codeql_languages(fresh) == languages,
                     "CodeQL default setup changed during preflight")
             return "latest canonical default-setup analyses cover every configured language on current head"
     raise Deferred("required configured CodeQL language analysis missing within bounded evidence")

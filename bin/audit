@@ -322,6 +322,9 @@ audit_security() {
       "${root}/config/security-merge-protection.json")
     if ! jq -e --slurpfile desired "${setup}" --argjson languages "${languages}" '
       . as $current | ($desired[0] | to_entries | all(.[]; $current[.key] == .value)) and
+      (if $desired[0].state == "configured" then
+        $current.languages | if type == "array" then all(.[]; type == "string") else false end
+       else true end) and
       (($languages - ($current.languages // [])) | length == 0)
     ' <<<"${current}" >/dev/null; then
       record_finding "CodeQL setup or required language drift: ${organization}/${repository}"

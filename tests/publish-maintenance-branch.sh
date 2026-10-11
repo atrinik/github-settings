@@ -6,6 +6,7 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 temporary=$(mktemp -d)
 trap 'rm -rf "${temporary}"' EXIT
 mkdir "${temporary}/bin"
+export GH_SELECTED_ACTIONS_POLICY=${root}/config/actions-selected.json
 
 cat >"${temporary}/bin/gh" <<'EOF'
 #!/usr/bin/env bash
@@ -229,6 +230,9 @@ case "${endpoint}|${jq_filter}" in
 repos/atrinik/*/actions/permissions/workflow\|*)
   printf '{"default_workflow_permissions":"read","can_approve_pull_request_reviews":false}\n'
   ;;
+"orgs/atrinik/actions/permissions/selected-actions|")
+  cat "${GH_SELECTED_ACTIONS_POLICY}"
+  ;;
 "orgs/atrinik/actions/permissions|")
   printf '{"enabled_repositories":"all","allowed_actions":"selected","sha_pinning_required":false}\n'
   ;;
@@ -351,17 +355,17 @@ repos/atrinik/*/actions/permissions/workflow\|*)
   if [[ ${security_scenario} == drifted ||
     ${security_scenario} == create ||
     ${GH_EMPTY_ADVANCED_INVENTORY:-false} == true ]]; then
-    printf '{"state":"configured","query_suite":"default"}\n'
+    printf '{"state":"configured","query_suite":"default","languages":["c-cpp"]}\n'
   else
-    printf '{"state":"not-configured","query_suite":"default"}\n'
+    printf '{"state":"not-configured","query_suite":"default","languages":null}\n'
   fi
   ;;
 "repos/atrinik/content/code-scanning/default-setup|"*)
   if [[ ${security_scenario} == drifted ||
     ${security_scenario} == create ]]; then
-    printf '{"state":"not-configured"}\n'
+    printf '{"state":"not-configured","languages":null}\n'
   else
-    printf '{"state":"configured","query_suite":"default"}\n'
+    printf '{"state":"configured","query_suite":"default","languages":["python"]}\n'
   fi
   ;;
 "repos/atrinik/nawerhals|.archived")

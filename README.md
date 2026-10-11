@@ -235,10 +235,18 @@ Rollout is owned by an organization administrator:
    `{"phase":"enforced","canary":"OWNER/REPOSITORY/PR"}` through the normal
    review and merge process before the first separately authorized live apply.
    This records the accepted PR, with no duplicate action-version inventory.
-   The verifier checks live allowance, exact PR changes, and successful PR-bound
-   current-head CI. Ordinary subsequent publication uses that stored canary,
-   revalidates it and restores a disabled setting. Unreadable or failed evidence
-   blocks restoration with an error; the audit reports disabled enforced policy
+   The verifier checks the active conservative organization Actions mode,
+   repository enablement, exact PR changes, and successful PR-bound current-head
+   checks. These include configured CI, desired Dependency review for targeted
+   repositories, and all effective ruleset and legacy branch-protection status
+   contexts, with trusted app identities. This proves current policy and PR-run
+   evidence; it does not attest historical organization settings.
+   Ordinary subsequent publication uses that stored canary. It first converges
+   selected mode, then allowed-action patterns, then revalidates the canary
+   before restoring a disabled SHA setting. A dry run reports the required
+   staging without claiming that planned settings are active. Unreadable or
+   failed proof blocks SHA restoration while retaining conservative policy
+   repairs; the audit reports disabled enforced policy
    as drift, never as initial rollout pending. A live true setting is always
    preserved. Full SHA pinning does not prove an allowed action is trustworthy.
 

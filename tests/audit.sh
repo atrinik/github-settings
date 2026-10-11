@@ -43,7 +43,7 @@ run_audit() {
   if [[ ${fixture} == focused ]]; then
     case ${scenario} in
       wrong-pr-scope|unexpected-codeql|tag-extra-nonrelease|tag-all-nonrelease|tag-repository-nonrelease|inherited-tag-unaffected|foreign-tag) repository=.github ;;
-      advanced-config|advanced-setup) repository=classic ;;
+      advanced-config|advanced-setup|advanced-null-languages) repository=classic ;;
       missing-rust) repository=content-toolkit ;;
       missing-tag-scope|tag-ref-drift|tag-all-scope|tag-extra-repo|tag-extra-exclude) repository=service-updater ;;
       unexpected-pr) repository=web-platform ;;
@@ -78,7 +78,7 @@ output=$(run_audit legacy-security)
 grep -Fq 'Governance audit passed:' <<<"${output}"
 output=$(run_audit repository-rulesets)
 grep -Fq 'Governance audit passed:' <<<"${output}"
-for scenario in scope-order inherited-tag-unaffected foreign-tag sha-enforced-on; do
+for scenario in scope-order inherited-tag-unaffected foreign-tag sha-enforced-on languages-readable languages-empty advanced-null-languages; do
   output=$(run_audit "${scenario}")
   grep -Fq 'Governance audit passed:' <<<"${output}"
 done
@@ -151,6 +151,9 @@ assert_drift sha-invalid-type 'Actions SHA pinning state could not be read'
 assert_drift sha-enforced-off 'Actions SHA pinning enforcement drift'
 assert_drift phase-unreadable 'Actions SHA pinning rollout phase could not be read'
 assert_drift missing-rust 'CodeQL setup or required language drift: atrinik/content-toolkit'
+for scenario in languages-missing languages-null languages-scalar languages-object languages-number languages-mixed; do
+  assert_drift "${scenario}" 'CodeQL setup or required language drift: atrinik/observatory'
+done
 for scenario in advanced-setup default-setup; do
   assert_drift "${scenario}" 'CodeQL setup or required language drift'
 done

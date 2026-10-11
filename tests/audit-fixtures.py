@@ -268,6 +268,24 @@ elif endpoint.startswith('repos/atrinik/'):
             reject('setup read denied')
         payload = config('codeql-default-setup-advanced.json' if advanced else 'codeql-default-setup.json')
         payload['languages'] = policy['codeql_required_languages'].get(repository, [])
+        if target:
+            malformed_languages = {
+                'languages-null': None,
+                'languages-scalar': 'javascript-typescript',
+                'languages-object': {'language': 'javascript-typescript'},
+                'languages-number': [7],
+                'languages-mixed': ['javascript-typescript', None],
+            }
+            if scenario in malformed_languages:
+                payload['languages'] = malformed_languages[scenario]
+            elif scenario == 'languages-missing':
+                del payload['languages']
+            elif scenario == 'languages-readable':
+                payload['languages'] = ['javascript-typescript', 'future-language']
+            elif scenario == 'languages-empty':
+                payload['languages'] = []
+        if scenario == 'advanced-null-languages' and repository == 'classic':
+            payload['languages'] = None
         if scenario == 'missing-rust' and repository == 'content-toolkit':
             payload['languages'] = ['javascript-typescript']
         if scenario == 'advanced-setup' and repository == 'classic':

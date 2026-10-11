@@ -39,11 +39,24 @@ declare -A active_repository_ids=([content-toolkit]=123)
 api_log=${temporary}/api.jsonl
 readiness_log=${temporary}/readiness.jsonl
 export READINESS_LOG=${readiness_log}
+export MOCK_API_LOG=${api_log}
+export MOCK_ACTIONS_POLICY=${temporary}/actions-policy.json
+export MOCK_ACTIONS_SELECTED=${root}/config/actions-selected.json
 cat >"${root}/bin/security-readiness" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
 jq -cn --arg mode "$1" --arg repository "$2" \
   '{mode: $mode, repository: $repository}' >>"${READINESS_LOG}"
+if [[ $1 == sha ]]; then
+  jq -cn '{method: "PROOF", endpoint: "sha"}' >>"${MOCK_API_LOG}"
+  if [[ ${CHECK_POLICY_STAGED:-false} == true ]]; then
+    jq -e --slurpfile selected "${MOCK_ACTIONS_SELECTED}" '
+      .permissions.allowed_actions == "selected" and
+      .permissions.enabled_repositories == "all" and
+      .selected == $selected[0]
+    ' "${MOCK_ACTIONS_POLICY}" >/dev/null || exit 98
+  fi
+fi
 case ${READINESS_STATUS:-ready} in
 ready) echo 'producer evidence ready'; exit 0 ;;
 missing) echo 'producer is missing'; exit 1 ;;
@@ -142,6 +155,13 @@ github_api() {
     fi
     ;;
   orgs/atrinik/actions/permissions) printf '%s\n' "${actions_state}" ;;
+  orgs/atrinik/actions/permissions/selected-actions)
+    # Model the API prerequisite: the dormant list cannot be read or changed
+    # until the publisher has staged conservative selected mode.
+    [[ $(jq -r '.allowed_actions' <<<"${actions_state}") == selected ]] || return 1
+    [[ ${selected_state} != unreadable ]] || return 1
+    printf '%s\n' "${selected_state}"
+    ;;
   *) echo "unexpected mock API: ${endpoint}" >&2; return 99 ;;
   esac
 }
@@ -153,6 +173,32 @@ run_api() {
   fi
   jq -cn --arg method "$1" --arg endpoint "$2" --slurpfile payload "$3" \
     '{method: $method, endpoint: $endpoint, payload: $payload[0]}' >>"${api_log}"
+  if ${apply}; then
+    case $2 in
+    orgs/atrinik/actions/permissions)
+      actions_state=$(jq --slurpfile payload "$3" '. * $payload[0]' <<<"${actions_state}")
+      ;;
+    orgs/atrinik/actions/permissions/selected-actions)
+      [[ $(jq -r '.allowed_actions' <<<"${actions_state}") == selected ]] || return 1
+      selected_state=$(cat "$3")
+      case ${staging_race} in
+      disable | replace-repository)
+        actions_state=$(jq '.sha_pinning_required = false' <<<"${actions_state}")
+        if [[ ${staging_race} == replace-repository ]]; then
+          repository_state=$(jq '.id = 999' <<<"${repository_state}")
+        fi
+        ;;
+      malformed)
+        actions_state=$(jq '.sha_pinning_required = "false"' <<<"${actions_state}")
+        ;;
+      esac
+      ;;
+    esac
+    if [[ ${selected_state} != unreadable ]]; then
+      jq -n --argjson permissions "${actions_state}" --argjson selected "${selected_state}" \
+        '{permissions:$permissions, selected:$selected}' >"${MOCK_ACTIONS_POLICY}"
+    fi
+  fi
 }
 reset_case() {
   : >"${api_log}"
@@ -165,7 +211,11 @@ reset_case() {
   cp "${source_root}/config/security-merge-protection.json" "${security_merge_config}"
   echo '{"phase":"pending","canary":null}' >"${actions_sha_pinning_config}"
   actions_state='{"enabled_repositories":"selected","allowed_actions":"all","sha_pinning_required":false}'
+  selected_state=$(cat "${root}/config/actions-selected.json")
   sha_pinning_canary=
+  staging_race=
+  apply=true
+  export CHECK_POLICY_STAGED=false
   export READINESS_STATUS=ready
 }
 assert_no_writes() {
@@ -345,8 +395,9 @@ jq -se '[.[] | select(.method == "PUT")][0].payload ==
 reset_case
 actions_state='{"enabled_repositories":"selected","allowed_actions":"all","sha_pinning_required":true}'
 converge_actions_permissions >"${temporary}/sha-retained.txt"
-jq -se '[.[] | select(.method == "PUT")][0].payload.sha_pinning_required == true' \
+jq -se '[.[] | select(.method == "PUT")][0].payload | has("sha_pinning_required") | not' \
   "${api_log}" >/dev/null
+[[ $(jq -r '.sha_pinning_required' <<<"${actions_state}") == true ]]
 [[ ! -s ${readiness_log} ]]
 for producer in failed ready; do
   reset_case
@@ -360,7 +411,7 @@ reset_case
 echo '{"phase":"enforced","canary":"atrinik/content-toolkit/99"}' >"${actions_sha_pinning_config}"
 converge_actions_permissions >"${temporary}/sha-enforced-ready.txt"
 jq -se --slurpfile desired "${root}/config/actions-permissions.json" '
-  [.[] | select(.method == "PUT")][0].payload == $desired[0]' "${api_log}" >/dev/null
+  [.[] | select(.method == "PUT")][-1].payload == $desired[0]' "${api_log}" >/dev/null
 jq -se '. == [{mode: "sha", repository: "atrinik/content-toolkit/99"}]' \
   "${readiness_log}" >/dev/null
 for producer in failed unreadable; do
@@ -371,7 +422,7 @@ for producer in failed unreadable; do
     echo "expected enforced SHA evidence failure to fail closed: ${producer}" >&2
     exit 1
   fi
-  assert_no_writes
+  jq -se 'all(.[] | select(.method == "PUT"); .payload.sha_pinning_required != true)' "${api_log}" >/dev/null
 done
 reset_case
 echo '{"phase":"enforced","canary":"atrinik/content-toolkit/99"}' >"${actions_sha_pinning_config}"
@@ -380,6 +431,152 @@ export READINESS_STATUS=failed
 converge_actions_permissions >"${temporary}/sha-keep.txt"
 assert_no_writes
 [[ ! -s ${readiness_log} ]]
+
+# Simultaneous mode, patterns and SHA drift repairs conservative policy first.
+for producer in ready failed unreadable; do
+  reset_case
+  echo '{"phase":"enforced","canary":"atrinik/content-toolkit/99"}' >"${actions_sha_pinning_config}"
+  selected_state='{"github_owned_allowed":true,"verified_allowed":false,"patterns_allowed":["old/action@*"]}'
+  export CHECK_POLICY_STAGED=true
+  export READINESS_STATUS=${producer}
+  if converge_actions_permissions >"${temporary}/sha-staged-${producer}.txt" 2>&1; then
+    [[ ${producer} == ready ]]
+  else
+    [[ ${producer} != ready ]]
+  fi
+  jq -se '
+    [.[] | select(.method == "PUT" or .method == "PROOF")] as $events |
+    $events[0].endpoint == "orgs/atrinik/actions/permissions" and
+    ($events[0].payload | has("sha_pinning_required") | not) and
+    $events[1].endpoint == "orgs/atrinik/actions/permissions/selected-actions" and
+    $events[2].method == "PROOF"
+  ' "${api_log}" >/dev/null
+  if [[ ${producer} == ready ]]; then
+    jq -se '[.[] | select(.method == "PUT" or .method == "PROOF")] |
+      length == 4 and .[3].payload.sha_pinning_required == true' "${api_log}" >/dev/null
+    # A second converged publication neither mutates nor re-proves retained SHA.
+    : >"${api_log}"
+    : >"${readiness_log}"
+    converge_actions_permissions >"${temporary}/sha-staged-converged.txt"
+    assert_no_writes
+    [[ ! -s ${readiness_log} ]]
+  else
+    jq -se '[.[] | select(.method == "PUT" or .method == "PROOF")] | length == 3' "${api_log}" >/dev/null
+    [[ $(jq -r '.sha_pinning_required' <<<"${actions_state}") == false ]]
+  fi
+done
+
+# A disable concurrent with pattern staging must not reuse the initial true.
+for producer in ready failed unreadable; do
+  reset_case
+  echo '{"phase":"enforced","canary":"atrinik/content-toolkit/99"}' >"${actions_sha_pinning_config}"
+  actions_state='{"enabled_repositories":"all","allowed_actions":"selected","sha_pinning_required":true}'
+  selected_state='{"github_owned_allowed":true,"verified_allowed":false,"patterns_allowed":[]}'
+  staging_race=disable
+  export READINESS_STATUS=${producer}
+  if converge_actions_permissions >"${temporary}/sha-concurrent-disable-${producer}.txt" 2>&1; then
+    [[ ${producer} == ready ]]
+  else
+    [[ ${producer} != ready ]]
+  fi
+  jq -se '
+    to_entries as $events |
+    ([$events[] | select(.value.method == "PUT" and
+      .value.endpoint == "orgs/atrinik/actions/permissions/selected-actions")][0].key) as $staged |
+    ([$events[] | select(.key > $staged and .value.method == "GET" and
+      .value.endpoint == "orgs/atrinik/actions/permissions")][0].key) as $read |
+    ([$events[] | select(.key > $read and .value.method == "GET" and
+      .value.endpoint == "repos/atrinik/content-toolkit")][0].key) as $identity |
+    ([$events[] | select(.value.method == "PROOF")][0].key) as $proof |
+    $staged < $read and $read < $identity and $identity < $proof and
+    all($events[] | select(.key < $proof and .value.method == "PUT");
+      .value.payload.sha_pinning_required != true)
+  ' "${api_log}" >/dev/null
+  if [[ ${producer} == ready ]]; then
+    [[ $(jq -r '.sha_pinning_required' <<<"${actions_state}") == true ]]
+    jq -se '.[-1].method == "PUT" and .[-1].payload.sha_pinning_required == true' "${api_log}" >/dev/null
+  else
+    [[ $(jq -r '.sha_pinning_required' <<<"${actions_state}") == false ]]
+    jq -se 'all(.[] | select(.method == "PUT"); .payload.sha_pinning_required != true)' "${api_log}" >/dev/null
+  fi
+done
+for race in malformed replace-repository; do
+  reset_case
+  echo '{"phase":"enforced","canary":"atrinik/content-toolkit/99"}' >"${actions_sha_pinning_config}"
+  actions_state='{"enabled_repositories":"all","allowed_actions":"selected","sha_pinning_required":true}'
+  selected_state='{"github_owned_allowed":true,"verified_allowed":false,"patterns_allowed":[]}'
+  staging_race=${race}
+  if converge_actions_permissions >"${temporary}/sha-concurrent-${race}.txt" 2>&1; then
+    echo 'expected changed post-staging evidence to fail closed' >&2
+    exit 1
+  fi
+  [[ ! -s ${readiness_log} ]]
+  jq -se 'all(.[] | select(.method == "PUT"); .payload.sha_pinning_required != true)' "${api_log}" >/dev/null
+done
+reset_case
+actions_state='{"enabled_repositories":"all","allowed_actions":"selected","sha_pinning_required":true}'
+selected_state='{"github_owned_allowed":true,"verified_allowed":false,"patterns_allowed":[]}'
+staging_race=disable
+converge_actions_permissions >"${temporary}/sha-concurrent-disable-pending.txt"
+[[ $(jq -r '.sha_pinning_required' <<<"${actions_state}") == false ]]
+[[ ! -s ${readiness_log} ]]
+jq -se 'all(.[] | select(.method == "PUT"); .payload.sha_pinning_required != true)' "${api_log}" >/dev/null
+
+reset_case
+echo '{"phase":"enforced","canary":"atrinik/content-toolkit/99"}' >"${actions_sha_pinning_config}"
+apply=false
+converge_actions_permissions >"${temporary}/sha-stage-plan.txt" 2>&1
+grep -q 'PLAN SHA pinning proof' "${temporary}/sha-stage-plan.txt"
+if grep -Eq 'jq:|error:' "${temporary}/sha-stage-plan.txt"; then
+  echo 'unexpected error in SHA staging dry run' >&2
+  exit 1
+fi
+[[ ! -s ${readiness_log} ]]
+jq -se 'all(.[] | select(.method == "PUT"); .payload.sha_pinning_required != true)' "${api_log}" >/dev/null
+[[ $(jq -r '.allowed_actions' <<<"${actions_state}") == all ]]
+
+# An unreadable staged allowlist never reaches the canary or writes SHA.
+reset_case
+echo '{"phase":"enforced","canary":"atrinik/content-toolkit/99"}' >"${actions_sha_pinning_config}"
+selected_state=unreadable
+if converge_actions_permissions >"${temporary}/sha-staged-unreadable-policy.txt" 2>&1; then
+  echo 'expected unreadable staged Actions policy to fail closed' >&2
+  exit 1
+fi
+[[ ! -s ${readiness_log} ]]
+jq -se 'all(.[] | select(.method == "PUT"); .payload.sha_pinning_required != true)' "${api_log}" >/dev/null
+
+# Pending rollout may repair policy and probe, but never enables SHA pinning.
+reset_case
+selected_state='{"github_owned_allowed":true,"verified_allowed":false,"patterns_allowed":[]}'
+sha_pinning_canary=atrinik/content-toolkit/99
+export CHECK_POLICY_STAGED=true
+converge_actions_permissions >"${temporary}/sha-pending-staged.txt"
+jq -se 'all(.[] | select(.method == "PUT"); .payload.sha_pinning_required != true)' "${api_log}" >/dev/null
+
+# Malformed configured languages are unreadable for ordinary repositories too.
+for languages in null '{}' '[false]' '[""]' '"rust"'; do
+  reset_case
+  jq '.codeql_required_languages = {}' "${security_merge_config}" >"${temporary}/no-minima.json"
+  cp "${temporary}/no-minima.json" "${security_merge_config}"
+  codeql_state=$(jq -cn --argjson languages "${languages}" \
+    '{state:"configured", query_suite:"default", languages:$languages}')
+  if converge_codeql_default_setup >"${temporary}/malformed-languages.txt" 2>&1; then
+    echo 'expected malformed configured CodeQL languages to fail closed without minima' >&2
+    exit 1
+  fi
+  assert_no_writes
+done
+reset_case
+jq '.codeql_required_languages = {}' "${security_merge_config}" >"${temporary}/no-minima.json"
+cp "${temporary}/no-minima.json" "${security_merge_config}"
+codeql_state='{"state":"configured","query_suite":"default","languages":[]}'
+converge_codeql_default_setup >"${temporary}/readable-empty-languages.txt"
+assert_no_writes
+reset_case
+codeql_state='{"state":"not-configured","languages":null}'
+converge_codeql_default_setup >"${temporary}/unconfigured-languages.txt"
+jq -se '[.[] | select(.method == "PATCH")][0].payload.languages == ["rust"]' "${api_log}" >/dev/null
 
 # Neither a foreign owner nor an unregistered repository can lend canary proof.
 for phase in pending enforced; do

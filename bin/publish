@@ -1031,9 +1031,9 @@ converge_codeql_default_setup() {
       "repos/${organization}/${repository}/code-scanning/default-setup" \
       2>/dev/null); then
       current_state=$(jq -r '.state // empty' <<<"${current}")
-      if [[ ${required_languages} != '[]' ]] && ! jq -e '
+      if ! jq -e '
         (.state == "not-configured" and .languages == null) or
-        (.languages | type == "array" and all(.[]; type == "string"))
+        (.languages | type == "array" and all(.[]; type == "string" and length > 0))
       ' <<<"${current}" >/dev/null; then
         echo "error: invalid existing CodeQL languages for ${repository}" >&2
         return 1
@@ -1219,51 +1219,105 @@ validate_sha_canary_target() {
 }
 
 converge_actions_permissions() {
-  local current input reason phase canary
-  current=$(github_api "orgs/${organization}/actions/permissions")
-  if ! jq -e 'type == "object" and
-    (.enabled_repositories | type == "string") and
-    (.allowed_actions | type == "string") and
-    (.sha_pinning_required == null or (.sha_pinning_required | type == "boolean"))
-  ' <<<"${current}" >/dev/null; then
+  local current selected input reason phase canary staging_needed=false
+  local permissions_filter='type == "object" and
+    (.enabled_repositories | IN("all", "none", "selected")) and
+    (.allowed_actions | IN("all", "local_only", "selected")) and
+    (.sha_pinning_required == null or (.sha_pinning_required | type == "boolean"))'
+  current=$(github_api "orgs/${organization}/actions/permissions") || return 1
+  if ! jq -e "${permissions_filter}" <<<"${current}" >/dev/null; then
     echo "error: cannot read current organization Actions permissions" >&2
     return 1
   fi
-  input=$(mktemp)
-  temporary_files+=("${input}")
-  cp "${root}/config/actions-permissions.json" "${input}"
   phase=$(jq -r '.phase' "${root}/config/actions-sha-pinning.json")
   canary=$(jq -r '.canary // empty' "${root}/config/actions-sha-pinning.json")
   if ! jq -e '.sha_pinning_required == true' <<<"${current}" >/dev/null; then
     if [[ ${phase} == enforced ]]; then
       validate_sha_canary_target "${canary}" || return 1
-      if ! reason=$("${root}/bin/security-readiness" sha "${canary}"); then
-        echo "error: enforced SHA pinning cannot be restored: ${reason}" >&2
-        return 1
-      fi
-      echo "READY enforced SHA pinning: ${reason}"
-    else
-      if [[ -n ${sha_pinning_canary} ]]; then
-        validate_sha_canary_target "${sha_pinning_canary}" || return 1
-        if reason=$("${root}/bin/security-readiness" sha "${sha_pinning_canary}"); then
-          echo "READY canary evidence: ${reason}; source rollout phase remains pending"
-        else
-          echo "PENDING canary evidence: ${reason}"
-        fi
-      fi
-      echo "PENDING SHA pinning: promote the reviewed source rollout phase and accepted canary after readiness"
-      # Pending source never enables or disables SHA pinning, including when
-      # an optional command-line probe succeeds. Enforced source retains proof.
-      jq 'del(.sha_pinning_required)' "${input}" >"${input}.pending"
-      mv "${input}.pending" "${input}"
+    elif [[ -n ${sha_pinning_canary} ]]; then
+      validate_sha_canary_target "${sha_pinning_canary}" || return 1
     fi
   fi
+
+  # GitHub requires selected mode before its selected-actions endpoint can be
+  # updated. Stage both conservative controls before proving SHA compatibility.
+  # Omit SHA entirely: this preserves an existing value without enabling it
+  # from a stale read if another actor changes the field during staging.
+  input=$(mktemp)
+  temporary_files+=("${input}")
+  jq 'del(.sha_pinning_required)' "${root}/config/actions-permissions.json" >"${input}"
   if jq -e --slurpfile desired "${input}" '
     . as $current | all($desired[0] | to_entries[]; $current[.key] == .value)
   ' <<<"${current}" >/dev/null; then
     echo "KEEP /orgs/${organization}/actions/permissions"
   else
-    run_api PUT "orgs/${organization}/actions/permissions" "${input}"
+    staging_needed=true
+    run_api PUT "orgs/${organization}/actions/permissions" "${input}" || return 1
+  fi
+  # This endpoint may require selected mode. A dry run with a mode change
+  # can plan its update, but cannot claim to have read the staged live policy.
+  if ! ${apply} && [[ $(jq -r '.allowed_actions' <<<"${current}") != selected ]]; then
+    selected=null
+  else
+    selected=$(github_api "orgs/${organization}/actions/permissions/selected-actions") || return 1
+    if ! jq -e '
+      (.github_owned_allowed | type == "boolean") and
+      (.verified_allowed | type == "boolean") and
+      (.patterns_allowed | type == "array" and all(.[]; type == "string"))
+    ' <<<"${selected}" >/dev/null; then
+      echo "error: cannot read current selected Actions policy" >&2
+      return 1
+    fi
+  fi
+  if jq -e --slurpfile desired "${root}/config/actions-selected.json" '
+    .github_owned_allowed == $desired[0].github_owned_allowed and
+    .verified_allowed == $desired[0].verified_allowed and
+    (.patterns_allowed | sort) == ($desired[0].patterns_allowed | sort)
+  ' <<<"${selected}" >/dev/null; then
+    echo "KEEP /orgs/${organization}/actions/permissions/selected-actions"
+  else
+    staging_needed=true
+    run_api PUT "orgs/${organization}/actions/permissions/selected-actions" \
+      "${root}/config/actions-selected.json" || return 1
+  fi
+  if ${apply}; then
+    # Base the SHA decision on live post-staging state: another writer may
+    # disable it while conservative mode or pattern updates are in flight.
+    current=$(github_api "orgs/${organization}/actions/permissions") || return 1
+    if ! jq -e "${permissions_filter}" <<<"${current}" >/dev/null ||
+      ! jq -e --slurpfile desired "${input}" '
+        . as $current | all($desired[0] | to_entries[]; $current[.key] == .value)
+      ' <<<"${current}" >/dev/null; then
+      echo "error: organization Actions permissions unreadable or changed during staging" >&2
+      return 1
+    fi
+  fi
+  if jq -e '.sha_pinning_required == true' <<<"${current}" >/dev/null; then
+    return 0
+  fi
+  if [[ ${phase} == enforced ]]; then
+    if ! ${apply} && ${staging_needed}; then
+      echo "PLAN SHA pinning proof and restoration after Actions policy staging is applied"
+      return 0
+    fi
+    validate_sha_canary_target "${canary}" || return 1
+    if ! reason=$("${root}/bin/security-readiness" sha "${canary}"); then
+      echo "error: enforced SHA pinning cannot be restored: ${reason}" >&2
+      return 1
+    fi
+    echo "READY enforced SHA pinning: ${reason}"
+    run_api PUT "orgs/${organization}/actions/permissions" \
+      "${root}/config/actions-permissions.json" || return 1
+  else
+    if [[ -n ${sha_pinning_canary} ]]; then
+      validate_sha_canary_target "${sha_pinning_canary}" || return 1
+      if reason=$("${root}/bin/security-readiness" sha "${sha_pinning_canary}"); then
+        echo "READY canary evidence: ${reason}; source rollout phase remains pending"
+      else
+        echo "PENDING canary evidence: ${reason}"
+      fi
+    fi
+    echo "PENDING SHA pinning: promote the reviewed source rollout phase and accepted canary after readiness"
   fi
 }
 
@@ -1593,8 +1647,6 @@ converge_immutable_release_policy
 
 converge_organization_settings "${organization_metadata}"
 converge_actions_permissions
-run_api PUT "orgs/${organization}/actions/permissions/selected-actions" \
-  "${root}/config/actions-selected.json"
 run_api PUT "orgs/${organization}/actions/permissions/workflow" \
   "${root}/config/actions-workflow.json"
 

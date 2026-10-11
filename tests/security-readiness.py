@@ -96,7 +96,7 @@ def check(name, ref=HEAD, identifier=1, conclusion="success", status="completed"
 class Fixture:
     def __init__(self):
         self.calls = []
-        self.metadata = {"full_name": "atrinik/example", "default_branch": "main", "archived": False}
+        self.metadata = {"id": 42, "full_name": "atrinik/example", "default_branch": "main", "archived": False}
         self.pr = {"number": 12, "state": "open", "draft": False, "merged": False,
                    "changed_files": 1, "merge_commit_sha": MERGE,
                    "base": {"ref": "main", "sha": BASE, "repo": {"full_name": "atrinik/example"}},
@@ -117,6 +117,11 @@ class Fixture:
         self.after = f"name: Check\nsteps:\n  - uses: rust-lang/crates-io-auth-action@{NEW} # v2\n".encode()
         self.checks = {HEAD: [check("Required checks"), check("Conventional PR title", identifier=2)], MERGE: []}
         self.live = copy.deepcopy(SELECTED)
+        self.actions_policy = {"enabled_repositories": "all", "allowed_actions": "selected"}
+        self.repository_actions = {"enabled": True, "allowed_actions": "all"}
+        self.enabled_repositories = [{"id": 42, "full_name": "atrinik/example"}]
+        self.effective_rules = []
+        self.legacy_checks = None
         self.default_workflow = WORKFLOW
         self.run_workflow = WORKFLOW
         self.executed_workflow = WORKFLOW
@@ -169,6 +174,19 @@ class Fixture:
             return {"workflow_runs": [copy.deepcopy(self.run)]}
         if "/attempts/2/jobs" in endpoint:
             return {"total_count": len(self.jobs), "jobs": copy.deepcopy(self.jobs)}
+        if endpoint == "orgs/atrinik/actions/permissions":
+            return copy.deepcopy(self.actions_policy)
+        if endpoint == "repos/atrinik/example/actions/permissions":
+            return copy.deepcopy(self.repository_actions)
+        if "/actions/permissions/repositories?" in endpoint:
+            return {"total_count": len(self.enabled_repositories),
+                    "repositories": copy.deepcopy(self.enabled_repositories)}
+        if "/rules/branches/" in endpoint:
+            return copy.deepcopy(self.effective_rules)
+        if endpoint.endswith("/protection/required_status_checks"):
+            if self.legacy_checks is None:
+                raise readiness.APIError(endpoint, 404)
+            return copy.deepcopy(self.legacy_checks)
         if "/actions/permissions/selected-actions" in endpoint:
             return copy.deepcopy(self.live)
         if "/pulls/12/files" in endpoint:
@@ -211,7 +229,7 @@ class ReadinessTests(unittest.TestCase):
         (self.root / "config/repositories.json").write_text(json.dumps({
             "required_ci": {"example": ["Required checks", "Conventional PR title"]}}))
         (self.root / "config/security-merge-protection.json").write_text(json.dumps({
-            "codeql_required_languages": {"example": ["rust"]}}))
+            "codeql_required_languages": {"example": ["rust"]}, "dependency_review": []}))
         (self.root / "config/codeql-advanced-setup.json").write_text('{"repositories": []}')
         self.fixture = Fixture()
         self.root_patch = patch.object(readiness, "ROOT", self.root)
@@ -607,6 +625,186 @@ class ReadinessTests(unittest.TestCase):
 
     def test_sha_wildcard_accepts_fresh_rust_pin(self):
         self.assertEqual(self.invoke("sha")[0], 0)
+
+    def require_dependency_for_canary(self):
+        path = self.root / "config/security-merge-protection.json"
+        policy = json.loads(path.read_text())
+        policy["dependency_review"] = ["example"]
+        path.write_text(json.dumps(policy))
+
+    def effective_check(self, context, app=15368):
+        return {"type": "required_status_checks", "parameters": {
+            "required_status_checks": [{"context": context, "integration_id": app}]}}
+
+    def test_sha_targeted_dependency_review_missing_failed_or_queued_rejected(self):
+        self.require_dependency_for_canary()
+        self.assert_deferred("sha", "Dependency review")
+        self.fixture.checks[HEAD].append(check("Dependency review", identifier=30, conclusion="failure"))
+        self.assert_deferred("sha", "Dependency review")
+        self.fixture.checks[HEAD][-1].update(status="queued", conclusion=None, started_at=None)
+        self.assert_deferred("sha", "Dependency review")
+        self.fixture.checks[HEAD][-1].update(status="completed", conclusion="success")
+        self.assertEqual(self.invoke("sha")[0], 0)
+
+    def test_sha_effective_extra_rule_context_required_with_trusted_actions(self):
+        self.fixture.effective_rules = [self.effective_check("Extra validation")]
+        self.assert_deferred("sha", "Extra validation")
+        self.fixture.checks[HEAD].append(check("Extra validation", identifier=30))
+        self.fixture.checks[HEAD][-1]["app"]["id"] = 999
+        self.assert_deferred("sha", "Extra validation")
+        self.fixture.checks[HEAD][-1]["app"]["id"] = 15368
+        self.assertEqual(self.invoke("sha")[0], 0)
+
+    def test_sha_effective_dependency_review_required_outside_target_inventory(self):
+        self.fixture.effective_rules = [self.effective_check("Dependency review")]
+        self.assert_deferred("sha", "Dependency review")
+
+    def test_sha_legacy_protection_context_required(self):
+        self.fixture.legacy_checks = {"contexts": ["Legacy check"], "checks": []}
+        self.assert_deferred("sha", "Legacy check")
+        self.fixture.checks[HEAD].append(check("Legacy check", identifier=30))
+        self.assertEqual(self.invoke("sha")[0], 0)
+
+    def test_sha_non_actions_app_binding_never_satisfied_by_same_named_actions_check(self):
+        self.fixture.effective_rules = [self.effective_check("Required checks", 999)]
+        self.assert_deferred("sha", "non-Actions app")
+        self.fixture.effective_rules = []
+        self.fixture.legacy_checks = {"contexts": ["Required checks"],
+                                    "checks": [{"context": "Required checks", "app_id": 999}]}
+        self.assert_deferred("sha", "non-Actions app")
+
+    def test_sha_unbound_effective_context_still_requires_trusted_actions(self):
+        self.fixture.effective_rules = [self.effective_check("Required checks", None)]
+        self.assertEqual(self.invoke("sha")[0], 0)
+        self.fixture.checks[HEAD][0]["app"]["slug"] = "untrusted"
+        self.assert_deferred("sha", "Required checks")
+
+    def test_sha_effective_rule_or_legacy_changes_during_preflight_rejected(self):
+        for endpoint_part in ("/rules/branches/", "/protection/required_status_checks"):
+            with self.subTest(endpoint=endpoint_part):
+                count = 0
+                def drift(endpoint):
+                    nonlocal count
+                    if endpoint_part in endpoint:
+                        count += 1
+                        if count > 1:
+                            if "rules/branches" in endpoint:
+                                return [self.effective_check("New gate")]
+                            return {"contexts": ["New gate"], "checks": []}
+                    return self.fixture(endpoint)
+                with patch.object(readiness, "api", drift):
+                    self.assert_deferred("sha", "effective required checks changed")
+
+    def test_sha_effective_rules_and_legacy_unreadable_fail_closed(self):
+        for endpoint_part in ("/rules/branches/", "/protection/required_status_checks"):
+            with self.subTest(endpoint=endpoint_part):
+                def unreadable(endpoint):
+                    if endpoint_part in endpoint:
+                        raise readiness.APIError(endpoint, 403)
+                    return self.fixture(endpoint)
+                with patch.object(readiness, "api", unreadable):
+                    code, output = self.invoke("sha")
+                self.assertEqual(code, 2, output)
+
+    def test_sha_malformed_effective_checks_rejected(self):
+        self.fixture.effective_rules = [self.effective_check("Required checks", "15368")]
+        self.assertEqual(self.invoke("sha")[0], 2)
+        self.fixture.effective_rules = []
+        self.fixture.legacy_checks = {"contexts": "Required checks", "checks": []}
+        self.assertEqual(self.invoke("sha")[0], 2)
+
+    def test_sha_dormant_selected_patterns_with_all_mode_rejected(self):
+        self.fixture.actions_policy["allowed_actions"] = "all"
+        self.assert_deferred("sha", "selected policy is not active")
+        self.assertFalse(any("/check-runs?" in endpoint for endpoint in self.fixture.calls))
+
+    def test_sha_selected_repository_enablement_and_identity_required(self):
+        self.fixture.actions_policy["enabled_repositories"] = "selected"
+        self.assertEqual(self.invoke("sha")[0], 0)
+        self.fixture.enabled_repositories[0]["id"] = 999
+        self.assert_deferred("sha", "not enabled")
+        self.fixture.enabled_repositories[0].update(id=42, full_name="foreign/example")
+        self.assert_deferred("sha", "not enabled")
+
+    def test_sha_disabled_organization_or_repository_actions_rejected(self):
+        self.fixture.actions_policy["enabled_repositories"] = "none"
+        self.assert_deferred("sha", "disabled")
+        self.fixture.actions_policy["enabled_repositories"] = "all"
+        self.fixture.repository_actions["enabled"] = False
+        self.assert_deferred("sha", "does not allow external")
+        self.fixture.repository_actions.update(enabled=True, allowed_actions="local_only")
+        self.assert_deferred("sha", "does not allow external")
+
+    def test_sha_repository_all_or_selected_cannot_relax_organization_ceiling(self):
+        for mode in ("all", "selected"):
+            self.fixture.repository_actions["allowed_actions"] = mode
+            self.assertEqual(self.invoke("sha")[0], 0)
+        self.fixture.actions_policy["allowed_actions"] = "all"
+        self.assert_deferred("sha", "selected policy is not active")
+
+    def test_sha_actions_mode_or_repository_changes_during_proof_rejected(self):
+        for owner in ("orgs/atrinik", "repos/atrinik/example"):
+            with self.subTest(owner=owner):
+                count = 0
+                def drift(endpoint):
+                    nonlocal count
+                    value = self.fixture(endpoint)
+                    if endpoint == owner + "/actions/permissions":
+                        count += 1
+                        if count > 1:
+                            value["allowed_actions"] = "all" if owner.startswith("orgs") else "local_only"
+                    return value
+                with patch.object(readiness, "api", drift):
+                    self.assertEqual(self.invoke("sha")[0], 1)
+
+    def test_sha_actions_policy_unreadable_and_malformed_fail_closed(self):
+        for endpoint_part in ("orgs/atrinik/actions/permissions", "repos/atrinik/example/actions/permissions"):
+            with self.subTest(endpoint=endpoint_part):
+                def unreadable(endpoint):
+                    if endpoint == endpoint_part:
+                        raise readiness.APIError(endpoint, 403)
+                    return self.fixture(endpoint)
+                with patch.object(readiness, "api", unreadable):
+                    self.assertEqual(self.invoke("sha")[0], 2)
+        self.fixture.repository_actions["enabled"] = "true"
+        self.assertEqual(self.invoke("sha")[0], 2)
+        self.fixture.repository_actions["enabled"] = True
+        self.fixture.actions_policy["enabled_repositories"] = "unexpected"
+        self.assertEqual(self.invoke("sha")[0], 2)
+
+    def test_sha_selected_membership_change_refenced(self):
+        self.fixture.actions_policy["enabled_repositories"] = "selected"
+        count = 0
+        def drift(endpoint):
+            nonlocal count
+            value = self.fixture(endpoint)
+            if "/actions/permissions/repositories?" in endpoint:
+                count += 1
+                if count > 1:
+                    value = {"total_count": 0, "repositories": []}
+            return value
+        with patch.object(readiness, "api", drift):
+            self.assert_deferred("sha", "not enabled")
+
+    def test_codeql_languages_schema_rejects_mapping_null_and_nonstrings(self):
+        for value in ({"rust": False}, None, "rust", [False], [""]):
+            with self.subTest(value=value):
+                self.fixture.setup["languages"] = value
+                code, output = self.invoke("codeql")
+                self.assertEqual(code, 2, output)
+
+    def test_codeql_fresh_languages_schema_rejected(self):
+        count = 0
+        def drift(endpoint):
+            nonlocal count
+            value = self.fixture(endpoint)
+            if endpoint.endswith("/code-scanning/default-setup"):
+                count += 1
+                if count > 1:
+                    value["languages"] = {"rust": False}
+            return value
+        with patch.object(readiness, "api", drift):
+            self.assertEqual(self.invoke("codeql")[0], 2)
 
     def test_sha_general_github_owned_pin_update(self):
         self.fixture.before = f"steps:\n  - uses: actions/checkout@{OLD} # v5\n".encode()
