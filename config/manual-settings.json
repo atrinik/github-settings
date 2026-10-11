@@ -429,7 +429,38 @@
       "secret_scope": "repository"
     }
   ],
-  "github_packages_actions_access": [],
+  "github_packages_actions_access": [
+    {
+      "actions_repository": "atrinik/client",
+      "actions_repository_id": 1327106844,
+      "evidence_location": "README.md#private-linux-updater-build-image",
+      "grant_state": "owner-observed-read-grant",
+      "observed_on": "2026-10-11",
+      "package_id": 14205615,
+      "package_name": "linux-build",
+      "package_owner": "atrinik",
+      "package_type": "container",
+      "preserve_visibility": "private",
+      "role": "read",
+      "source_repository": "atrinik/devcontainer",
+      "source_repository_id": 1322185908
+    },
+    {
+      "actions_repository": "atrinik/editor",
+      "actions_repository_id": 1327106902,
+      "evidence_location": "README.md#private-linux-updater-build-image",
+      "grant_state": "owner-observed-read-grant",
+      "observed_on": "2026-10-11",
+      "package_id": 14205615,
+      "package_name": "linux-build",
+      "package_owner": "atrinik",
+      "package_type": "container",
+      "preserve_visibility": "private",
+      "role": "read",
+      "source_repository": "atrinik/devcontainer",
+      "source_repository_id": 1322185908
+    }
+  ],
   "require_two_factor_authentication": true,
   "require_secure_two_factor_methods": true,
   "reason": "The public GitHub API does not expose supported update parameters for every setting in this file, including organization pins and the exact selected-repository set for an organization GitHub App installation to an administrative token, and external credential values must never be stored here. Confirm these settings, the exact ordered pin set, credential lifecycle metadata and live secret-name presence, GitHub App repository selection, Codecov GitHub App repository access, any listed GitHub Pages sites and GitHub Actions environments, and GitHub Packages Actions access in the corresponding organization, repository, and package settings UI.",

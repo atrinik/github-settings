@@ -406,6 +406,41 @@ while IFS= read -r pages_record; do
   fi
 done < <(jq -c '.github_pages_sites[]' "${manual_settings}")
 
+# Package metadata proves identity/source/visibility, not a manual Actions-access grant.
+while IFS= read -r package_record; do
+  repository=$(jq -r '.actions_repository' <<<"${package_record}")
+  repository_id=$(jq -r '.actions_repository_id' <<<"${package_record}")
+  verify_repository_identity "${repository}" "${repository_id}"
+  package_owner=$(jq -r '.package_owner' <<<"${package_record}")
+  package_type=$(jq -r '.package_type' <<<"${package_record}")
+  package_name=$(jq -r '.package_name' <<<"${package_record}")
+  package=$(github_api "read ${package_owner}/${package_name} package identity" \
+    "orgs/${package_owner}/packages/${package_type}/${package_name}")
+  if ! jq -en --argjson actual "${package}" --argjson expected "${package_record}" '
+    $actual.id == $expected.package_id and $actual.name == $expected.package_name and
+    $actual.package_type == $expected.package_type and $actual.visibility == $expected.preserve_visibility and
+    (if $expected.source_repository != null then
+      $actual.repository.full_name == $expected.source_repository and
+      $actual.repository.id == $expected.source_repository_id
+    else true end)
+  ' >/dev/null; then
+    echo "error: package Actions-access identity/source/visibility drift for ${package_owner}/${package_name}" >&2
+    exit 1
+  fi
+  if jq -e 'has("grant_state")' <<<"${package_record}" >/dev/null; then
+    source_repository=$(jq -r '.source_repository' <<<"${package_record}")
+    source_repository_id=$(jq -r '.source_repository_id' <<<"${package_record}")
+    verify_repository_identity "${source_repository}" "${source_repository_id}"
+    if [[ $(jq -r '.grant_state' <<<"${package_record}") == pending-owner-ui-read-grant ]]; then
+      echo "PENDING ${repository} read-only Actions access to private ${package_owner}/${package_name}; exact package/source verified, owner UI grant and effective workflow pull remain unobserved"
+    else
+      echo "OWNER-OBSERVED ${repository} read-only Actions access to private ${package_owner}/${package_name}; GitHub metadata does not prove the UI grant or an effective workflow pull"
+    fi
+  else
+    echo "MANUAL ${repository} ${package_owner}/${package_name} read-only Actions access requires owner UI and owning workflow proof"
+  fi
+done < <(jq -c '.github_packages_actions_access[]' "${manual_settings}")
+
 # Pending setup is not live activation. Every publisher still requires the
 # exact live repository, main ref, and protected-main identity.
 while IFS= read -r crate_record; do

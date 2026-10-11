@@ -25,6 +25,8 @@ assert_invalid() {
 reset_manual_settings() {
   jq '.crates_io_trusted_publishing[].publisher_registration =
     {state:"pending-owner-registration",observed_on:null,evidence_location:null} |
+    .github_packages_actions_access[] |= (.grant_state="pending-owner-ui-read-grant" |
+      .observed_on=null | .evidence_location=null) |
     .crate_dependency_update_app |= (.status="planned" | .app_id=null | .installation_id=null |
       .repository_scope_verification="pending-owner-ui" | .observed_on=null | .evidence_location=null |
       .credential_state="pending-name-metadata")' \

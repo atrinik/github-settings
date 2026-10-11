@@ -90,6 +90,20 @@ repos/atrinik/renderer | repos/atrinik/content-toolkit | repos/atrinik/client | 
   jq -n --arg name "${name}" --argjson id "${id}" \
     '{id:$id, full_name:("atrinik/"+$name), archived:false, default_branch:"main"}'
   ;;
+repos/atrinik/devcontainer)
+  jq -n '{id:1322185908,full_name:"atrinik/devcontainer",archived:false,default_branch:"main"}'
+  ;;
+orgs/atrinik/packages/container/linux-build)
+  id=14205615
+  visibility=private
+  source_id=1322185908
+  [[ ${FAKE_GH_SCENARIO} != crate-image-identity-drift ]] || id=1
+  [[ ${FAKE_GH_SCENARIO} != crate-image-visibility-drift ]] || visibility=public
+  [[ ${FAKE_GH_SCENARIO} != crate-image-source-drift ]] || source_id=1
+  jq -n --argjson id "${id}" --arg visibility "${visibility}" --argjson source_id "${source_id}" \
+    '{id:$id,name:"linux-build",package_type:"container",visibility:$visibility,
+      repository:{id:$source_id,full_name:"atrinik/devcontainer"}}'
+  ;;
 repos/atrinik/*/branches/main)
   protected=true
   [[ ${FAKE_GH_SCENARIO} != crate-unprotected ]] || protected=false
@@ -753,12 +767,15 @@ run_verify() {
 
 : >"${temporary}/gh.log"
 output=$(run_verify present)
+grep -Fq 'OWNER-OBSERVED atrinik/client read-only Actions access to private atrinik/linux-build' <<<"${output}"
+grep -Fq 'OWNER-OBSERVED atrinik/editor read-only Actions access to private atrinik/linux-build' <<<"${output}"
 grep -Fq 'PENDING atrinik/protocol crates.io atrinik-protocol via publish-crate.yml / crates-io-release' <<<"${output}"
 if grep -Eq 'protocol/environments|crates.io|/trusted-publishers' "${temporary}/gh.log"; then
   echo "error: planned crate contract inspected or mutated unprovisioned state" >&2
   exit 1
 fi
-for scenario in crate-repository-drift crate-unprotected crate-ref-drift; do
+for scenario in crate-repository-drift crate-unprotected crate-ref-drift \
+  crate-image-identity-drift crate-image-visibility-drift crate-image-source-drift; do
   if run_verify "${scenario}" >"${temporary}/${scenario}.out" 2>"${temporary}/${scenario}.err"; then
     echo "error: verifier accepted ${scenario}" >&2
     exit 1

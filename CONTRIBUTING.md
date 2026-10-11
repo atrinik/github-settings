@@ -154,6 +154,10 @@ and ordinary review/checks without auto-merge. Distinguish observed installation
 and credential-name provisioning from pending reviewed workflow activation and
 real successful-owned-PR proof; owner-authorized early setup does not prove
 effective secret values. Keep App-authenticated selected-set readback or owner
-UI evidence, and do not infer the webhook switch from an empty event set. Changes require negative schema
+UI evidence, and do not infer the webhook switch from an empty event set.
+Private linux-build consumption needs separate client/editor-only read grants
+through owner UI. Keep exact private package/source identities and pending grant
+state until observed; metadata and owner pulls do not prove an effective owning
+workflow pull. Preserve foreign grants and visibility. Changes require negative schema
 and live-metadata fixture tests plus a complete publisher plan; publishers do
 not provision these integrations.

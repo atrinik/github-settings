@@ -729,7 +729,7 @@ while IFS= read -r consumer; do
 done < <(jq -r '.github_actions_credentials[].consumers[]' \
   "${manual_settings_config}")
 
-jq -e '
+jq -e --arg today "${validation_today}" '
   .github_packages_actions_access as $access |
   ($access | type == "array") and
   (
@@ -752,7 +752,9 @@ jq -e '
       "package_type",
       "preserve_visibility",
       "role"
-    ]) and
+    ] or keys == ["actions_repository", "actions_repository_id", "evidence_location",
+      "grant_state", "observed_on", "package_id", "package_name", "package_owner", "package_type",
+      "preserve_visibility", "role", "source_repository", "source_repository_id"]) and
     (.package_owner | type == "string" and length > 0) and
     (.package_type | type == "string" and length > 0) and
     (.package_name | type == "string" and length > 0) and
@@ -767,7 +769,23 @@ jq -e '
       .actions_repository_id |
       type == "number" and . > 0 and floor == .
     ) and
-    (.role == "read")
+    (.role == "read") and
+    (if has("grant_state") then
+      .package_owner == "atrinik" and .package_type == "container" and
+      .package_name == "linux-build" and .package_id == 14205615 and
+      .preserve_visibility == "private" and
+      .source_repository == "atrinik/devcontainer" and .source_repository_id == 1322185908 and
+      ((.actions_repository == "atrinik/client" and .actions_repository_id == 1327106844) or
+       (.actions_repository == "atrinik/editor" and .actions_repository_id == 1327106902)) and
+      (if .grant_state == "pending-owner-ui-read-grant" then
+        .observed_on == null and .evidence_location == null
+      elif .grant_state == "owner-observed-read-grant" then
+        (.observed_on | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")) and
+        (try ((.observed_on + "T00:00:00Z" | fromdateiso8601 | strftime("%Y-%m-%d")) == .observed_on
+          and .observed_on <= $today) catch false) and
+        (.evidence_location | type == "string" and test("^[A-Za-z0-9_./#-]+$"))
+      else false end)
+    else .package_name != "linux-build" end)
   )
 ' "${manual_settings_config}" >/dev/null
 

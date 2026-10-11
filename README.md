@@ -1123,6 +1123,42 @@ that exact entry if it remains after the visibility transition. Finally, run a
 real fork pull request and require its digest pulls and complete required
 checks to succeed without package permissions or registry authentication.
 
+## Private Linux updater build image
+
+`ghcr.io/atrinik/linux-build` is a private container package, ID `14205615`,
+linked to `atrinik/devcontainer` (repository ID `1322185908`). Preserve that
+visibility and source association. The owner verified the pinned manifest with
+authenticated registry access; the client owning workflow authenticated but
+could not resolve that manifest. An owner's successful pull cannot prove a
+repository workflow's package access.
+
+`github_packages_actions_access` records read-only Actions-access setup for
+`atrinik/client` (`1327106844`) and `atrinik/editor` (`1327106902`). The owner
+confirmed those two **Manage Actions access** read grants on 2026-10-11; their
+`grant_state` is `owner-observed-read-grant`, with dated sanitized owner evidence.
+Effective owning workflow pulls remain pending. This is owner UI observation,
+not API enumeration of the grant list. Retain permission inheritance, private
+visibility, linked source and every foreign entry. Do not broaden to
+organization/all repositories or change a foreign grant. The publisher never
+writes these manual grants.
+
+The read-only verifier checks consumer/source identities, exact package ID,
+private visibility and linked source. GitHub package metadata does not expose
+proof of the manual grant or effective registry access. Future unprovisioned
+intent uses `pending-owner-ui-read-grant` with null `observed_on` and
+`evidence_location`; observation requires sanitized owner UI readback and dated
+evidence. Separately prove each exact merged owning workflow pulls the pinned
+manifest and completes its ordinary required validation. Registry login success
+and secret-name presence alone are insufficient. Host registry credentials must
+be removed before credential-free Cargo/build preparation; the updater App
+remains isolated to its PR-writing job. No package grant supplies a
+registry-publication token or proves the dependency App key effective.
+
+Rollback stops the owning updater workflows first and removes only these two
+read grants through supported owner UI after reviewed inventory removal.
+Preserve the package, published versions, source, visibility, foreign grants,
+and unrelated App credentials.
+
 ## Automatic crate Trusted Publishing
 
 `config/manual-settings.json` records the desired, value-free contracts below.

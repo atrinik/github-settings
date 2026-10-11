@@ -1385,6 +1385,12 @@ while IFS= read -r crate_record; do
   state=$(jq -r '"source=\(.source_state), environment=\(.environment_state), registration=\(.publisher_registration.state)"' <<<"${crate_record}")
   echo "MANUAL ${repository} crates.io ${crate}: ${state}; reviewed source/version merge, automatic crates-io-release environment (zero reviewers/wait), and Trusted Publisher owner setup; publisher does not apply"
 done < <(jq -c '.crates_io_trusted_publishing[]' "${root}/config/manual-settings.json")
+while IFS= read -r package_record; do
+  repository=$(jq -r '.actions_repository' <<<"${package_record}")
+  package_name=$(jq -r '.package_name' <<<"${package_record}")
+  grant_state=$(jq -r '.grant_state // "manual-owner-ui"' <<<"${package_record}")
+  echo "MANUAL ${repository} read-only package Actions access to ${package_name}: ${grant_state}; publisher never provisions grants"
+done < <(jq -c '.github_packages_actions_access[]' "${root}/config/manual-settings.json")
 app_state=$(jq -r '.crate_dependency_update_app | "identity=\(.status), credential_names=\(.credential_state), workflow=\(.workflow_activation.state)"' "${root}/config/manual-settings.json")
 echo "MANUAL atrinik-crate-dependency-update ${app_state} selected client/editor App and credential slots; publisher does not apply"
 echo "Manual confirmation required for config/manual-settings.json."

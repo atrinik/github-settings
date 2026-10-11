@@ -111,6 +111,11 @@
   merge reviewed desired-state and consumer-permission changes first, preserve
   the source association, verify anonymous digest access, and remove obsolete
   repository grants without altering foreign entries.
+  The private linux-build package keeps its exact package/source identities;
+  record client/editor-only read grants separately from effective workflow pulls.
+  Metadata verifies identity/source/visibility, not grants or effective pulls.
+  Preserve all foreign grants and prove each owning authenticated workflow pulls
+  its pinned manifest before claiming effective access; never widen visibility.
 - Record manually provisioned GitHub Actions environments in
   `config/manual-settings.json` with stable repository IDs, exact deployment
   branch policies and reviewer sets, and variable and secret names only. Never
