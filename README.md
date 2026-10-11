@@ -177,6 +177,14 @@ It relies on GitHub's dependency graph and submitted snapshots; unsupported or
 missing manifests cannot provide comprehensive dependency coverage. This is
 separate from Dependabot's scheduled update and alert capabilities.
 
+Dependency review uses ordinary pull-request CI and trusts repository writers.
+The required check context and GitHub Actions app binding do not attest immutable
+workflow bytes. A writer can modify the producer within the same PR, including
+replacing its review with a successful no-op. The high/critical gate remains in
+place for ordinary introduced vulnerabilities in supported dependency data;
+it does not defend against malicious repository writers or an owner using the
+pull-request bypass. This policy adds no human approval requirement.
+
 GitHub's [Dependabot alert limitations](https://docs.github.com/en/code-security/concepts/supply-chain-security/dependabot-alerts#limitations)
 exclude advisory alerts for Actions referenced by commit SHA. SHA pinning and
 a passing dependency review therefore do not prove that an Action commit is
