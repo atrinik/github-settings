@@ -611,6 +611,31 @@ repos/atrinik/classic/pages)
     }]
   }'
   ;;
+repos/atrinik/metaserver-worker/environments/development)
+  jq -n '{
+    name: "development",
+    deployment_branch_policy: {protected_branches: true, custom_branch_policies: false},
+    protection_rules: [{type: "branch_policy"}]
+  }'
+  ;;
+"repos/atrinik/metaserver-worker/environments/development/deployment-branch-policies?per_page=100&page=1")
+  jq -n '{total_count: 0, branch_policies: []}'
+  ;;
+"repos/atrinik/metaserver-worker/environments/development/secrets?per_page=100&page=1")
+  jq -n '{total_count: 8, secrets: [
+    {name: "ATRINIK_DELIVERY_RESOURCE_POLICY"},
+    {name: "ATRINIK_DELIVERY_RESOURCE_READ_TOKEN"},
+    {name: "ATRINIK_DEVELOPMENT_CORE_CONFIG"},
+    {name: "ATRINIK_DEVELOPMENT_PUBLISHER_CONFIG"},
+    {name: "ATRINIK_DEVELOPMENT_RENDEZVOUS_CONFIG"},
+    {name: "ATRINIK_PRODUCTION_BUILDS_READ_TOKEN"},
+    {name: "CLOUDFLARE_ACCOUNT_ID"},
+    {name: "CLOUDFLARE_API_TOKEN"}
+  ]}'
+  ;;
+"repos/atrinik/metaserver-worker/environments/development/variables?per_page=100&page=1")
+  jq -n '{total_count: 1, variables: [{name: "ATRINIK_PRODUCTION_WRITER_FENCE_POLICY"}]}'
+  ;;
 repos/atrinik/classic/environments/discord-release)
   if [[ ${FAKE_GH_SCENARIO} == missing-environment ]]; then
     echo "gh: environment not found" >&2
@@ -773,6 +798,7 @@ run_verify() {
 
 : >"${temporary}/gh.log"
 output=$(run_verify present)
+grep -Fq 'KEEP atrinik/metaserver-worker environment development metadata' <<<"${output}"
 grep -Fq 'OWNER-OBSERVED atrinik/client read-only Actions access to private atrinik/linux-build' <<<"${output}"
 grep -Fq 'OWNER-OBSERVED atrinik/editor read-only Actions access to private atrinik/linux-build' <<<"${output}"
 grep -Fq 'PENDING atrinik/protocol crates.io atrinik-protocol via publish-crate.yml / crates-io-release' <<<"${output}"

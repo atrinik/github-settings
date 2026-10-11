@@ -976,21 +976,27 @@ jq -e \
         "patterns",
         "protected_branches"
       ]) and
-      .custom_branch_policies == true and
-      .protected_branches == false and
-      (.patterns | type == "array" and length > 0) and
-      ([.patterns[] | [.type, .name]] | length == (unique | length)) and
-      all(
-        .patterns[];
-        (keys == ["name", "type"]) and
+      (
+        (.custom_branch_policies == false and
+          .protected_branches == true and .patterns == []) or
         (
-          (
-            .type == "branch" and
-            (.name | type == "string" and test("^[A-Za-z0-9._/-]+$"))
-          ) or
-          (
-            .type == "tag" and
-            .name == "v*"
+          .custom_branch_policies == true and
+          .protected_branches == false and
+          (.patterns | type == "array" and length > 0) and
+          ([.patterns[] | [.type, .name]] | length == (unique | length)) and
+          all(
+            .patterns[];
+            (keys == ["name", "type"]) and
+            (
+              (
+                .type == "branch" and
+                (.name | type == "string" and test("^[A-Za-z0-9._/-]+$"))
+              ) or
+              (
+                .type == "tag" and
+                .name == "v*"
+              )
+            )
           )
         )
       )
