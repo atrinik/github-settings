@@ -619,9 +619,18 @@ repos/atrinik/metaserver-worker/environments/development)
   }'
   ;;
 "repos/atrinik/metaserver-worker/environments/development/deployment-branch-policies?per_page=100&page=1")
-  jq -n '{total_count: 0, branch_policies: []}'
+  echo "error: protected-branch environment must not request custom policies" >&2
+  exit 79
   ;;
 "repos/atrinik/metaserver-worker/environments/development/secrets?per_page=100&page=1")
+  if [[ ${FAKE_GH_SCENARIO} == development-credential-api-failure ]]; then
+    echo "gh: development credential metadata denied" >&2
+    exit 81
+  fi
+  if [[ ${FAKE_GH_SCENARIO} == missing-development-credential ]]; then
+    jq -n '{total_count: 0, secrets: []}'
+    exit 0
+  fi
   jq -n '{total_count: 8, secrets: [
     {name: "ATRINIK_DELIVERY_RESOURCE_POLICY"},
     {name: "ATRINIK_DELIVERY_RESOURCE_READ_TOKEN"},
@@ -631,7 +640,7 @@ repos/atrinik/metaserver-worker/environments/development)
     {name: "ATRINIK_PRODUCTION_BUILDS_READ_TOKEN"},
     {name: "CLOUDFLARE_ACCOUNT_ID"},
     {name: "CLOUDFLARE_API_TOKEN"}
-  ]}'
+  ] | map(. + {updated_at: "2026-10-11T00:00:00Z"})}'
   ;;
 "repos/atrinik/metaserver-worker/environments/development/variables?per_page=100&page=1")
   jq -n '{total_count: 1, variables: [{name: "ATRINIK_PRODUCTION_WRITER_FENCE_POLICY"}]}'
@@ -799,6 +808,10 @@ run_verify() {
 : >"${temporary}/gh.log"
 output=$(run_verify present)
 grep -Fq 'KEEP atrinik/metaserver-worker environment development metadata' <<<"${output}"
+if grep -Fq 'metaserver-worker/environments/development/deployment-branch-policies' "${temporary}/gh.log"; then
+  echo "error: protected-branch mode queried custom branch policies" >&2
+  exit 1
+fi
 grep -Fq 'OWNER-OBSERVED atrinik/client read-only Actions access to private atrinik/linux-build' <<<"${output}"
 grep -Fq 'OWNER-OBSERVED atrinik/editor read-only Actions access to private atrinik/linux-build' <<<"${output}"
 grep -Fq 'PENDING atrinik/protocol crates.io atrinik-protocol via publish-crate.yml / crates-io-release' <<<"${output}"
@@ -895,6 +908,16 @@ grep -Fq 'KEEP atrinik/classic repository Actions variable DEPENDENCY_UPDATE_APP
 grep -Fq 'KEEP atrinik organization pins match the exact governed order' <<<"${output}"
 grep -Fq 'Manual settings live credential, GitHub App, external provider App, Pages, environment, and organization pin metadata is present; planned integrations are recorded without live provisioning.' \
   <<<"${output}"
+
+for scenario in missing-development-credential development-credential-api-failure; do
+  if run_verify "${scenario}" >"${temporary}/${scenario}.out" 2>"${temporary}/${scenario}.err"; then
+    echo "error: verifier accepted DEV credential metadata failure: ${scenario}" >&2
+    exit 1
+  fi
+done
+grep -Fq 'MISSING atrinik/metaserver-worker environment Actions secret CLOUDFLARE_API_TOKEN' \
+  "${temporary}/missing-development-credential.err"
+grep -Fq 'development credential metadata denied' "${temporary}/development-credential-api-failure.err"
 
 : >"${temporary}/gh.log"
 output=$(run_verify pages-active)

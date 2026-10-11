@@ -451,6 +451,71 @@
       "runbook": "README.md#settings-automation-credential",
       "secret_name": "ATRINIK_SETTINGS_TOKEN",
       "secret_scope": "repository"
+    },
+    {
+      "credential_type": "cloudflare_account_token",
+      "consumers": [
+        ".github/workflows/deploy-development.yml"
+      ],
+      "environment": "development",
+      "last_verified_on": "2026-10-11",
+      "owner": "Zoey Seraphina Rose (Atrinik organization owner)",
+      "purpose": "Deploy the DEV three-Worker cohort and read its D1 ledger. The account-wide edit scope can also edit PROD; workflow target and resource fences provide the environment boundary.",
+      "repository": "atrinik/metaserver-worker",
+      "repository_id": 1324297032,
+      "required_scopes": [
+        "D1 Read",
+        "Workers Scripts Edit"
+      ],
+      "rotate_by": "2027-01-09",
+      "rotation_cadence_days": 90,
+      "rotation_owner": "Zoey Seraphina Rose (Atrinik organization owner)",
+      "runbook": "README.md#metaserver-development-credentials",
+      "secret_name": "CLOUDFLARE_API_TOKEN",
+      "secret_scope": "environment"
+    },
+    {
+      "credential_type": "cloudflare_account_token",
+      "consumers": [
+        ".github/workflows/deploy-development.yml"
+      ],
+      "environment": "development",
+      "last_verified_on": "2026-10-11",
+      "owner": "Zoey Seraphina Rose (Atrinik organization owner)",
+      "purpose": "Read the exact all-cohort resource inventory without mutation.",
+      "repository": "atrinik/metaserver-worker",
+      "repository_id": 1324297032,
+      "required_scopes": [
+        "Workers Scripts Read"
+      ],
+      "rotate_by": "2027-01-09",
+      "rotation_cadence_days": 90,
+      "rotation_owner": "Zoey Seraphina Rose (Atrinik organization owner)",
+      "runbook": "README.md#metaserver-development-credentials",
+      "secret_name": "ATRINIK_DELIVERY_RESOURCE_READ_TOKEN",
+      "secret_scope": "environment"
+    },
+    {
+      "credential_type": "cloudflare_user_token",
+      "consumers": [
+        ".github/workflows/deploy-development.yml"
+      ],
+      "environment": "development",
+      "last_verified_on": "2026-10-11",
+      "owner": "Zoey Seraphina Rose (Atrinik organization owner)",
+      "purpose": "Read retained Builds and Worker settings to prove the stopped-writer fence without deployment.",
+      "repository": "atrinik/metaserver-worker",
+      "repository_id": 1324297032,
+      "required_scopes": [
+        "Workers CI Read",
+        "Workers Scripts Read"
+      ],
+      "rotate_by": "2027-01-09",
+      "rotation_cadence_days": 90,
+      "rotation_owner": "Zoey Seraphina Rose (Atrinik organization owner)",
+      "runbook": "README.md#metaserver-development-credentials",
+      "secret_name": "ATRINIK_PRODUCTION_BUILDS_READ_TOKEN",
+      "secret_scope": "environment"
     }
   ],
   "github_packages_actions_access": [

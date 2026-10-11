@@ -82,7 +82,7 @@ read-only and are skipped on later runs.
   and are never committed.
 - Administrative Actions credentials have value-free lifecycle contracts in
   `config/manual-settings.json`: stable repository identity, secret placement,
-  PAT type and scopes, consumers, accountable ownership, verification date,
+  credential type and scopes, consumers, accountable ownership, verification date,
   rotate-by deadline, cadence, and runbook. Validation rejects expired records
   and any value-like field. `bin/verify-manual-settings` checks credential
   secret-name presence plus inventoried environment identity, deployment
@@ -241,6 +241,36 @@ expiry, or effective scopes. The synchronization preflight is the scope and
 functionality proof: apply mode verifies the classic PAT's advertised scopes,
 Project update capability, and write access for every repository needing an
 issue-type change before the first mutation.
+
+## Metaserver development credentials
+
+The `development` environment of `atrinik/metaserver-worker` (repository ID
+1324297032) holds the three value-free lifecycle entries consumed only by
+`.github/workflows/deploy-development.yml`. Zoey Seraphina Rose, an Atrinik
+organization owner, is accountable for verification and rotation.
+
+`CLOUDFLARE_API_TOKEN` is account-owned with intended Workers Scripts Edit and
+D1 Read permissions. Its account-wide edit authority can also edit PROD; the
+workflow's exact DEV configuration and resource fences provide the target
+boundary. `ATRINIK_DELIVERY_RESOURCE_READ_TOKEN` is account-owned with intended
+Workers Scripts Read. `ATRINIK_PRODUCTION_BUILDS_READ_TOKEN` is user-scoped
+with intended Workers CI Read and Workers Scripts Read for the retained-writer
+fence. Do not describe any of these credentials as restricted to one Worker.
+
+All three environment names were installed and verified on 2026-10-11; bounded
+runtime GET checks passed. Effective provider permission metadata is unreadable,
+and the deployment token's write permission has not yet been proven by its
+owning workflow. Name metadata does not verify values, scope or expiry.
+The 2027-01-09 rotate-by deadline is the internal 90-day policy, not a provider
+expiry claim; provider expiry remains unverified.
+
+Before that deadline, prepare a reviewed lifecycle update, provision replacement
+credentials under separately authorized scope, and install them without printing
+values. Run `bin/verify-manual-settings` for stable repository and environment
+secret-name presence, then prove the bounded read paths and the owning DEV
+workflow under its normal target gates before revoking predecessors. Retain
+private qualification receipts and never change PROD targets or provider
+permissions merely to validate rotation. Publishers do not provision tokens.
 
 ### Classic dependency update App
 
