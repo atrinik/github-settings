@@ -196,10 +196,10 @@ run_audit() {
 }
 
 output=$(run_audit pass)
-grep -Fxq 'Governance audit passed: 22 active repositories checked.' <<<"${output}"
+grep -Fxq 'Governance audit passed: 23 active repositories checked.' <<<"${output}"
 
 temporary_output=$(run_audit temporary)
-grep -Fxq 'Governance audit passed: 22 active repositories checked.' <<<"${temporary_output}"
+grep -Fxq 'Governance audit passed: 23 active repositories checked.' <<<"${temporary_output}"
 
 if run_audit unmanaged >"${temporary}/unmanaged.out" 2>"${temporary}/unmanaged.err"; then
   echo "expected unmanaged repository audit to fail" >&2

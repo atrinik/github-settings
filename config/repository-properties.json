@@ -322,6 +322,17 @@
       "lifecycle": "active",
       "release_policy": "semantic-release"
     },
+    "service-updater": {
+      "component_role": [
+        "infrastructure",
+        "service"
+      ],
+      "provider_set": [
+        "shared"
+      ],
+      "lifecycle": "active",
+      "release_policy": "semantic-release"
+    },
     "sound": {
       "component_role": [
         "assets"
