@@ -209,8 +209,7 @@ organization_ruleset_scope() {
   local name=$1 repository=$2
   jq -cn --arg name "${name}" --arg repository "${repository}" \
     --slurpfile repositories "${repositories_config}" \
-    --slurpfile windows "${advisory_windows}" \
-    --slurpfile security "${root}/config/security-merge-protection.json" '
+    --slurpfile windows "${advisory_windows}" '
     {include: [], exclude: [], protected: false} |
     if $name == "01 - Default branch integrity" or
       $name == "01 - Default branch linear history" then
@@ -225,10 +224,6 @@ organization_ruleset_scope() {
       .include = [$repository]
     elif $name == "04 - Immutable release tags" then
       .include = $repositories[0].release_tags
-    elif $name == "06 - CodeQL security" then
-      .include = $security[0].code_scanning
-    elif $name == "07 - Dependency review" then
-      .include = $security[0].dependency_review
     else error("unknown managed ruleset scope") end'
 }
 
@@ -242,6 +237,11 @@ check_ruleset() {
   fi
   id=$(jq -r '.[0].id' <<<"${entry}")
   source=$(jq -r '.[0].source_type' <<<"${entry}")
+  if [[ ${name} == '06 - CodeQL security' || ${name} == '07 - Dependency review' ]] &&
+    [[ ${source} != Repository ]]; then
+    record_finding "managed security ruleset must be repository-owned '${name}': ${organization}/${repository}"
+    return
+  fi
   case ${source} in
     Organization) endpoint="orgs/${organization}/rulesets/${id}" ;;
     Repository) endpoint="repos/${organization}/${repository}/rulesets/${id}" ;;

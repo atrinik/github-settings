@@ -79,6 +79,9 @@ def rulesets(repository):
         item.update(id=active.index(repository) * 10 + index,
                     source_type='Repository' if scenario == 'repository-rulesets' or
                     template in ('code-scanning', 'dependency-review') else 'Organization')
+        if ((scenario == 'organization-codeql-owner' and template == 'code-scanning') or
+                (scenario == 'organization-dependency-owner' and template == 'dependency-review')):
+            item['source_type'] = 'Organization'
         if scenario == 'tag-repository-nonrelease' and template == 'immutable-release-tags':
             item['source_type'] = 'Repository'
         # Match GitHub's actual owner representation, including repository rulesets.
@@ -97,6 +100,10 @@ def rulesets(repository):
                 excluded = []
             elif template == 'immutable-release-tags':
                 included, excluded = repositories['release_tags'], []
+            elif template == 'code-scanning':
+                included, excluded = policy['code_scanning'], []
+            elif template == 'dependency-review':
+                included, excluded = policy['dependency_review'], []
             else:
                 included, excluded = [repository], []
             item['conditions']['repository_name'] = {

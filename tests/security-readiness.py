@@ -147,7 +147,7 @@ class Fixture:
             return content(self.default_workflow if "ref=main" in endpoint else
                            self.executed_workflow if "ref=" + MERGE in endpoint else self.run_workflow)
         if "/contents/.github/workflows/check.yml" in endpoint:
-            return content(self.before if "ref=" + BASE in endpoint else self.after)
+            return content(self.before if "ref=" + self.pr["base"]["sha"] in endpoint else self.after)
         if "/contents/" in endpoint:
             path = endpoint.split("/contents/")[1].split("?")[0]
             sources = self.codeql_sources if "ref=main" in endpoint else self.codeql_head_sources
@@ -670,6 +670,83 @@ class ReadinessTests(unittest.TestCase):
     def test_sha_direct_head_stale_run_checks_rejected(self):
         self.fixture.run["head_sha"] = OLD
         self.assert_deferred("sha", "missing")
+
+    def advance_canary_base(self):
+        self.fixture.pr["base"]["sha"] = OLD
+        self.fixture.parents = [OLD, HEAD]
+
+    def test_sha_open_canary_base_advance_rejects_old_direct_head_success(self):
+        self.advance_canary_base()
+        self.assert_deferred("sha", "required check missing")
+
+    def test_sha_open_canary_base_advance_requires_both_run_and_suite_current(self):
+        for stale in ("run", "suite"):
+            with self.subTest(stale=stale):
+                self.advance_canary_base()
+                self.fixture.run["pull_requests"][0]["base"]["sha"] = BASE if stale == "run" else OLD
+                self.fixture.suite["pull_requests"][0]["base"]["sha"] = BASE if stale == "suite" else OLD
+                self.assert_deferred("sha", "required check missing")
+
+    def test_sha_open_canary_fresh_base_associations_pass_direct_and_merge_checks(self):
+        self.advance_canary_base()
+        for source in (self.fixture.run, self.fixture.suite):
+            source["pull_requests"][0]["base"]["sha"] = OLD
+        self.assertEqual(self.invoke("sha")[0], 0)
+        self.fixture.checks[MERGE] = [check("Required checks", MERGE), check("Conventional PR title", MERGE, 2)]
+        self.fixture.checks[HEAD] = []
+        self.assertEqual(self.invoke("sha")[0], 0)
+
+    def test_sha_open_canary_old_base_associations_reject_even_with_current_merge_parents(self):
+        self.advance_canary_base()
+        self.fixture.checks[MERGE] = [check("Required checks", MERGE), check("Conventional PR title", MERGE, 2)]
+        self.fixture.checks[HEAD] = []
+        self.assert_deferred("sha", "required check missing")
+
+    def test_sha_merged_canary_keeps_recorded_historical_base_proof(self):
+        self.fixture.pr.update(state="closed", merged=True, merge_commit_sha=NEW)
+        self.fixture.pr["base"]["sha"] = OLD
+        # The historical merge and association retain their recorded BASE.
+        self.fixture.checks[MERGE] = [check("Required checks", MERGE), check("Conventional PR title", MERGE, 2)]
+        self.fixture.checks[HEAD] = []
+        self.assertEqual(self.invoke("sha")[0], 0)
+
+    def test_sha_current_base_failure_or_queued_check_cannot_hide_behind_stale_green(self):
+        for status, conclusion in (("completed", "failure"), ("queued", None)):
+            with self.subTest(status=status):
+                self.advance_canary_base()
+                self.fixture.checks[HEAD] = [check("Required checks"), check("Conventional PR title", identifier=2)]
+                self.fixture.suite_runs.clear()
+                self.add_newer_pr_check(check_status=status, check_conclusion=conclusion,
+                                       run_status=status, run_conclusion=conclusion)
+                self.fixture.checks[HEAD][-1]["started_at"] = None
+                self.fixture.suite_runs[100]["pull_requests"][0]["base"]["sha"] = OLD
+                def current_suite(endpoint):
+                    value = self.fixture(endpoint)
+                    if endpoint.endswith("/check-suites/100"):
+                        value["pull_requests"][0]["base"]["sha"] = OLD
+                    return value
+                with patch.object(readiness, "api", current_suite):
+                    self.assert_deferred("sha", "workflow run not successful")
+
+    def test_sha_merged_canary_rejects_conflicting_recorded_run_and_suite_bases(self):
+        self.fixture.pr.update(state="closed", merged=True, merge_commit_sha=NEW)
+        self.fixture.suite["pull_requests"][0]["base"]["sha"] = OLD
+        self.assert_deferred("sha", "required check missing")
+        self.fixture.checks[MERGE] = [check("Required checks", MERGE), check("Conventional PR title", MERGE, 2)]
+        self.fixture.checks[HEAD] = []
+        self.assert_deferred("sha", "required check missing")
+
+    def test_sha_merged_canary_common_base_must_match_selected_merge_parents(self):
+        self.fixture.pr.update(state="closed", merged=True, merge_commit_sha=NEW)
+        self.fixture.checks[MERGE] = [check("Required checks", MERGE), check("Conventional PR title", MERGE, 2)]
+        self.fixture.checks[HEAD] = []
+        # A run lists two historical associations, but the suite corroborates
+        # only the base absent from this merge commit's parents.
+        alternate = copy.deepcopy(self.fixture.run["pull_requests"][0])
+        alternate["base"]["sha"] = OLD
+        self.fixture.run["pull_requests"].append(alternate)
+        self.fixture.suite["pull_requests"] = [alternate]
+        self.assert_deferred("sha", "required check missing")
 
     def test_sha_direct_head_failed_workflow_run_rejected(self):
         self.fixture.run["conclusion"] = "failure"

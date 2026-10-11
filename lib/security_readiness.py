@@ -370,18 +370,35 @@ def merge_check_run(coordinate, check, pr, merges, proofs, recovered):
         valid = bool(len(runs) == 1 and runs[0]["event"] == "pull_request"
                      and runs[0]["head_sha"] == pr["head"]["sha"]
                      and runs[0]["check_suite_id"] == suite_id)
-        suite = None
+        suite, bases = None, set()
         if valid:
             suite = api(f"repos/{coordinate}/check-suites/{suite_id}")
             references, suite_references = association_references(
                 coordinate, runs[0], suite, pr["base"]["ref"], recovered)
-            valid = suite["id"] == suite_id and suite["app"]["id"] == ACTION_APP and all(
-                any(item["number"] == pr["number"]
-                    and item["head"]["sha"] == pr["head"]["sha"]
-                    and item["base"]["ref"] == pr["base"]["ref"] for item in refs)
-                for refs in (references, suite_references))
-        proofs[suite_id] = {"endpoint": endpoint, "run": runs[0] if valid else None, "suite": suite}
-    return proofs[suite_id]["run"] is not None
+            association_bases = [
+                {item["base"]["sha"] for item in refs if item["number"] == pr["number"]
+                 and item["head"]["sha"] == pr["head"]["sha"]
+                 and item["base"]["ref"] == pr["base"]["ref"]}
+                for refs in (references, suite_references)]
+            bases = association_bases[0] & association_bases[1]
+            # Open PRs require the current base. Merged PRs retain the common
+            # recorded base from their run and suite, even after main advances.
+            if not pr["merged"]:
+                bases &= {pr["base"]["sha"]}
+            valid = suite["id"] == suite_id and suite["app"]["id"] == ACTION_APP and bool(bases)
+        proofs[suite_id] = {"endpoint": endpoint, "run": runs[0] if valid else None,
+                            "suite": suite, "bases": bases, "parents": {}}
+    proof = proofs[suite_id]
+    if proof["run"] is None:
+        return False
+    if check["head_sha"] != pr["head"]["sha"]:
+        if check["head_sha"] not in proof["parents"]:
+            commit = api(f"repos/{coordinate}/commits/{check['head_sha']}")
+            proof["parents"][check["head_sha"]] = [item["sha"] for item in commit["parents"]]
+        parents = proof["parents"][check["head_sha"]]
+        return len(parents) == 2 and any(set(parents) == {base, pr["head"]["sha"]}
+                                         for base in proof["bases"])
+    return True
 
 
 def sha(coordinate, number):

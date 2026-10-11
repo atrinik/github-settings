@@ -119,6 +119,8 @@ assert_drift tag-repository-nonrelease 'unexpected managed release-tag protectio
 assert_drift pr-all-scope "ruleset scope or policy drift '02 - Changes through pull requests'"
 assert_drift default-extra-exclude "ruleset scope or policy drift '01 - Default branch integrity'"
 assert_drift repository-scope-extra "ruleset scope or policy drift '07 - Dependency review'"
+assert_drift organization-codeql-owner "managed security ruleset must be repository-owned '06 - CodeQL security'"
+assert_drift organization-dependency-owner "managed security ruleset must be repository-owned '07 - Dependency review'"
 assert_drift integrity-bypass "ruleset scope or policy drift '01 - Default branch integrity'"
 assert_drift pr-bypass "ruleset scope or policy drift '02 - Changes through pull requests'"
 assert_drift owner-id-drift "ruleset scope or policy drift '02 - Changes through pull requests'"
