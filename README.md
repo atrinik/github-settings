@@ -1225,8 +1225,9 @@ registration and the dependency App remain unprovisioned pending owner actions.
 `atrinik-crate-dependency-update` GitHub App. Its IDs and owner evidence remain
 null while setup is pending. Install it with **selected repositories** only:
 `atrinik/client` (ID `1327106844`) and `atrinik/editor` (ID `1327106902`). Its
-permissions are exactly contents write, pull requests write, and metadata read;
-it has no subscribed events, administration privilege, bypass entry, or
+permissions are exactly contents write, pull requests write, and metadata read.
+Set its homepage to `https://www.atrinik.org` and disable its webhook; it has no
+subscribed events, administration privilege, bypass entry, or
 self-approval/self-merge authority. Preserve every other App and installation,
 including the existing Classic updater and provider Apps.
 

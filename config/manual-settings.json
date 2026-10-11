@@ -461,6 +461,8 @@
     "pull_request_policy": "owned-branch-and-pr-only-no-auto-merge",
     "observed_on": null,
     "evidence_location": null,
-    "runbook": "README.md#crate-dependency-update-app"
+    "runbook": "README.md#crate-dependency-update-app",
+    "homepage_url": "https://www.atrinik.org",
+    "webhook_active": false
   }
 }

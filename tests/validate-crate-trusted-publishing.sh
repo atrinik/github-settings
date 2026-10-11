@@ -109,6 +109,8 @@ reset_policy
 for filter in \
   '.crate_dependency_update_app.permissions.administration = "write"' \
   '.crate_dependency_update_app.events = ["push"]' \
+  '.crate_dependency_update_app.webhook_active = true' \
+  '.crate_dependency_update_app.homepage_url = "https://example.test"' \
   '.crate_dependency_update_app.repository_selection = "all"' \
   '.crate_dependency_update_app.repositories += [{repository:"atrinik/classic", repository_id:1327289971}]' \
   '.crate_dependency_update_app.repositories[0].repository_id = 1' \

@@ -854,11 +854,12 @@ jq -e --arg today "${validation_today}" '
   .github_actions_apps as $apps |
   .external_provider_apps as $external_apps |
   .crate_dependency_update_app as $app |
-  ($app | keys == ["app_id", "app_slug", "events", "evidence_location", "installation_id",
+  ($app | keys == ["app_id", "app_slug", "events", "evidence_location", "homepage_url", "installation_id",
     "observed_on", "owner", "permissions", "pull_request_policy", "readiness", "repositories",
     "repository_scope_verification", "repository_selection", "runbook", "secret_name",
-    "secret_scope", "status", "variable_name", "variable_scope", "workflow_filename", "workflow_triggers"]) and
+    "secret_scope", "status", "variable_name", "variable_scope", "webhook_active", "workflow_filename", "workflow_triggers"]) and
   $app.app_slug == "atrinik-crate-dependency-update" and
+  $app.homepage_url == "https://www.atrinik.org" and $app.webhook_active == false and
   $app.repository_selection == "selected" and
   $app.permissions == {contents: "write", metadata: "read", pull_requests: "write"} and
   $app.events == [] and $app.owner == "Atrinik organization owners" and
