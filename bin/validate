@@ -306,6 +306,9 @@ jq -e \
       (keys == ["id", "name"]) and
       (.id | type == "number" and floor == . and . > 0) and
       (.name | type == "string" and length > 0) and
+      ({classic: 1327289971, protocol: 1327106950, renderer: 1327106998,
+        "content-toolkit": 1327107043}[.name] as $id |
+        $id == null or .id == $id) and
       (.name as $repository |
         ($repositories[0].pull_request_gate | index($repository)) != null) and
       (.name as $repository |
@@ -348,6 +351,7 @@ jq -e '. == {state: "not-configured"}' \
 jq -e '
   (keys == [
     "codecov_github_app_repositories",
+    "crate_dependency_update_app",
     "crates_io_trusted_publishing",
     "external_provider_apps",
     "github_actions_apps",
@@ -787,7 +791,7 @@ while IFS= read -r consumer; do
 done < <(jq -r '.github_actions_credentials[].consumers[]' \
   "${manual_settings_config}")
 
-jq -e '
+jq -e --arg today "${validation_today}" '
   .github_packages_actions_access as $access |
   ($access | type == "array") and
   (
@@ -810,7 +814,9 @@ jq -e '
       "package_type",
       "preserve_visibility",
       "role"
-    ]) and
+    ] or keys == ["actions_repository", "actions_repository_id", "evidence_location",
+      "grant_state", "observed_on", "package_id", "package_name", "package_owner", "package_type",
+      "preserve_visibility", "role", "source_repository", "source_repository_id"]) and
     (.package_owner | type == "string" and length > 0) and
     (.package_type | type == "string" and length > 0) and
     (.package_name | type == "string" and length > 0) and
@@ -825,50 +831,163 @@ jq -e '
       .actions_repository_id |
       type == "number" and . > 0 and floor == .
     ) and
-    (.role == "read")
+    (.role == "read") and
+    (if has("grant_state") then
+      .package_owner == "atrinik" and .package_type == "container" and
+      .package_name == "linux-build" and .package_id == 14205615 and
+      .preserve_visibility == "private" and
+      .source_repository == "atrinik/devcontainer" and .source_repository_id == 1322185908 and
+      ((.actions_repository == "atrinik/client" and .actions_repository_id == 1327106844) or
+       (.actions_repository == "atrinik/editor" and .actions_repository_id == 1327106902)) and
+      (if .grant_state == "pending-owner-ui-read-grant" then
+        .observed_on == null and .evidence_location == null
+      elif .grant_state == "owner-observed-read-grant" then
+        (.observed_on | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")) and
+        (try ((.observed_on + "T00:00:00Z" | fromdateiso8601 | strftime("%Y-%m-%d")) == .observed_on
+          and .observed_on <= $today) catch false) and
+        (.evidence_location | type == "string" and test("^[A-Za-z0-9_./#-]+$"))
+      else false end)
+    else (.package_owner != "atrinik" or .package_type != "container" or .package_name != "linux-build") end)
   )
 ' "${manual_settings_config}" >/dev/null
 
-# Planned crate publishing is a distinct manual contract: its desired review
-# policy is explicit, but no live registration or release pin is invented.
+# Automatic crate publication follows reviewed source/version merges. Manual
+# onboarding observations never claim independent crates.io API verification.
 jq -e \
   --slurpfile repositories "${repositories_config}" \
-  --slurpfile actions "${root}/config/actions-selected.json" '
+  --slurpfile actions "${root}/config/actions-selected.json" \
+  --arg today "${validation_today}" '
+  def observed_day:
+    (type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")) and
+    (try ((. + "T00:00:00Z" | fromdateiso8601 | strftime("%Y-%m-%d")) == . and . <= $today) catch false);
+  def observation:
+    (keys == ["evidence_location", "observed_on", "state"]) and
+    (if .state == "pending-owner-registration" then
+      .observed_on == null and .evidence_location == null
+    elif .state == "owner-observed-registration" then
+      (.observed_on | observed_day) and
+      (.evidence_location | type == "string" and test("^[A-Za-z0-9_./#-]+$"))
+    else false end);
+  {
+    protocol: {id: 1327106950, crates: ["atrinik-protocol"], bootstrap: []},
+    renderer: {id: 1327106998, crates: ["atrinik-render-api", "atrinik-render-resources",
+      "atrinik-render-sdl3", "atrinik-render-testkit", "atrinik-render-ui",
+      "atrinik-render-wgpu", "atrinik-scene"], bootstrap: true},
+    "content-toolkit": {id: 1327107043, crates: ["atrinik-artifact", "atrinik-catalog",
+      "atrinik-diagnostics", "atrinik-schema", "atrinik-source", "atrinik-testkit",
+      "atrinik-transaction"], bootstrap: true}
+  } as $inventory |
   .github_actions_environments as $environments |
   .crates_io_trusted_publishing as $publishers |
-  ($publishers | type == "array" and length <= 1) and
+  ($publishers | type == "array" and length <= 3) and
+  ([$publishers[].repository] | length == (unique | length)) and
   all($publishers[];
-    (keys == ["activation_state", "authentication_action", "crate", "environment",
-      "provider", "repository", "repository_id", "runbook", "workflow_filename",
-      "workflow_ref", "workflow_trigger"]) and
-    .activation_state == "pending-source-release" and
-    (.authentication_action | test("^rust-lang/crates-io-auth-action@[0-9a-f]{40}$")) and
+    (.repository | split("/")[1]) as $name |
+    $inventory[$name] as $expected |
+    (keys == ["authentication_action", "bootstrap_crates", "bootstrap_policy", "crates",
+      "environment", "environment_state", "provider", "publisher_registration", "release_approval",
+      "repository", "repository_id", "runbook", "source_evidence_policy", "source_state",
+      "source_workflow_filename", "upload_intent_policy", "workflow_filename", "workflow_ref", "workflow_trigger"]) and
+    $expected != null and .repository == ("atrinik/" + $name) and
+    .repository_id == $expected.id and .crates == $expected.crates and
+    .bootstrap_crates == (if $expected.bootstrap == true then $expected.crates else [] end) and
+    .bootstrap_policy == "owner-local-api-token-once-then-oidc-only" and
+    (.authentication_action | type == "string" and
+      test("^rust-lang/crates-io-auth-action@[0-9a-f]{40}$")) and
     (($actions[0].patterns_allowed | map(select(startswith("rust-lang/")))) ==
       ["rust-lang/crates-io-auth-action@*"]) and
-    .crate == "atrinik-protocol" and .provider == "github" and
-    .repository == "atrinik/protocol" and .repository_id == 1327106950 and
-    ($repositories[0].pull_request_gate | index("protocol")) != null and
-    ($repositories[0].archive | index("protocol")) == null and
+    .provider == "github" and
+    $actions[0].github_owned_allowed == true and
+    ($repositories[0].pull_request_gate | index($name)) != null and
+    ($repositories[0].archive | index($name)) == null and
     .workflow_filename == "publish-crate.yml" and
+    .source_workflow_filename == "release.yml" and
+    .source_evidence_policy == "github-attested-protected-main-manifest" and
+    .upload_intent_policy == "create-only-global-git-ref-before-upload" and
     .workflow_ref == "refs/heads/main" and .workflow_trigger == "workflow_dispatch" and
-    .runbook == "README.md#protocol-crate-trusted-publishing" and
+    .runbook == "README.md#automatic-crate-trusted-publishing" and
+    .release_approval == "reviewed-source-and-version-merge" and
+    (.source_state | IN("pending-reviewed-workflow", "observed-reviewed-workflow")) and
+    (.environment_state | IN("pending", "observed")) and
+    (.publisher_registration | observation) and
+    (if .environment_state == "observed" then .source_state == "observed-reviewed-workflow" else true end) and
     .environment == {
       can_admins_bypass: false,
       deployment_branch_policy: {
         custom_branch_policies: true,
-        patterns: [{name: "main", type: "branch"}],
-        protected_branches: false
+        patterns: [{name: "main", type: "branch"}], protected_branches: false
       },
       name: "crates-io-release", prevent_self_review: false,
-      required_reviewers: [{type: "User", id: 3865595, login: "zoeyrose"}],
-      reviewer_requirement: "repository-maintainer",
-      secret_names: [], variable_names: []
+      required_reviewers: [], secret_names: [], variable_names: [], wait_timer_minutes: 0
     }
   ) and
   all($publishers[]; . as $publisher |
     all($environments[];
-      .repository != $publisher.repository or .environment != $publisher.environment.name))
+      .repository != $publisher.repository or .environment != $publisher.environment.name)) |
+  select(.)
 ' "${manual_settings_config}" >/dev/null
+
+jq -e --arg today "${validation_today}" '
+  def observed_day:
+    (type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")) and
+    (try ((. + "T00:00:00Z" | fromdateiso8601 | strftime("%Y-%m-%d")) == . and . <= $today) catch false);
+  .github_actions_apps as $apps |
+  .external_provider_apps as $external_apps |
+  .crate_dependency_update_app as $app |
+  ($app | keys == ["app_id", "app_slug", "consumers", "credential_state", "events", "evidence_location", "homepage_url", "installation_id",
+    "key_created_on", "last_verified_on", "observed_on", "owner", "permissions", "pull_request_policy", "readiness", "repositories",
+    "repository_scope_verification", "repository_selection", "rotate_by", "rotation_cadence_days", "rotation_owner", "runbook", "secret_name",
+    "secret_scope", "status", "variable_name", "variable_scope", "webhook_active", "workflow_activation", "workflow_filename", "workflow_triggers"]) and
+  $app.app_slug == "atrinik-crate-dependency-update" and
+  $app.homepage_url == "https://www.atrinik.org" and $app.webhook_active == false and
+  $app.repository_selection == "selected" and
+  $app.permissions == {contents: "write", metadata: "read", pull_requests: "write"} and
+  $app.events == [] and $app.owner == "Atrinik organization owners" and
+  $app.rotation_owner == "Atrinik organization owners" and $app.rotation_cadence_days == 90 and
+  $app.repositories == [{repository: "atrinik/client", repository_id: 1327106844},
+    {repository: "atrinik/editor", repository_id: 1327106902}] and
+  $app.secret_name == "CRATE_DEPENDENCY_UPDATE_APP_PRIVATE_KEY" and $app.secret_scope == "repository" and
+  $app.variable_name == "CRATE_DEPENDENCY_UPDATE_APP_ID" and $app.variable_scope == "repository" and
+  $app.workflow_filename == "released-dependencies.yml" and
+  $app.consumers == ["atrinik/client/.github/workflows/released-dependencies.yml",
+    "atrinik/editor/.github/workflows/released-dependencies.yml"] and
+  $app.workflow_triggers == ["schedule-hourly", "workflow_dispatch"] and
+  $app.readiness == "exact-released-crates-and-checksums-before-pr" and
+  $app.pull_request_policy == "owned-branch-and-pr-only-no-auto-merge" and
+  $app.runbook == "README.md#crate-dependency-update-app" and
+  ($app.credential_state | IN("pending-name-metadata", "observed-name-metadata")) and
+  ($app.workflow_activation | keys == ["evidence_location", "observed_on", "state"]) and
+  (if $app.workflow_activation.state == "pending-reviewed-workflows" then
+    $app.workflow_activation.observed_on == null and $app.workflow_activation.evidence_location == null
+  elif $app.workflow_activation.state == "observed-successful-owned-pr" then
+    $app.status == "owner-observed" and $app.credential_state == "observed-name-metadata" and
+    ($app.workflow_activation.observed_on | observed_day) and
+    ($app.workflow_activation.evidence_location | type == "string" and test("^[A-Za-z0-9_./#-]+$"))
+  else false end) and
+  (if $app.status == "planned" then
+    $app.credential_state == "pending-name-metadata" and
+    $app.workflow_activation.state == "pending-reviewed-workflows" and
+    $app.app_id == null and $app.installation_id == null and
+    $app.repository_scope_verification == "pending-owner-ui" and
+    $app.observed_on == null and $app.evidence_location == null and
+    $app.key_created_on == null and $app.last_verified_on == null and $app.rotate_by == null
+  elif $app.status == "owner-observed" then
+    ($app.app_id | type == "number" and floor == . and . > 0) and
+    ($app.installation_id | type == "number" and floor == . and . > 0) and
+    ($app.repository_scope_verification | IN("organization_owner_ui", "app_authenticated_repository_api")) and
+    ($app.observed_on | observed_day) and
+    ($app.key_created_on | observed_day) and ($app.last_verified_on | observed_day) and
+    $app.last_verified_on >= $app.key_created_on and
+    ($app.rotate_by | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")) and
+    (try (($app.rotate_by + "T00:00:00Z" | fromdateiso8601 | strftime("%Y-%m-%d")) == $app.rotate_by) catch false) and
+    $app.rotate_by >= $today and $app.rotate_by > $app.key_created_on and
+    ((($app.rotate_by + "T00:00:00Z" | fromdateiso8601) -
+      ($app.key_created_on + "T00:00:00Z" | fromdateiso8601)) / 86400 <= $app.rotation_cadence_days) and
+    all(($apps + $external_apps)[]; .app_id != $app.app_id and .installation_id != $app.installation_id) and
+    ($app.evidence_location | type == "string" and test("^[A-Za-z0-9_./#-]+$"))
+  else false end)
+' "${manual_settings_config}" >/dev/null
+
 
 jq -e \
   --slurpfile repositories "${repositories_config}" '

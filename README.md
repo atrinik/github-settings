@@ -794,9 +794,11 @@ they also need a pull-request gate, required CI, immutable release tags, or
 archival.
 
 Immutable releases require a stricter release contract than an immutable tag
-alone. Add a repository to `config/immutable-releases.json` only after its
-release workflow creates a draft, uploads and verifies every intended asset,
-and publishes the draft as its final step. Record both the repository name and
+alone. Stage repository additions in `config/immutable-releases.json` as pending
+activation, then apply only after reviewed workflow qualification proves draft
+creation/recovery, complete verified assets, and publication as the final step.
+Every registry upload must verify that the actual complete source release is
+immutable; a desired inventory entry alone is not publication evidence. Record both the repository name and
 the ID reported by GitHub. Validation requires every selected repository to be
 active, pull-request governed, and protected by the release-tag ruleset; the
 publisher fails closed if a live repository ID differs from the inventory.
@@ -923,43 +925,113 @@ confirm a successful default-setup analysis before rescheduling the migration.
 Never delete the advanced workflow first and assume a later policy run will
 repair coverage.
 
-## Enabling immutable releases for Classic
+## Enabling immutable source releases
 
-The initial desired state is the organization-level `selected` mode with only
-repository ID `1327289971` (`atrinik/classic`). Do not apply it until the
-Classic draft-first release workflow is merged and its build, packaging,
-retry/recovery, and publication paths have passed on `main`. A published
-release must be complete because its tag and assets can no longer be replaced.
+The desired organization-level `selected` inventory preserves Classic
+(`1327289971`) and adds protocol (`1327106950`), renderer (`1327106998`), and
+content-toolkit (`1327107043`). These additions are pending activation until
+reviewed source workflows are merged and qualified. Their release producers
+must assemble and verify the complete crate/archive/manifest payload on a draft
+before publishing it. A published immutable release must be complete because
+its tag and assets can no longer be replaced. Before any registry upload, the crate publication helper verifies the actual
+source release has `immutable=true`. Ordinary `GITHUB_TOKEN` cannot read the
+administrative immutable-settings endpoint, so source workflows do not add an
+unsupported pre-tag query or administrative credentials. This inventory is
+activated only after reviewed draft-first source qualification.
 
-Use this rollout order:
+Initial qualification establishes producer code and setup; it does not require
+an already published immutable release. The independently accepted producer
+candidates and merged main revisions had identical complete Git trees:
 
-1. Merge and verify the Classic release workflow. Confirm it creates or
-   recovers a draft, attaches the complete release payload, and publishes only
-   after all validation succeeds.
-2. Merge this governance policy. Run `bin/publish` and inspect the exact
-   `PUT /orgs/atrinik/settings/immutable-releases` payload. It must select only
-   `[1327289971]`.
-3. With explicit deployment authorization, run `bin/publish --apply`. The
-   publisher verifies the organization selection and the repository's
-   `enabled=true,enforced_by_owner=true` state before continuing.
-4. Confirm the live state independently:
+| Repository | Reviewed candidate | Merged main |
+| --- | --- | --- |
+| protocol | `5f843a69ec52233a5ff66bebe7d04a025ff7295c` | `f9e72b9ebc4f8516f3a1e1f6383ab4484c3c1444` |
+| renderer | `9a7e1afcc378cd14d28e56468f6a7cdd16de630c` | `ef70471c87579f3cef0027bf8e126fbaae515f6f` |
+| content-toolkit | `c04755ba3936c30171a85ec7ce003413eb75d174` | `0caed7763c1c8d2d83bb3f2636a33d94f3962a71` |
 
-   ```sh
-   gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
-     orgs/atrinik/settings/immutable-releases
-   gh api --paginate -H 'X-GitHub-Api-Version: 2026-03-10' \
-     'orgs/atrinik/settings/immutable-releases/repositories?per_page=100' \
-     --jq '.repositories[] | [.name, .id]'
-   gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
-     repos/atrinik/classic/immutable-releases
-   ```
+Local draft-first complete-asset validation, independent source review, and
+exact-candidate CI establish this initial code qualification. These historical
+revisions do not lock future source or action updates. Workflow parsing alone
+does not prove draft assembly; real signing, immutable release assets, and
+registry uploads remain runtime proof obligations.
 
-If the apply or its verification fails, the publisher automatically sends the
-pre-change mode and complete selected-ID set back to GitHub and verifies the
-rollback. Preserve its full error output and stop; do not retry with an ad hoc
-payload. For a later intentional rollback, review and merge a desired-state
-change first, then run the normal plan and explicitly authorized apply flow so
-the previous selection is not guessed or partially overwritten.
+Before any broad `bin/publish --apply` mutation, its preflight computes producer
+IDs newly entering the live immutable selection. Each new producer requires an
+observed source/environment inventory record and a fresh scoped
+`bin/verify-manual-settings --crate-publication-setup atrinik/REPOSITORY` check.
+Pending or missing records, workflow/environment drift, or concurrent immutable
+policy changes stop apply before mutation. Existing selected producers and an
+already enforced `all` policy need no initial-addition qualification. This guard
+does not authorize broad apply for the narrow rollout below.
+
+For protocol, separately verify that the actual immutable pinned
+semantic-release GitHub plugin supports the configured draft-first publication
+and the complete asset payload. A configured flag alone is not release proof.
+Qualification includes build, packaging, draft assembly, retry/recovery,
+actual immutable-release upload gating, and publication paths.
+
+Use this narrow rollout order for this release activation:
+
+1. Qualify each reviewed draft-first producer candidate and retain its exact
+   revision and validation evidence. Before merging, inspect the three
+   Semantic Release workflows, verify no in-flight run, record their original
+   enabled states, and temporarily disable only those three workflows. This
+   reversible window prevents a first mutable automatic source release while
+   immutable policy awaits activation; preserve Classic and all other workflows.
+2. Merge the accepted producer and governance source. Run `bin/publish` in
+   read-only plan mode and inspect every mutation. The broad plan can include
+   unrelated drift, so **do not run `bin/publish --apply` for this activation**.
+   Provision crate environments only after their owning workflows are merged.
+3. The authorized coordinator verifies the live organization and repository
+   identities and snapshots `GET /orgs/atrinik/settings/immutable-releases`
+   plus the complete paginated
+   `GET /orgs/atrinik/settings/immutable-releases/repositories` selection.
+   Normalize the snapshot exactly as `current_immutable_release_payload` in
+   `bin/publish`: mode `all`/`none`, or mode `selected` with the complete sorted
+   unique selected IDs. Retain the snapshot privately for verified rollback.
+4. Derive the targeted payload from the merged desired inventory, adding only
+   the three producer IDs and retaining the complete accepted prior selection.
+   For this inventory it is `enforced_repositories: selected` and
+   `selected_repository_ids: [1327106950,1327106998,1327107043,1327289971]`.
+   Require all four current names/IDs to match and preserve Classic. Re-read the
+   complete live policy immediately before writing; it must still equal the
+   snapshot. Unexpected mode, unknown selection, identity or concurrent drift
+   stops activation until the accepted desired state is reconciled.
+5. Issue only `PUT /orgs/atrinik/settings/immutable-releases` with that reviewed
+   payload through the supported API and the coordinator's existing authority.
+   Do not apply repository settings, rulesets, other Actions policy or other
+   organization changes from the broad plan. Re-read the organization mode and
+   complete selection, require exact equality with the attempted payload, then
+   require every selected repository's immutable-release readback to report
+   `enabled=true,enforced_by_owner=true`.
+6. Restore only the three workflows to their recorded enabled states. Dispatch
+   exact merged main as authorized and verify a complete immutable source
+   release, its protected-main provenance, and registry readiness before any
+   upload or downstream migration.
+
+Readback uses the same supported endpoints as the publisher:
+
+```sh
+gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
+  orgs/atrinik/settings/immutable-releases
+gh api --paginate -H 'X-GitHub-Api-Version: 2026-03-10' \
+  'orgs/atrinik/settings/immutable-releases/repositories?per_page=100' \
+  --jq '.repositories[] | [.name, .id]'
+for repository in classic protocol renderer content-toolkit; do
+  gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
+    "repos/atrinik/${repository}/immutable-releases"
+done
+```
+
+If the targeted write or verification fails, keep the producer workflows
+suspended and read the policy again. Restore the exact pre-change snapshot only
+when the live state still matches the attempted payload in the coordinator's
+owned window; verify the complete restored mode and selection before restoring
+workflow states. Ambiguous readback or concurrent foreign drift is a stop
+condition, not permission to overwrite it. Retain bounded sanitized evidence
+and resolve the conflict before retrying. A later intentional policy removal
+requires reviewed desired source and the same narrow snapshot/readback/rollback
+procedure. Preserve published releases, tags, assets and durable upload intents.
 
 ## Provisioning the Classic Discord release environment
 
@@ -1204,70 +1276,268 @@ that exact entry if it remains after the visibility transition. Finally, run a
 real fork pull request and require its digest pulls and complete required
 checks to succeed without package permissions or registry authentication.
 
-## Protocol crate Trusted Publishing
+## Private Linux updater build image
 
-`config/manual-settings.json` records a **pending**, value-free crates.io
-Trusted Publishing contract for `atrinik-protocol`. It binds
-`atrinik/protocol` (repository ID `1327106950`), the workflow filename
-`publish-crate.yml`, and the `crates-io-release` environment. The workflow is
-manual (`workflow_dispatch`) on `refs/heads/main` only. The desired environment
-allows only the selected `main` branch, requires reviewer `zoeyrose` (User ID
-`3865595`), permits that maintainer to review their own manually initiated run,
-and disallows administrator bypass. It has no secret or variable slots.
-The owner identity and current repository admin permission were verified on
-2026-10-04; the verifier checks both identity and maintainer permission again.
-This record does not claim that the environment or Trusted Publisher exists.
-The existing `crates-io-bootstrap` environment and published 0.1 crate are
-separate historical state and are not changed by this contract.
+`ghcr.io/atrinik/linux-build` is a private container package, ID `14205615`,
+linked to `atrinik/devcontainer` (repository ID `1322185908`). Preserve that
+visibility and source association. The owner verified the pinned manifest with
+authenticated registry access; the client owning workflow authenticated but
+could not resolve that manifest. An owner's successful pull cannot prove a
+repository workflow's package access.
 
-The Actions allowlist adds only
-`rust-lang/crates-io-auth-action@*`,
-allowing full-SHA updates of that action. The currently inventoried
+`github_packages_actions_access` records read-only Actions-access setup for
+`atrinik/client` (`1327106844`) and `atrinik/editor` (`1327106902`). The owner
+confirmed those two **Manage Actions access** read grants on 2026-10-11; their
+`grant_state` is `owner-observed-read-grant`, with dated sanitized owner evidence.
+Client's exact-main post-grant run
+[38164640476](https://github.com/atrinik/client/actions/runs/38164640476)
+subsequently proved a repository-token pull of the pinned image and complete
+read-only preparation/application validation. It correctly produced no migration
+PR before registry readiness; App-writing jobs were skipped, so no effective
+App writer was proved. Editor owning workflow pull/activation proof remains
+pending. The grant observation comes from owner UI, not API enumeration of the
+grant list. Retain permission inheritance, private
+visibility, linked source and every foreign entry. Do not broaden to
+organization/all repositories or change a foreign grant. The publisher never
+writes these manual grants.
+
+The read-only verifier checks consumer/source identities, exact package ID,
+private visibility and linked source. GitHub package metadata does not expose
+proof of the manual grant or effective registry access. Future unprovisioned
+intent uses `pending-owner-ui-read-grant` with null `observed_on` and
+`evidence_location`; observation requires sanitized owner UI readback and dated
+evidence. Separately prove each exact merged owning workflow pulls the pinned
+manifest and completes its ordinary required validation. Registry login success
+and secret-name presence alone are insufficient. Host registry credentials must
+be removed before credential-free Cargo/build preparation; the updater App
+remains isolated to its PR-writing job. No package grant supplies a
+registry-publication token or proves the dependency App key effective.
+
+Rollback stops the owning updater workflows first and removes only these two
+read grants through supported owner UI after reviewed inventory removal.
+Preserve the package, published versions, source, visibility, foreign grants,
+and unrelated App credentials.
+
+## Automatic crate Trusted Publishing
+
+`config/manual-settings.json` records the desired, value-free contracts below.
+All three source contracts are `observed-reviewed-workflow`, and their
+environments are `observed`: supported live readback qualified both workflow
+files at the same protected-main revision, exact repository identities, and
+main-only environments with no reviewers, wait, administrator bypass, secrets,
+or variables. Their source-release workflows remain temporarily paused for the
+narrow immutable-policy activation window.
+Protocol registration was owner-observed on 2026-10-11 and its manual 0.2 upload
+succeeded in [run 38156755961](https://github.com/atrinik/protocol/actions/runs/38156755961).
+That registration does not imply the future automatic source workflow or
+zero-review environment or future release is ready on its own. The owner has
+now applied the reviewed zero-review environment configuration, while source
+release restoration and immutable-policy activation remain pending. This change does not register a crates.io publisher, provision an
+Actions environment, upload a crate, or install a GitHub App.
+
+| Repository | Stable repository ID | Published libraries |
+| --- | --- | --- |
+| `atrinik/protocol` | `1327106950` | `atrinik-protocol` |
+| `atrinik/renderer` | `1327106998` | `atrinik-render-api`, `atrinik-render-resources`, `atrinik-render-sdl3`, `atrinik-render-testkit`, `atrinik-render-ui`, `atrinik-render-wgpu`, `atrinik-scene` |
+| `atrinik/content-toolkit` | `1327107043` | `atrinik-artifact`, `atrinik-catalog`, `atrinik-diagnostics`, `atrinik-schema`, `atrinik-source`, `atrinik-testkit`, `atrinik-transaction` |
+
+Every Trusted Publisher binds the exact repository, `publish-crate.yml`, and
+`crates-io-release` environment. Publication runs on protected `refs/heads/main`
+through `workflow_dispatch`; the owning hourly reconciliation path dispatches eligible reviewed releases after
+credential-free preparation. The release approval is the reviewed source and
+version merge. Once onboarding is complete, eligible releases publish without
+another release confirmation or environment approval. Hourly schedules are
+best-effort; manual reconciliation dispatch remains available.
+
+The desired environment has exactly one selected branch policy, branch `main`,
+no required reviewers, zero wait, administrator bypass disabled, and no secret
+or variable slots. The actual `main` branch must be protected: a custom branch
+pattern alone does not prove that protection. The existing protocol
+`crates-io-bootstrap` environment and published 0.1 crate are historical state;
+this contract does not modify them. Protocol 0.2 retains its current approved
+manual publication path and exact release proof. The generic automatic path
+applies to later eligible reviewed versions.
+
+The reviewed selected-actions allowance is
+`rust-lang/crates-io-auth-action@*`, so ordinary Dependabot pin updates do not
+require a redundant central version change. Actual executable workflows must
+use a full immutable SHA for the official action. The initial observed action
+reference is `rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18`
+(upstream `v1.0.5`); that inventory observation is not a permanent version lock.
+The
 [pinned official action](https://github.com/rust-lang/crates-io-auth-action/blob/c6f97d42243bad5fab37ca0427f495c86d5b1a18/README.md)
 exchanges GitHub OIDC for a temporary crates.io token and revokes it in its
-post step. Only the owning workflow's upload job may request `id-token: write`,
-with `contents: read`; only the Cargo upload step receives the returned token.
-Do not store a crates.io token in GitHub secrets or credential files.
+post step. Within `publish-crate.yml`, only the guarded automatic and retained historical
+protocol 0.2 upload jobs request
+`id-token: write`; crate preparation
+and reconciliation have no OIDC permission. The source workflow has a separate
+inert manifest-signing job with only contents read, OIDC write and attestation
+write; its build and semantic-release jobs have no OIDC. The automatic publisher
+requests only contents write for durable upload intent, actions/checks/attestations
+read and OIDC write. Only the inert upload helper receives the temporary registry
+token and the step-scoped Git-reference intent token; it runs no Cargo, npm or builds. Preserve the other action allowances and GitHub-owned
+Actions access. Registry credentials never belong in GitHub secrets, inventory,
+workflow inputs, logs, or committed credential files.
+
 The [GitHub environment controls](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments)
-allow this public repository's manual reviewer, branch restriction, and bypass
-policy on GitHub Team. The [crates.io documentation](https://crates.io/docs/trusted-publishing)
-owns the external registration procedure.
+and [crates.io Trusted Publishing documentation](https://crates.io/docs/trusted-publishing)
+are the supported provisioning references. Activation proceeds in this order:
 
-Activation is a later, separately authorized operation:
+1. Qualify and merge governance and owning workflow source using the narrow
+   reversible immutable-release activation window above. Run the complete
+   `bin/publish` read-only plan and inspect every planned mutation; activate only
+   the authorized exact policy through scoped API/UI operations. Preserve
+   unrelated live policy and never broad-apply this release delivery.
+2. Verify live repository ID/name, active status, default branch, exact main
+   ref, protected main, and both merged publication/source-signing workflows. Record
+   `source_state: observed-reviewed-workflow` only after that observation.
+3. The fourteen renderer and toolkit names above require a first owner-local
+   publication because Trusted Publishing cannot create their initial crate
+   records. Prepare, review, and verify the exact release archives, package
+   dependency order, versions, digests, native prerequisites, and registry
+   readiness first. The owner uses a narrowly scoped local API token only for
+   that initial bootstrap, then revokes it. Exclude the renderer CLI
+   `atrinik-render` and toolkit applications `atrinik-content` and
+   `atrinik-content-mcp`. Protocol already exists and needs no bootstrap.
+   No bootstrap token is sent to GitHub or stored in this inventory.
+4. Provision each `crates-io-release` environment with the exact branch,
+   reviewer, wait, bypass, and empty-secret/variable contract. Verify the live
+   settings, then record `environment_state: observed` in reviewed source.
+5. Use the supported crates.io owner UI to register each listed crate against
+   its exact repository, workflow filename, and environment. Capture sanitized
+   owner evidence, registration date, and the exact selected identities.
+   Record `publisher_registration.state: owner-observed-registration`,
+   `observed_on`, and `evidence_location` only after observation. All future
+   publication uses OIDC; local API-token publication is not a fallback.
+6. Run credential-free readiness and the approved publication paths. Verify
+   registry version/checksum visibility and release evidence before downstream
+   migration. Later eligible releases reconcile automatically after merge.
 
-1. Merge and review the protocol workflow and governance source. Keep the
-   protocol release policy at `pending-source-release` with null release pins
-   until the actual source release exists; the upload path must fail before
-   requesting an OIDC token while those prerequisites are missing.
-2. Use credential-free preparation to bind the actual published tag and source
-   revision to a reproducible crate digest and its release asset/manifest proof.
-   Review and commit those exact coordinates through the protocol repository.
-   No future release SHA or crate digest belongs in this planning record.
-3. Review `bin/publish` and apply only the merged, authorized desired-state
-   policy. The organization allowlist applies to all governed repositories, but
-   the authentication-action pattern matches only that action name and permits
-   routine full-SHA updates.
-   Check the complete plan for unrelated drift before requesting apply.
-4. With separate owner authorization, provision `crates-io-release` with the
-   exact desired reviewer/branch/bypass settings and register a crates.io
-   Trusted Publisher for `atrinik/protocol`, `publish-crate.yml`, and that
-   environment. Verify live identity and protection settings, then record the
-   observed activation through a reviewed governance update. This pending-only
-   schema deliberately cannot represent activation by changing a status string.
-5. Obtain separate workflow-dispatch authorization and use the reviewed manual
-   publication workflow. Environment approval remains the maintainer's action.
+`bin/publish` reports this manual setup but never performs it.
+`bin/verify-manual-settings` always checks actual repository identity, exact
+main ref, and protected main. Pending source/environment/registration states
+remain explicit. Observed source parses both `publish-crate.yml` and `release.yml` on the same
+exact main revision through
+`lib/verify_crate_workflow.py`. Install the declared
+`requirements-validation.txt` dependency before local observed-source checks;
+the policy and publication workflows install it before verification. The
+parser rejects duplicate YAML keys, comment-only/plain text, disabled automatic
+jobs, missing OIDC, mutable action refs, extra OIDC jobs, widened guards,
+inexact checkout/input bindings, shell/workspace overrides, ignored critical
+failures, matrix/reusable execution, credential references outside the exact
+upload input, and skipped verification/auth/upload steps. Recursive expression
+checks include job outputs, names, concurrency, checkout inputs, and nested
+step fields, including indexed, case-varied, or aggregate step references.
+It verifies executable dispatch, repository/ID/protected-main conditions,
+credential-free dependency, environment, scoped permissions, an unconditional
+full-SHA official auth action, and only the returned temporary upload token.
+Source qualification also verifies a separate inert signer, successful package
+and signer dependencies, exact prepared revision/same-run payload, and the
+full-SHA official `actions/attest-build-provenance` action over
+`build/release/crate-release.json`. Existing `github_owned_allowed: true` covers
+that official action and its internal `actions/attest` dependency; actual refs
+stay immutable and ordinary Dependabot updates need no central SHA lock.
+Safe schedule reconciliation may coexist; its jobs receive no OIDC. Observed
+environments require the exact selected main branch, no reviewer or wait
+protection rule, disabled administrator bypass, and empty secret/variable name
+metadata. Any identity/protection drift fails closed. The verifier reports
+crates.io registration as owner-observed evidence: GitHub metadata cannot prove
+external registration, token scope, successful upload, or future readiness.
+Runtime qualification belongs to the producer helper. It cryptographically
+verifies the actual manifest attestation against the exact repository ID,
+protected main source/signer revision, source workflow and run attempt; matching
+asset digests alone cannot authenticate uploaded release metadata. It also
+requires the actual source release to be immutable before registry upload.
+Before each new crate PUT, the inert upload helper atomically creates only the
+global `refs/tags/crate-upload-intent/<crate>/<version>` coordinate through the
+Git-reference API. Only a successful create response plus exact readback permits
+that upload. An existing or ambiguous reservation with an absent registry version
+blocks retries, including a retry from another source release; registry absence
+alone cannot authorize another PUT. Do not automatically delete/reset these
+intents. Reconcile an interrupted upload with owner-observed registry evidence
+and the documented producer recovery procedure before any separately reviewed
+recovery action. Structural workflow verification does not duplicate runtime
+certificate or reservation logic or prove that those live operations succeeded.
 
-`bin/publish` prints the manual pending requirement; it does not create an
-environment or register a publisher. `bin/verify-manual-settings` verifies the
-repository and reviewer identities/permission, then reports `PENDING`. It does
-not inspect token values or claim the future source release, environment,
-external registration, or publication is ready. Missing reviewer access or
-identity drift fails closed. Existing environment contracts retain their exact
-reviewer restrictions.
+Change each pending state only through reviewed source with its corresponding
+observation. External registration can be observed before a later automatic
+source/environment transition; it does not activate that transition. A status
+edit alone cannot prove publication readiness.
 
-Rollback of this unactivated plan is a reviewed removal of this manual record
-and the single action pattern, followed by a plan review. Once activated, stop
-new manual publication, revoke the exact crates.io Trusted Publisher through
-its supported owner UI, and separately review removal of the matching release
-environment/action allowance. Never mutate existing crate versions, release
-assets, tags, unrelated environments, or other action allowlist entries.
+Rollback begins by stopping new reconciliation/publication through reviewed
+source and revoking the exact crates.io publisher through its supported owner
+UI. Review removal of only matching environments/action allowance when no
+remaining registered contract needs them. Preserve published crate versions,
+release assets, tags, unrelated environments, and unrelated Actions access.
+Removing unactivated inventory intent is also a valid reviewed rollback.
+
+## Protocol crate Trusted Publishing
+
+The automatic contract above replaces the former planned per-release
+maintainer-review policy. Protocol 0.2 keeps its approved manual release path;
+future reviewed source/version merges use the automatic path after observed
+onboarding. Protocol registration is owner-observed with the successful manual 0.2 run;
+its automatic source/environment setup is observed, while automatic release
+activation remains pending. Renderer/toolkit registration remains pending owner
+actions; the dependency
+App is provisioned with workflow activation still pending.
+
+## Crate dependency update App
+
+`crate_dependency_update_app` records owner-observed App setup on 2026-10-11,
+while owning workflow activation remains `pending-reviewed-workflows`.
+The live App is `atrinik-crate-dependency-update`, App ID `5276152`, installation
+ID `170332148`, with **selected repositories** exactly `atrinik/client` (ID
+`1327106844`) and `atrinik/editor` (ID `1327106902`). App-authenticated supported
+API readback confirmed that complete selected set, exact contents write/pull
+requests write/metadata read permissions, no subscribed events, and the external
+homepage `https://www.atrinik.org`. Preserve every other App and installation,
+including the existing Classic updater and provider Apps. The desired disabled
+webhook is a separate owner UI setting; `events: []` proves no subscriptions and
+does not independently prove the webhook switch is disabled.
+
+The owner expressly authorized provisioning before the consumer workflows
+merge. Each selected repository now has secret name
+`CRATE_DEPENDENCY_UPDATE_APP_PRIVATE_KEY` and variable name
+`CRATE_DEPENDENCY_UPDATE_APP_ID`; the observed App ID is `5276152`. Name metadata
+was verified after creation on 2026-10-11. Never display or copy private-key/token
+values or local credential paths into inventory, logs, or public evidence. The
+secret value is not readable through GitHub's metadata API, and name presence
+cannot prove that a key is valid or effective. These observations do not grant
+workflow activation, bypass, self-approval, or self-merge authority.
+
+The value-free key lifecycle records creation and verification on 2026-10-11,
+consumer paths for both `released-dependencies.yml` workflows, and rotation
+owner `Atrinik organization owners`. Its 90-day internal rotation deadline is
+2027-01-09; this is not an upstream key expiry. Validation rejects missing,
+future, overdue, or over-cadence lifecycle dates. Rotate by issuing a replacement
+App key, verifying the App identity with it, securely updating only the two
+existing repository secret slots, and proving the owning PR-writing workflow.
+Revoke the old key after successful replacement proof; retain name-only evidence
+and update creation/verification/deadline metadata through reviewed source. If
+replacement proof fails, stop the writing workflows and preserve the old working
+key until the owner restores service or explicitly revokes it.
+
+The read-only verifier checks live installation identity, exact permissions,
+empty events, active state, selected repository identities, and credential
+**names**. An administrative-token API cannot enumerate the complete selected
+repository set; retain current supported App-authenticated readback or owner UI
+proof. It reports `credential_state: observed-name-metadata` separately from
+workflow activation. Merge both reviewed `released-dependencies.yml` workflows,
+then prove effective App credentials with an owned PR and its ordinary required
+checks before recording `observed-successful-owned-pr` with dated evidence.
+Current activation evidence remains null; an observed setup status alone cannot
+prove a successful owning workflow.
+
+The updaters run hourly (`17 * * * *`) and through `workflow_dispatch`. Their
+credential-free preparation verifies exact released versions and registry
+checksums, resolves dependencies, updates Cargo locks, and runs aggregate
+validation before requesting an App token in the isolated PR-writing job. They
+maintain only their owned `automation/released-crate-dependencies` branch and
+pull request; ordinary required checks and human review still govern merging.
+Missing registry readiness produces no migration PR. They never upload crates,
+approve a pull request, merge it, or loosen branch protection. Prove initial
+App permissions with a disposable/owned PR and current ordinary checks, without
+exposing credentials. On retirement, stop these workflows and revoke the
+App/key and only the two named repository credential slots; preserve unrelated
+installations and secrets.

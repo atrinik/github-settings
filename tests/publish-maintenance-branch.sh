@@ -2,9 +2,22 @@
 
 set -euo pipefail
 
+# This harness supplies a fake `gh` on PATH for every publisher invocation.
+# Keep its CI credential synthetic even when the surrounding test runner
+# deliberately clears GH_TOKEN to exercise other scripts' production gate.
+export GH_TOKEN=test-token
+
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 temporary=$(mktemp -d)
 trap 'rm -rf "${temporary}"' EXIT
+source_root=${root}
+# Retain the original Classic rollout/recovery scenarios as a bounded fixture.
+root=${temporary}/classic-policy
+mkdir -p "${root}/bin"
+cp "${source_root}/bin/publish" "${source_root}/bin/validate" "${root}/bin/"
+cp -R "${source_root}/config" "${source_root}/community-health" "${source_root}/.github" "${root}/"
+jq '.repositories |= map(select(.name == "classic"))' \
+  "${source_root}/config/immutable-releases.json" >"${root}/config/immutable-releases.json"
 mkdir "${temporary}/bin"
 export GH_SELECTED_ACTIONS_POLICY=${root}/config/actions-selected.json
 
@@ -66,6 +79,62 @@ jq -cn \
   >>"${GH_API_LOG}"
 
 security_scenario=${GH_SECURITY_SCENARIO:-converged}
+
+crate_repository_id() {
+  case $1 in
+  protocol) printf '%s\n' 1327106950 ;;
+  renderer) printf '%s\n' 1327106998 ;;
+  content-toolkit) printf '%s\n' 1327107043 ;;
+  *) return 1 ;;
+  esac
+}
+
+crate_workflow_content() {
+  local repository=$1
+  local workflow=$2
+  local fixture=${GH_CRATE_FIXTURE_ROOT:?}/tests/fixtures
+  local identifier
+
+  identifier=$(crate_repository_id "${repository}")
+  if [[ ${GH_CRATE_SETUP_SCENARIO:-qualified} == malformed-workflow ]] &&
+    [[ ${workflow} == publish-crate.yml ]]; then
+    printf 'not: [a reviewed workflow\n'
+    return
+  fi
+  if [[ ${workflow} == publish-crate.yml ]]; then
+    sed -e "s|atrinik/protocol|atrinik/${repository}|g" \
+      -e "s/1327106950/${identifier}/g" "${fixture}/crate-publication.yml"
+  elif [[ ${repository} == renderer ]]; then
+    sed -e 's/package/source-package/g' \
+      -e "s/needs.source-package.outputs.version != ''/needs.source-package.outputs.release == 'true'/g" \
+      -e 's/source-release-${{ github.sha }}/prepared-renderer-release-${{ github.sha }}/g' \
+      "${fixture}/crate-source-release.yml"
+  else
+    cat "${fixture}/crate-source-release.yml"
+  fi
+}
+
+crate_environment() {
+  local bypass=false
+  if [[ ${GH_CRATE_SETUP_SCENARIO:-qualified} == environment-drift ]]; then
+    bypass=true
+  fi
+  jq -cn --argjson bypass "${bypass}" '{
+    name: "crates-io-release",
+    deployment_branch_policy: {protected_branches: false, custom_branch_policies: true},
+    protection_rules: [{type: "branch_policy"}],
+    can_admins_bypass: $bypass
+  }'
+}
+
+immutable_release_snapshot() {
+  if [[ ${GH_CRATE_SNAPSHOT_DRIFT:-false} == true ]] &&
+    (( $(jq -s '[.[] | select(.method == "GET" and .endpoint == "orgs/atrinik/settings/immutable-releases")] | length' "${GH_API_LOG}") >= 2 )); then
+    printf '{"enforced_repositories":"none"}\n'
+  else
+    jq '{enforced_repositories}' "${GH_IMMUTABLE_STATE}"
+  fi
+}
 
 if [[ ${method} == PUT ]] &&
   [[ ${endpoint} == orgs/atrinik/settings/immutable-releases ]]; then
@@ -265,10 +334,15 @@ repos/atrinik/*/actions/permissions/workflow\|*)
   printf 'classic\t%s\tfalse\tpublic\tfalse\tfalse\ttrue\ttrue\ttrue\n' \
     "${GH_CLASSIC_REPOSITORY_ID:-1327289971}"
   printf 'content\t101\tfalse\tpublic\tfalse\tfalse\ttrue\ttrue\ttrue\n'
+  if [[ ${GH_CRATE_IMMUTABLE_INVENTORY:-false} == true ]]; then
+    printf 'protocol\t%s\tfalse\tpublic\tfalse\tfalse\ttrue\ttrue\ttrue\n' "${GH_PROTOCOL_REPOSITORY_ID:-1327106950}"
+    printf 'renderer\t1327106998\tfalse\tpublic\tfalse\tfalse\ttrue\ttrue\ttrue\n'
+    printf 'content-toolkit\t1327107043\tfalse\tpublic\tfalse\tfalse\ttrue\ttrue\ttrue\n'
+  fi
   printf 'classic-ghsa-8533-3vg8-r287\t999\ttrue\tprivate\tfalse\tfalse\tfalse\tfalse\tfalse\n'
   ;;
 "orgs/atrinik/settings/immutable-releases|"*)
-  jq '{enforced_repositories}' "${GH_IMMUTABLE_STATE}"
+  immutable_release_snapshot
   ;;
 "orgs/atrinik/settings/immutable-releases/repositories?per_page=100|"*)
   jq '
@@ -277,6 +351,26 @@ repos/atrinik/*/actions/permissions/workflow\|*)
       repositories: [.selected_repository_ids[]? | {id: .}]
     }
   ' "${GH_IMMUTABLE_STATE}" | jq -r "${jq_filter}"
+  ;;
+"repos/atrinik/protocol/immutable-releases|"* | "repos/atrinik/renderer/immutable-releases|"* | "repos/atrinik/content-toolkit/immutable-releases|"*)
+  case ${endpoint} in
+  */protocol/*) repository_id=1327106950 ;;
+  */renderer/*) repository_id=1327106998 ;;
+  */content-toolkit/*) repository_id=1327107043 ;;
+  esac
+  if [[ ${GH_CRATE_IMMUTABLE_VERIFY_FAILURE:-false} == true && ${repository_id} == 1327107043 ]]; then
+    printf '{"enabled":false,"enforced_by_owner":false}\n'
+  elif jq -e --argjson id "${repository_id}" '.enforced_repositories == "selected" and (.selected_repository_ids | index($id)) != null' "${GH_IMMUTABLE_STATE}" >/dev/null; then
+    printf '{"enabled":true,"enforced_by_owner":true}\n'
+  else
+    printf '{"enabled":false,"enforced_by_owner":false}\n'
+  fi
+  ;;
+"repos/atrinik/protocol/code-security-configuration|"* | "repos/atrinik/renderer/code-security-configuration|"* | "repos/atrinik/content-toolkit/code-security-configuration|"*)
+  printf '{"status":"enforced","configuration":{"id":265376}}\n'
+  ;;
+"repos/atrinik/protocol/code-scanning/default-setup|"* | "repos/atrinik/renderer/code-scanning/default-setup|"* | "repos/atrinik/content-toolkit/code-scanning/default-setup|"*)
+  printf '{"state":"configured","query_suite":"default"}\n'
   ;;
 "repos/atrinik/classic/immutable-releases|"*)
   if [[ ${GH_IMMUTABLE_VERIFY_FAILURE:-false} == true ]]; then
@@ -292,6 +386,41 @@ repos/atrinik/*/actions/permissions/workflow\|*)
   else
     printf '{"enabled":false,"enforced_by_owner":false}\n'
   fi
+  ;;
+repos/atrinik/protocol\| | repos/atrinik/renderer\| | repos/atrinik/content-toolkit\|)
+  repository=${endpoint#repos/atrinik/}
+  jq -cn --arg repository "${repository}" --argjson id "$(crate_repository_id "${repository}")" \
+    '{id: $id, full_name: ("atrinik/" + $repository), archived: false, default_branch: "main"}'
+  ;;
+repos/atrinik/protocol/branches/main\| | repos/atrinik/renderer/branches/main\| | repos/atrinik/content-toolkit/branches/main\|)
+  printf '{"name":"main","protected":true,"commit":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}\n'
+  ;;
+repos/atrinik/protocol/git/ref/heads/main\| | repos/atrinik/renderer/git/ref/heads/main\| | repos/atrinik/content-toolkit/git/ref/heads/main\|)
+  printf '{"ref":"refs/heads/main","object":{"type":"commit","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}\n'
+  ;;
+repos/atrinik/*/contents/.github/workflows/publish-crate.yml*\|)
+  repository=${endpoint#repos/atrinik/}
+  repository=${repository%%/*}
+  crate_workflow_content "${repository}" publish-crate.yml | base64 | tr -d '\n' | \
+    jq -R '{type: "file", encoding: "base64", content: .}'
+  ;;
+repos/atrinik/*/contents/.github/workflows/release.yml*\|)
+  repository=${endpoint#repos/atrinik/}
+  repository=${repository%%/*}
+  crate_workflow_content "${repository}" release.yml | base64 | tr -d '\n' | \
+    jq -R '{type: "file", encoding: "base64", content: .}'
+  ;;
+repos/atrinik/*/environments/crates-io-release\|)
+  crate_environment
+  ;;
+repos/atrinik/*/environments/crates-io-release/deployment-branch-policies\?per_page=100\&page=1\|)
+  printf '{"total_count":1,"branch_policies":[{"name":"main","type":"branch"}]}\n'
+  ;;
+repos/atrinik/*/environments/crates-io-release/secrets\?per_page=100\&page=1\|)
+  printf '{"total_count":0,"secrets":[]}\n'
+  ;;
+repos/atrinik/*/environments/crates-io-release/variables\?per_page=100\&page=1\|)
+  printf '{"total_count":0,"variables":[]}\n'
   ;;
 "orgs/atrinik/rulesets|"*)
   if [[ ${GH_ADVISORY_RULESETS_PRESENT:-false} == true ]]; then
@@ -1536,5 +1665,159 @@ grep -F \
   'error: immutable-release inventory id for classic is 1327289971, but GitHub reports 999' \
   "${identity_drift_output}" >/dev/null
 jq -s -e 'all(.[]; .method == "GET")' "${identity_drift_log}" >/dev/null
+
+# A newly selected producer must qualify its exact workflow and environment
+# before the publisher's first mutation. This fixture deliberately provides no
+# source release, registry, or attestation endpoint: setup qualification is
+# about reviewed protected-main configuration only.
+crate_state=${temporary}/crate-immutable-state.json
+crate_log=${temporary}/crate-immutable-log.jsonl
+printf '%s\n' '{"enforced_repositories":"selected","selected_repository_ids":[1327289971]}' >"${crate_state}"
+GH_API_LOG=${crate_log} GH_IMMUTABLE_STATE=${crate_state} \
+  GH_CRATE_IMMUTABLE_INVENTORY=true GH_SECURITY_SCENARIO=converged \
+  GH_CRATE_FIXTURE_ROOT=${source_root} PATH="${temporary}/bin:${PATH}" ATRINIK_POLICY_SCOPE=organization \
+  "${source_root}/bin/publish" --apply >"${temporary}/crate-immutable-apply.out"
+jq -e '. == {enforced_repositories:"selected",selected_repository_ids:[1327106950,1327106998,1327107043,1327289971]}' "${crate_state}" >/dev/null
+jq -s -e '
+  . as $calls |
+  ([ $calls | to_entries[] |
+     select(.value.method != "GET") | .key ] | first) as $first_mutation |
+  all(
+    ["protocol", "renderer", "content-toolkit"][] as $repository |
+    ([ $calls | to_entries[] |
+       select(.value.endpoint == ("repos/atrinik/" + $repository + "/git/ref/heads/main")) |
+       .key ] | last) < $first_mutation
+  ) and
+  all(.[]; (.endpoint | test("/(releases|attestations|actions/runs)(/|$)") | not))
+' "${crate_log}" >/dev/null
+for repository in classic protocol renderer content-toolkit; do
+  jq -se --arg endpoint "repos/atrinik/${repository}/immutable-releases" \
+    'any(.[]; .method == "GET" and .endpoint == $endpoint)' "${crate_log}" >/dev/null
+done
+
+crate_setup_root() {
+  local destination=$1
+
+  mkdir -p "${destination}/bin" "${destination}/lib" "${destination}/tests"
+  cp "${source_root}/bin/publish" "${source_root}/bin/validate" \
+    "${source_root}/bin/verify-manual-settings" "${destination}/bin/"
+  cp "${source_root}/lib/verify_crate_workflow.py" "${destination}/lib/"
+  cp -R "${source_root}/config" "${source_root}/community-health" \
+    "${source_root}/.github" "${destination}/"
+  cp -R "${source_root}/tests/fixtures" "${destination}/tests/"
+}
+
+assert_setup_failed_before_mutation() {
+  local log=$1
+
+  jq -s -e 'all(.[]; .method == "GET")' "${log}" >/dev/null
+}
+
+# A pending or absent manual record blocks a newly selected producer before
+# immutable policy or any unrelated governance setting can mutate.
+pending_setup_root=${temporary}/crate-pending-setup
+crate_setup_root "${pending_setup_root}"
+jq '(.crates_io_trusted_publishing[] | select(.repository == "atrinik/protocol") |
+  .source_state) = "pending-reviewed-workflow" |
+  (.crates_io_trusted_publishing[] | select(.repository == "atrinik/protocol") |
+    .environment_state) = "pending"' \
+  "${pending_setup_root}/config/manual-settings.json" >"${temporary}/pending-manual.json"
+mv "${temporary}/pending-manual.json" "${pending_setup_root}/config/manual-settings.json"
+pending_setup_log=${temporary}/crate-pending-setup.jsonl
+printf '%s\n' '{"enforced_repositories":"selected","selected_repository_ids":[1327289971]}' >"${crate_state}"
+if GH_API_LOG=${pending_setup_log} GH_IMMUTABLE_STATE=${crate_state} \
+  GH_CRATE_IMMUTABLE_INVENTORY=true GH_CRATE_FIXTURE_ROOT=${source_root} \
+  PATH="${temporary}/bin:${PATH}" ATRINIK_POLICY_SCOPE=organization \
+  "${pending_setup_root}/bin/publish" --apply >"${temporary}/crate-pending-setup.out" 2>&1; then
+  echo "error: pending crate setup did not block immutable selection" >&2
+  exit 1
+fi
+grep -F 'initial immutable selection requires observed qualified source/environment for atrinik/protocol' \
+  "${temporary}/crate-pending-setup.out" >/dev/null
+assert_setup_failed_before_mutation "${pending_setup_log}"
+
+missing_setup_root=${temporary}/crate-missing-setup
+crate_setup_root "${missing_setup_root}"
+jq 'del(.crates_io_trusted_publishing[] | select(.repository == "atrinik/protocol"))' \
+  "${missing_setup_root}/config/manual-settings.json" >"${temporary}/missing-manual.json"
+mv "${temporary}/missing-manual.json" "${missing_setup_root}/config/manual-settings.json"
+missing_setup_log=${temporary}/crate-missing-setup.jsonl
+printf '%s\n' '{"enforced_repositories":"selected","selected_repository_ids":[1327289971]}' >"${crate_state}"
+if GH_API_LOG=${missing_setup_log} GH_IMMUTABLE_STATE=${crate_state} \
+  GH_CRATE_IMMUTABLE_INVENTORY=true GH_CRATE_FIXTURE_ROOT=${source_root} \
+  PATH="${temporary}/bin:${PATH}" ATRINIK_POLICY_SCOPE=organization \
+  "${missing_setup_root}/bin/publish" --apply >"${temporary}/crate-missing-setup.out" 2>&1; then
+  echo "error: missing crate setup record did not block immutable selection" >&2
+  exit 1
+fi
+assert_setup_failed_before_mutation "${missing_setup_log}"
+
+# The scoped verifier must reject malformed protected-main workflow bytes and
+# environment drift before any mutation.
+for scenario in malformed-workflow environment-drift; do
+  scenario_log=${temporary}/crate-${scenario}.jsonl
+  printf '%s\n' '{"enforced_repositories":"selected","selected_repository_ids":[1327289971]}' >"${crate_state}"
+  if GH_API_LOG=${scenario_log} GH_IMMUTABLE_STATE=${crate_state} \
+    GH_CRATE_IMMUTABLE_INVENTORY=true GH_CRATE_SETUP_SCENARIO=${scenario} \
+    GH_CRATE_FIXTURE_ROOT=${source_root} PATH="${temporary}/bin:${PATH}" \
+    ATRINIK_POLICY_SCOPE=organization "${source_root}/bin/publish" --apply \
+    >"${temporary}/crate-${scenario}.out" 2>&1; then
+    echo "error: ${scenario} did not block immutable selection" >&2
+    exit 1
+  fi
+  assert_setup_failed_before_mutation "${scenario_log}"
+done
+
+# The immutable snapshot is a fence: a changed live policy after successful
+# qualification prevents the first convergence mutation.
+snapshot_drift_log=${temporary}/crate-snapshot-drift.jsonl
+printf '%s\n' '{"enforced_repositories":"selected","selected_repository_ids":[1327289971]}' >"${crate_state}"
+if GH_API_LOG=${snapshot_drift_log} GH_IMMUTABLE_STATE=${crate_state} \
+  GH_CRATE_IMMUTABLE_INVENTORY=true GH_CRATE_SNAPSHOT_DRIFT=true \
+  GH_CRATE_FIXTURE_ROOT=${source_root} PATH="${temporary}/bin:${PATH}" \
+  ATRINIK_POLICY_SCOPE=organization "${source_root}/bin/publish" --apply \
+  >"${temporary}/crate-snapshot-drift.out" 2>&1; then
+  echo "error: immutable snapshot drift did not block convergence" >&2
+  exit 1
+fi
+grep -F 'immutable-release policy changed during initial qualification' \
+  "${temporary}/crate-snapshot-drift.out" >/dev/null
+assert_setup_failed_before_mutation "${snapshot_drift_log}"
+
+# Existing selections do not requalify their pending records, and an all-mode
+# snapshot does not cause avoidable source/environment verification.
+for mode in selected all; do
+  mode_log=${temporary}/crate-${mode}-already-selected.jsonl
+  if [[ ${mode} == selected ]]; then
+    printf '%s\n' '{"enforced_repositories":"selected","selected_repository_ids":[1327106950,1327106998,1327107043,1327289971]}' >"${crate_state}"
+  else
+    printf '%s\n' '{"enforced_repositories":"all"}' >"${crate_state}"
+  fi
+  GH_API_LOG=${mode_log} GH_IMMUTABLE_STATE=${crate_state} \
+    GH_CRATE_IMMUTABLE_INVENTORY=true GH_CRATE_FIXTURE_ROOT=${source_root} \
+    PATH="${temporary}/bin:${PATH}" ATRINIK_POLICY_SCOPE=organization \
+    "${pending_setup_root}/bin/publish" --apply >"${temporary}/crate-${mode}-already-selected.out"
+  jq -s -e 'all(.[]; (.endpoint | contains("/contents/.github/workflows/") | not) and
+    (.endpoint | contains("/environments/crates-io-release") | not))' "${mode_log}" >/dev/null
+done
+
+crate_failure_log=${temporary}/crate-immutable-failure.jsonl
+printf '%s\n' '{"enforced_repositories":"selected","selected_repository_ids":[101,1327289971]}' >"${crate_state}"
+if GH_API_LOG=${crate_failure_log} GH_IMMUTABLE_STATE=${crate_state} \
+  GH_CRATE_IMMUTABLE_INVENTORY=true GH_CRATE_IMMUTABLE_VERIFY_FAILURE=true \
+  GH_SECURITY_SCENARIO=converged PATH="${temporary}/bin:${PATH}" ATRINIK_POLICY_SCOPE=organization \
+  "${source_root}/bin/publish" --apply >"${temporary}/crate-immutable-failure.out" 2>&1; then
+  echo "error: crate-family immutable readback drift did not fail" >&2
+  exit 1
+fi
+jq -e '. == {enforced_repositories:"selected",selected_repository_ids:[101,1327289971]}' "${crate_state}" >/dev/null
+if GH_API_LOG=${temporary}/crate-identity-drift.jsonl GH_IMMUTABLE_STATE=${crate_state} \
+  GH_CRATE_IMMUTABLE_INVENTORY=true GH_PROTOCOL_REPOSITORY_ID=999 \
+  GH_SECURITY_SCENARIO=converged PATH="${temporary}/bin:${PATH}" ATRINIK_POLICY_SCOPE=organization \
+  "${source_root}/bin/publish" --apply >"${temporary}/crate-identity-drift.out" 2>&1; then
+  echo "error: crate-family repository identity drift did not fail" >&2
+  exit 1
+fi
+jq -se 'all(.[]; .method == "GET")' "${temporary}/crate-identity-drift.jsonl" >/dev/null
 
 echo "Publisher policy-scope tests passed."

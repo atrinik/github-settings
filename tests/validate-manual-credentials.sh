@@ -23,8 +23,15 @@ assert_invalid() {
 }
 
 reset_manual_settings() {
-  cp "${root}/config/manual-settings.json" \
-    "${temporary}/config/manual-settings.json"
+  jq '.crates_io_trusted_publishing[].publisher_registration =
+    {state:"pending-owner-registration",observed_on:null,evidence_location:null} |
+    .github_packages_actions_access[] |= (.grant_state="pending-owner-ui-read-grant" |
+      .observed_on=null | .evidence_location=null) |
+    .crate_dependency_update_app |= (.status="planned" | .app_id=null | .installation_id=null |
+      .key_created_on=null | .last_verified_on=null | .rotate_by=null |
+      .repository_scope_verification="pending-owner-ui" | .observed_on=null | .evidence_location=null |
+      .credential_state="pending-name-metadata")' \
+    "${root}/config/manual-settings.json" >"${temporary}/config/manual-settings.json"
 }
 
 rewrite_manual_settings() {
@@ -36,6 +43,7 @@ rewrite_manual_settings() {
   mv "${output}" "${temporary}/config/manual-settings.json"
 }
 
+reset_manual_settings
 ATRINIK_VALIDATION_TODAY=2026-08-31 \
   "${temporary}/bin/validate" >/dev/null
 jq -e '

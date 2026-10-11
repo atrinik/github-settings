@@ -32,7 +32,12 @@ rewrite_manual_settings() {
 }
 
 jq -e '
-  .github_packages_actions_access == []
+  [.github_packages_actions_access[] | select(.package_name != "linux-build")] == [] and
+  [.github_packages_actions_access[].actions_repository] == ["atrinik/client", "atrinik/editor"] and
+  all(.github_packages_actions_access[]; .package_id == 14205615 and .preserve_visibility == "private" and
+    .source_repository == "atrinik/devcontainer" and .source_repository_id == 1322185908 and
+    .role == "read" and .grant_state == "owner-observed-read-grant" and
+    .observed_on == "2026-10-11" and .evidence_location == "README.md#private-linux-updater-build-image")
 ' "${root}/config/manual-settings.json" >/dev/null
 
 reset_valid_access() {
@@ -78,5 +83,33 @@ reset_valid_access
 rewrite_manual_settings \
   '.github_packages_actions_access[0].actions_repository = "classic"'
 assert_invalid 'a package grant without a full repository name'
+
+# Preserve the legacy schema for unrelated owners/types sharing this package name.
+for filter in \
+  '.github_packages_actions_access[0] |= (.package_owner="another-owner" | .package_name="linux-build")' \
+  '.github_packages_actions_access[0] |= (.package_type="npm" | .package_name="linux-build")'; do
+  reset_valid_access
+  rewrite_manual_settings "${filter}"
+  "${temporary}/bin/validate" >/dev/null
+done
+
+for filter in \
+  '.github_packages_actions_access[0].source_repository_id = 1' \
+  '.github_packages_actions_access[0].preserve_visibility = "public"' \
+  '.github_packages_actions_access[0].actions_repository_id = 1' \
+  '.github_packages_actions_access[0].grant_state = "active"' \
+  '.github_packages_actions_access[0].grant_state = "pending-owner-ui-read-grant"' \
+  '.github_packages_actions_access[0].evidence_location = null'; do
+  cp "${root}/config/manual-settings.json" "${temporary}/config/manual-settings.json"
+  rewrite_manual_settings "${filter}"
+  assert_invalid "${filter}"
+done
+cp "${root}/config/manual-settings.json" "${temporary}/config/manual-settings.json"
+rewrite_manual_settings '.github_packages_actions_access[] |= (.grant_state="owner-observed-read-grant" |
+  .observed_on="2026-10-11" | .evidence_location="README.md#private-linux-updater-build-image")'
+"${temporary}/bin/validate" >/dev/null
+rewrite_manual_settings '.github_packages_actions_access[] |= (.grant_state="pending-owner-ui-read-grant" |
+  .observed_on=null | .evidence_location=null)'
+"${temporary}/bin/validate" >/dev/null
 
 echo "Manual package Actions-access validation tests passed."

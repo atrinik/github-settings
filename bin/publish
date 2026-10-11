@@ -1553,6 +1553,31 @@ converge_immutable_release_policy() {
   return 1
 }
 
+preflight_new_crate_immutable_selection() {
+  local snapshot additions repository
+  ${apply} || return 0
+  snapshot=$(current_immutable_release_payload)
+  additions=$(jq -cn --argjson current "${snapshot}" \
+    --slurpfile desired "${immutable_releases_config}" '
+    if $current.enforced_repositories == "all" then []
+    elif $current.enforced_repositories == "none" then [$desired[0].repositories[].id]
+    else [$desired[0].repositories[].id] - $current.selected_repository_ids end
+  ')
+  while IFS= read -r repository; do
+    # These are the newly introduced library producers; Classic retains its
+    # existing separately qualified release policy. Missing manual records fail
+    # the scoped verifier rather than silently skipping qualification.
+    "${root}/bin/verify-manual-settings" --crate-publication-setup "${organization}/${repository}"
+  done < <(jq -r --argjson additions "${additions}" '
+    .repositories[] | select(.name | IN("protocol", "renderer", "content-toolkit")) |
+    select(.id as $id | $additions | index($id) != null) | .name
+  ' "${immutable_releases_config}")
+  if [[ $(current_immutable_release_payload) != "${snapshot}" ]]; then
+    echo "error: immutable-release policy changed during initial qualification; no broad apply performed" >&2
+    exit 1
+  fi
+}
+
 organization_metadata=$(github_api "orgs/${organization}")
 if ! jq -e 'type == "object" and (.plan.name | type == "string")' \
   <<<"${organization_metadata}" >/dev/null; then
@@ -1645,6 +1670,7 @@ done < <(
     "${immutable_releases_config}"
 )
 
+preflight_new_crate_immutable_selection
 converge_immutable_release_policy
 
 converge_organization_settings "${organization_metadata}"
@@ -1699,7 +1725,16 @@ while IFS= read -r external_app; do
 done < <(jq -c '.external_provider_apps[]' "${root}/config/manual-settings.json")
 while IFS= read -r crate_record; do
   repository=$(jq -r '.repository' <<<"${crate_record}")
-  crate=$(jq -r '.crate' <<<"${crate_record}")
-  echo "MANUAL PENDING ${repository} crates.io ${crate}: reviewed source release, maintainer-reviewed crates-io-release environment and Trusted Publisher owner setup; publisher does not apply"
+  crate=$(jq -r '.crates | join(",")' <<<"${crate_record}")
+  state=$(jq -r '"source=\(.source_state), environment=\(.environment_state), registration=\(.publisher_registration.state)"' <<<"${crate_record}")
+  echo "MANUAL ${repository} crates.io ${crate}: ${state}; reviewed source/version merge, automatic crates-io-release environment (zero reviewers/wait), and Trusted Publisher owner setup; publisher does not apply"
 done < <(jq -c '.crates_io_trusted_publishing[]' "${root}/config/manual-settings.json")
+while IFS= read -r package_record; do
+  repository=$(jq -r '.actions_repository' <<<"${package_record}")
+  package_name=$(jq -r '.package_name' <<<"${package_record}")
+  grant_state=$(jq -r '.grant_state // "manual-owner-ui"' <<<"${package_record}")
+  echo "MANUAL ${repository} read-only package Actions access to ${package_name}: ${grant_state}; publisher never provisions grants"
+done < <(jq -c '.github_packages_actions_access[]' "${root}/config/manual-settings.json")
+app_state=$(jq -r '.crate_dependency_update_app | "identity=\(.status), credential_names=\(.credential_state), workflow=\(.workflow_activation.state)"' "${root}/config/manual-settings.json")
+echo "MANUAL atrinik-crate-dependency-update ${app_state} selected client/editor App and credential slots; publisher does not apply"
 echo "Manual confirmation required for config/manual-settings.json."

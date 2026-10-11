@@ -97,8 +97,11 @@ plan attaches the advanced-allowed security configuration before disabling
 default setup, and include the immediate workflow rerun and rollback owner in
 the deployment handoff.
 
-An immutable-release inventory change must be coordinated with a merged,
-verified draft-first release workflow in every selected repository. Review the
+An immutable-release inventory change stages desired state and must be activated
+only with a merged, qualified draft-first release workflow in every newly
+selected repository. Every registry upload must verify the actual source
+release is immutable. Ordinary workflow tokens cannot query administrative
+immutability settings; keep the supported source-release evidence boundary. Review the
 repository name and stable numeric ID, the exact organization selected set,
 owner-enforcement verification, and snapshot rollback tests. Merge the policy
 before requesting explicit authorization for `bin/publish --apply`; never
@@ -141,3 +144,47 @@ not pending rollout; ordinary publication revalidates the recorded proof before
 restoring it. Test rule retirement, effective default-branch applicability, and
 repository workflow permission overrides. Action allowances use owner/action wildcards;
 full commit pins belong in workflows, not redundant version assertions.
+
+Crates.io publication contracts bind exact repository/workflow/environment and
+official auth-action identities with full immutable workflow SHA references;
+preserve the reviewed `rust-lang/crates-io-auth-action@*` allowance for normal
+Dependabot updates without a central version lock. Automatic publication follows reviewed
+source/version merges with zero environment reviewers/wait and no registry
+secrets. Keep pending onboarding distinct from observed source/environment and
+owner-observed external registration; verify live protected main and exact
+refs. First owner-local API-token bootstrap is restricted to the fourteen
+listed renderer/toolkit libraries and ends with revocation; subsequent releases
+use OIDC only. Protocol 0.2 retains its approved manual path. Crate
+publication must qualify both exact-main workflows, isolate inert source
+signing from build/semantic-release OIDC, and keep automatic verify permissions
+read-only. The inert publisher alone adds contents write for the global
+crate/version upload intent and receives its intent token only in the upload
+step. Runtime certificate/source-run verification and create-only reservation
+readback precede upload. Reject matrix/reusable execution in the automatic
+verify/publish and source package/sign/release jobs; recursively reject step
+references outside the exact upload-token input and confirmation condition. An
+existing/ambiguous intent blocks absent-version
+retries and is never automatically reset. Activate immutable-release policy
+only through the documented narrow snapshot/readback/verified-rollback window;
+do not broad-apply unrelated publisher-plan mutations. Broad apply must qualify
+newly added live producer selections before its first mutation, with observed
+inventory and fresh scoped source/environment checks. Initial independently
+qualified draft-first code is sufficient for setup; actual immutable public
+release and registry proof remain later runtime obligations. Dependency-update
+App setup is client/editor only, exact contents/PR write and metadata read,
+repository credential names only, registry readiness before owned PR creation,
+and ordinary review/checks without auto-merge. Distinguish observed installation
+and credential-name provisioning from pending reviewed workflow activation and
+real successful-owned-PR proof; owner-authorized early setup does not prove
+effective secret values. Inventory exact workflow consumer paths, observed key
+creation/verification dates, rotation owner, and a deadline within 90 days of key
+creation; that internal deadline does not assert upstream expiry. Verify a
+replacement key in the owning writing workflow before revoking the old key.
+Keep App-authenticated selected-set readback or owner
+UI evidence, and do not infer the webhook switch from an empty event set.
+Private linux-build consumption needs separate client/editor-only read grants
+through owner UI. Keep exact private package/source identities and pending grant
+state until observed; metadata and owner pulls do not prove an effective owning
+workflow pull. Preserve foreign grants and visibility. Changes require negative schema
+and live-metadata fixture tests plus a complete publisher plan; publishers do
+not provision these integrations.
