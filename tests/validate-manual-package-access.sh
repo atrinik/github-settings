@@ -84,6 +84,15 @@ rewrite_manual_settings \
   '.github_packages_actions_access[0].actions_repository = "classic"'
 assert_invalid 'a package grant without a full repository name'
 
+# Preserve the legacy schema for unrelated owners/types sharing this package name.
+for filter in \
+  '.github_packages_actions_access[0] |= (.package_owner="another-owner" | .package_name="linux-build")' \
+  '.github_packages_actions_access[0] |= (.package_type="npm" | .package_name="linux-build")'; do
+  reset_valid_access
+  rewrite_manual_settings "${filter}"
+  "${temporary}/bin/validate" >/dev/null
+done
+
 for filter in \
   '.github_packages_actions_access[0].source_repository_id = 1' \
   '.github_packages_actions_access[0].preserve_visibility = "public"' \

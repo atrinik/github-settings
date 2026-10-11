@@ -785,7 +785,7 @@ jq -e --arg today "${validation_today}" '
           and .observed_on <= $today) catch false) and
         (.evidence_location | type == "string" and test("^[A-Za-z0-9_./#-]+$"))
       else false end)
-    else .package_name != "linux-build" end)
+    else (.package_owner != "atrinik" or .package_type != "container" or .package_name != "linux-build") end)
   )
 ' "${manual_settings_config}" >/dev/null
 

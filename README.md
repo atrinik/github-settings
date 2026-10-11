@@ -1136,8 +1136,14 @@ repository workflow's package access.
 `atrinik/client` (`1327106844`) and `atrinik/editor` (`1327106902`). The owner
 confirmed those two **Manage Actions access** read grants on 2026-10-11; their
 `grant_state` is `owner-observed-read-grant`, with dated sanitized owner evidence.
-Effective owning workflow pulls remain pending. This is owner UI observation,
-not API enumeration of the grant list. Retain permission inheritance, private
+Client's exact-main post-grant run
+[38164640476](https://github.com/atrinik/client/actions/runs/38164640476)
+subsequently proved a repository-token pull of the pinned image and complete
+read-only preparation/application validation. It correctly produced no migration
+PR before registry readiness; App-writing jobs were skipped, so no effective
+App writer was proved. Editor owning workflow pull/activation proof remains
+pending. The grant observation comes from owner UI, not API enumeration of the
+grant list. Retain permission inheritance, private
 visibility, linked source and every foreign entry. Do not broaden to
 organization/all repositories or change a foreign grant. The publisher never
 writes these manual grants.
@@ -1162,12 +1168,17 @@ and unrelated App credentials.
 ## Automatic crate Trusted Publishing
 
 `config/manual-settings.json` records the desired, value-free contracts below.
-Automatic source/environment setup remains **pending** until observed.
+Formal source/environment onboarding states remain **pending** in this inventory.
+The three reviewed owning workflows have merged and their source-release workflows
+are temporarily paused for the narrow immutable-policy activation window. The
+owner configured all three main-only, zero-review environments; final observed
+inventory transitions remain coordinator-owned acceptance after live qualification.
 Protocol registration was owner-observed on 2026-10-11 and its manual 0.2 upload
 succeeded in [run 38156755961](https://github.com/atrinik/protocol/actions/runs/38156755961).
 That registration does not imply the future automatic source workflow or
-zero-review environment is ready: the current protocol environment still uses
-the manually approved reviewer policy until the reviewed transition is applied. This change does not register a crates.io publisher, provision an
+zero-review environment or future release is ready on its own. The owner has
+now applied the reviewed zero-review environment configuration, while source
+release restoration and immutable-policy activation remain pending. This change does not register a crates.io publisher, provision an
 Actions environment, upload a crate, or install a GitHub App.
 
 | Repository | Stable repository ID | Published libraries |
