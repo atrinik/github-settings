@@ -75,7 +75,11 @@ github_api() {
     '{method: "GET", endpoint: $endpoint}' >>"${api_log}"
   case ${endpoint} in
   repos/atrinik/content-toolkit)
-    if [[ -n ${gate_metadata_filter} ]]; then
+    if [[ -n ${gate_metadata_after_proof_filter} ]] &&
+      jq -se 'any(.[]; .endpoint | contains("/rules/branches/"))' "${api_log}" >/dev/null; then
+      [[ ${gate_metadata_after_proof_filter} != unreadable ]] || return 1
+      jq "${gate_metadata_after_proof_filter}" <<<"${repository_state}"
+    elif [[ -n ${gate_metadata_filter} ]]; then
       [[ ${gate_metadata_filter} != unreadable ]] || return 1
       jq "${gate_metadata_filter}" <<<"${repository_state}"
     else
@@ -123,7 +127,14 @@ github_api() {
   repos/atrinik/content-toolkit/rulesets/6 | repos/atrinik/content-toolkit/rulesets/7)
     local template=code-scanning
     [[ ${endpoint##*/} != 7 ]] || template=dependency-review
-    if [[ ${ruleset_state} == restoration-race || ${ruleset_state} == retirement-race ]]; then
+    if [[ ${ruleset_state} == pending-branch-race ]]; then
+      jq --argjson id "${endpoint##*/}" --argjson target "${gate_update_id}" \
+        --arg branch "$(jq -r '.default_branch' <<<"${repository_state}")" '
+        . + {id: $id, source_type: "Repository", source: "atrinik/content-toolkit"} |
+        if $id == $target then .conditions.ref_name.include = [("refs/heads/" + $branch)] else . end' \
+        "${root}/config/rulesets/${template}.json"
+      return
+    elif [[ ${ruleset_state} == restoration-race || ${ruleset_state} == retirement-race ]]; then
       local filter=.
       if [[ ${endpoint##*/} == "${gate_update_id}" ]] &&
         (( $(jq -s --arg endpoint "${endpoint}" '[.[] | select(.endpoint == $endpoint)] | length' "${api_log}") >= 2 )); then
@@ -265,6 +276,7 @@ reset_case() {
   gate_update_id=6
   gate_update_filter=.
   gate_metadata_filter=
+  gate_metadata_after_proof_filter=
   effective_state=covering
   repository_state='{"id":123,"full_name":"atrinik/content-toolkit","archived":false,"default_branch":"main"}'
   workflow_state='{"default_workflow_permissions":"write","can_approve_pull_request_reviews":true}'
@@ -478,6 +490,57 @@ for policy_scope in organization repository; do
       assert_no_writes
     done
   done
+done
+
+# Pending existing-gate restoration is authorized only for the exact default
+# branch whose effective protection was checked, even if another branch is valid.
+for policy_scope in organization repository; do
+  for pending_gate_id in 6 7; do
+    for filter in '.default_branch = "new-main"' '.default_branch = "release/next"' \
+      '.default_branch = null' 'del(.default_branch)' unreadable '.'; do
+      reset_case
+      ruleset_state=pending-branch-race
+      gate_update_id=${pending_gate_id}
+      gate_metadata_after_proof_filter=${filter}
+      export READINESS_STATUS=failed
+      jq '.activation |= with_entries(.value |= with_entries(.value = "pending"))' \
+        "${security_merge_config}" >"${temporary}/pending.json"
+      cp "${temporary}/pending.json" "${security_merge_config}"
+      status=0
+      # shellcheck source=/dev/null
+      source "${temporary}/dispatch.sh" >"${temporary}/pending-branch-fence.txt" 2>&1 || status=$?
+      if [[ ${filter} == '.' ]]; then
+        [[ ${status} == 0 ]]
+        jq -se --arg endpoint "repos/atrinik/content-toolkit/rulesets/${pending_gate_id}" '
+          [.[] | select(.method != "GET")] | length == 1 and
+          .[0].method == "PUT" and .[0].endpoint == $endpoint' "${api_log}" >/dev/null
+      else
+        [[ ${status} != 0 ]]
+        assert_no_writes
+        if [[ ${filter} == '.default_branch = "'* ]]; then
+          grep -Fq 'default branch changed after existing security gate proof; retained' \
+            "${temporary}/pending-branch-fence.txt"
+        fi
+      fi
+      jq -se 'any(.[]; .endpoint == "repos/atrinik/content-toolkit/rules/branches/main")' \
+        "${api_log}" >/dev/null
+      [[ ! -s ${readiness_log} ]]
+      cmp "${temporary}/pending.json" "${security_merge_config}"
+    done
+  done
+  # Durable enforced intent still restores missing gates on the current default.
+  reset_case
+  ruleset_state=missing
+  gate_metadata_filter='.default_branch = "new-main"'
+  export READINESS_STATUS=failed
+  jq '.activation |= with_entries(.value |= with_entries(.value = "enforced"))' \
+    "${security_merge_config}" >"${temporary}/enforced.json"
+  cp "${temporary}/enforced.json" "${security_merge_config}"
+  # shellcheck source=/dev/null
+  source "${temporary}/dispatch.sh" >"${temporary}/enforced-current-default.txt"
+  jq -se '[.[] | select(.method != "GET")] | length == 2 and all(.[]; .method == "POST")' \
+    "${api_log}" >/dev/null
+  [[ ! -s ${readiness_log} ]]
 done
 
 # The two gate phases are independent; qualification does not mutate source.

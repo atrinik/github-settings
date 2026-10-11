@@ -1184,7 +1184,8 @@ security_gate_applies_to_default_branch() {
         any(.parameters.required_status_checks[]?;
           .context == "Dependency review" and .integration_id == 15368)
       end)
-  ' <<<"${effective}" >/dev/null
+  ' <<<"${effective}" >/dev/null || return 1
+  printf '%s\n' "${branch}"
 }
 
 owned_security_ruleset_matches() {
@@ -1244,7 +1245,7 @@ delete_removed_security_merge_rulesets() {
 # These repository rules remain repository-owned even in organization scope:
 # GitHub Team does not support organization-level code-scanning rules.
 publish_security_merge_rulesets() {
-  local repository kind template name existing id current reason status readiness_mode phase metadata
+  local repository kind template name existing id current reason status readiness_mode phase metadata effective_branch
   delete_removed_security_merge_rulesets || return 1
   for kind in code_scanning dependency_review; do
     if [[ ${kind} == code_scanning ]]; then
@@ -1289,8 +1290,9 @@ publish_security_merge_rulesets() {
       fi
       # Pending qualification cannot create protection before reviewed intent is
       # persisted. Existing effective gates still survive producer failures.
+      effective_branch=
       if [[ ${phase} == pending ]] && { [[ -z ${id} ]] ||
-        ! security_gate_applies_to_default_branch "${repository}" "${kind}" "${id}"; }; then
+        ! effective_branch=$(security_gate_applies_to_default_branch "${repository}" "${kind}" "${id}"); }; then
         status=0
         reason=$("${root}/bin/security-readiness" "${readiness_mode}" \
           "${organization}/${repository}") || status=$?
@@ -1310,6 +1312,11 @@ publish_security_merge_rulesets() {
         (.default_branch | type == "string" and length > 0)
       ' <<<"${metadata}" >/dev/null; then
         echo "error: security gate repository identity or archive state changed: ${repository}" >&2
+        return 1
+      fi
+      if [[ ${phase} == pending ]] &&
+        [[ $(jq -r '.default_branch | @uri' <<<"${metadata}") != "${effective_branch}" ]]; then
+        echo "error: default branch changed after existing security gate proof; retained: ${repository} ${name}" >&2
         return 1
       fi
       if [[ -n ${id} ]]; then

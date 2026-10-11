@@ -171,7 +171,9 @@ semantics remain in trusted producer helpers; do not add a central source-path o
 action-version catalog or claim resistance to malicious repository writers.
 
 Security gate updates must re-read and validate ownership and the recognized
-payload immediately before PUT, preserving concurrent modifications. Audit
+payload immediately before PUT, preserving concurrent modifications. Bind the
+final metadata default branch to the branch used for pending-gate qualification
+or existing effective-gate proof; a changed branch must not activate a gate. Audit
 legacy protection on active default and maintenance branches as drift under the
 canonical ruleset contract; distinguish verified unprotected responses from
 unreadable evidence, and never remove protection during audit. The exact

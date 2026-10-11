@@ -299,6 +299,9 @@ without workflow path filters. Successful manual or scheduled analysis cannot
 qualify a missing or retargeted pull-request producer. Before updating an
 existing security gate, publication rechecks its ownership and recognized
 payload immediately before the write, retaining concurrent policy changes.
+Pending-gate qualification and existing effective-gate proof bind the same
+default branch as the final metadata fence; a changed branch cannot activate
+a gate using proof from the earlier branch.
 
 Rulesets are the canonical branch protection contract. Audit also reads legacy
 protection on every active default branch and declared maintenance branch. Any
