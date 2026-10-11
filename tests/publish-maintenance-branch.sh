@@ -380,7 +380,7 @@ case "${endpoint}|${jq_filter}" in
 repos/atrinik/protocol\| | repos/atrinik/renderer\| | repos/atrinik/content-toolkit\|)
   repository=${endpoint#repos/atrinik/}
   jq -cn --arg repository "${repository}" --argjson id "$(crate_repository_id "${repository}")" \
-    '{id: $id, full_name: "atrinik/" + $repository, archived: false, default_branch: "main"}'
+    '{id: $id, full_name: ("atrinik/" + $repository), archived: false, default_branch: "main"}'
   ;;
 repos/atrinik/protocol/branches/main\| | repos/atrinik/renderer/branches/main\| | repos/atrinik/content-toolkit/branches/main\|)
   printf '{"name":"main","protected":true,"commit":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}\n'
