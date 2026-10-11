@@ -1684,7 +1684,8 @@ crate_setup_root() {
   cp "${source_root}/bin/publish" "${source_root}/bin/validate" \
     "${source_root}/bin/verify-manual-settings" "${destination}/bin/"
   cp "${source_root}/lib/verify_crate_workflow.py" "${destination}/lib/"
-  cp -R "${source_root}/config" "${destination}/"
+  cp -R "${source_root}/config" "${source_root}/community-health" \
+    "${source_root}/.github" "${destination}/"
   cp -R "${source_root}/tests/fixtures" "${destination}/tests/"
 }
 
