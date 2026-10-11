@@ -634,14 +634,9 @@ def configured_codeql_languages(setup):
     return {canonical_language(value) for value in values}
 
 
-def default_codeql(coordinate, branch, head, minima):
-    endpoint = f"repos/{coordinate}/code-scanning/default-setup"
-    setup = api(endpoint)
-    require(setup["state"] == "configured", "CodeQL default setup not configured")
-    languages = configured_codeql_languages(setup)
-    require(bool(languages), "CodeQL default setup has no configured languages")
-    require(set(minima) <= languages, "required CodeQL languages not configured")
-    found = set()
+def default_codeql_coverage(coordinate, branch, head, languages):
+    """Select only the newest canonical analyses within the bounded history."""
+    found = {}
     for entries in newest_analysis_pages(coordinate, branch):
         for analysis in entries:
             if analysis["tool"]["name"] != "CodeQL" or analysis["ref"] != f"refs/heads/{branch}":
@@ -649,20 +644,33 @@ def default_codeql(coordinate, branch, head, minima):
             language, _ = analysis_language(analysis)
             # Default setup owns one canonical category per configured language.
             # Retired advanced partitions, even in that language, are historical.
-            category_language = analysis["category"].removeprefix("/language:")
+            category_language = canonical_language(analysis["category"].removeprefix("/language:"))
             if (not analysis["category"].startswith("/language:")
-                    or canonical_language(category_language) != language
-                    or language not in languages or language in found):
+                    or category_language not in languages or category_language in found):
                 continue
             successful_analysis(analysis, head)
-            found.add(language)
-        if found == languages:
-            fresh = api(endpoint)
-            require(fresh["state"] == setup["state"]
-                    and configured_codeql_languages(fresh) == languages,
-                    "CodeQL default setup changed during preflight")
-            return "latest canonical default-setup analyses cover every configured language on current head"
+            require(language == category_language, "default CodeQL analysis language does not match its category")
+            found[language] = analysis
+        if set(found) == languages:
+            return found
     raise Deferred("required configured CodeQL language analysis missing within bounded evidence")
+
+
+def default_codeql(coordinate, branch, head, minima):
+    endpoint = f"repos/{coordinate}/code-scanning/default-setup"
+    setup = api(endpoint)
+    require(setup["state"] == "configured", "CodeQL default setup not configured")
+    languages = configured_codeql_languages(setup)
+    require(bool(languages), "CodeQL default setup has no configured languages")
+    require(set(minima) <= languages, "required CodeQL languages not configured")
+    coverage = default_codeql_coverage(coordinate, branch, head, languages)
+    fresh = api(endpoint)
+    require(fresh["state"] == setup["state"]
+            and configured_codeql_languages(fresh) == languages,
+            "CodeQL default setup changed during preflight")
+    require(default_codeql_coverage(coordinate, branch, head, languages) == coverage,
+            "CodeQL default-setup analysis coverage changed during preflight")
+    return "latest canonical default-setup analyses cover every configured language on current head"
 
 
 def classifier_full_events(source):
@@ -758,6 +766,47 @@ def latest_full_codeql_run(coordinate, branch, head, events):
     return run
 
 
+def advanced_codeql_coverage(coordinate, branch, head, minima, selected, declarations):
+    """Select current producer uploads, ignoring retired categories and history."""
+    found, categories, languages = {}, set(), set()
+    for entries in newest_analysis_pages(coordinate, branch):
+        for analysis in entries:
+            if (analysis["tool"]["name"] != "CodeQL" or analysis["ref"] != f"refs/heads/{branch}"
+                    or analysis.get("analysis_key") != ".github/workflows/codeql.yml:analyze"):
+                continue
+            category = analysis["category"]
+            if category in categories:
+                continue
+            categories.add(category)
+            language, environment = analysis_language(analysis)
+            display = environment.get("display")
+            if display not in selected:
+                continue
+            job = selected[display]
+            declaration = declarations[display]
+            if analysis["created_at"] < job["started_at"]:
+                continue
+            require(display not in found, "advanced CodeQL selected display has ambiguous upload categories")
+            successful_analysis(analysis, head)
+            category_language = re.search(r"(?:^|/)language:([a-z0-9+-]+)$", category)
+            require(environment.get("category") == category == declaration["category"]
+                    and environment.get("scope") == declaration["scope"]
+                    and language == canonical_language(declaration["language"])
+                    and category_language is not None
+                    and canonical_language(category_language[1]) == language
+                    and job["started_at"] <= analysis["created_at"] <= job["completed_at"],
+                    "advanced CodeQL analysis upload does not belong to selected full-run job")
+            found[display] = analysis
+            languages.add(language)
+            if set(found) == set(selected):
+                break
+        if set(found) == set(selected):
+            require({canonical_language(value) for value in minima} <= languages,
+                    "required CodeQL language analysis missing")
+            return found
+    raise Deferred("required advanced CodeQL partition upload missing within bounded evidence")
+
+
 def advanced_codeql(coordinate, branch, head, minima, partition_minima):
     sources = {}
     for path in (".github/workflows/codeql.yml", "tools/ci/classify_changes.py", "tools/ci/require_checks.py"):
@@ -800,52 +849,19 @@ def advanced_codeql(coordinate, branch, head, minima, partition_minima):
             selected[match[1]] = job
     require(set(selected) == set(declarations),
             "advanced CodeQL full run does not cover every declared partition")
-    found, categories, languages = set(), set(), set()
-    for entries in newest_analysis_pages(coordinate, branch):
-        for analysis in entries:
-            if (analysis["tool"]["name"] != "CodeQL" or analysis["ref"] != f"refs/heads/{branch}"
-                    or analysis.get("analysis_key") != ".github/workflows/codeql.yml:analyze"):
-                continue
-            category = analysis["category"]
-            if category in categories:
-                continue
-            categories.add(category)
-            language, environment = analysis_language(analysis)
-            display = environment.get("display")
-            if display not in selected:
-                continue
-            job = selected[display]
-            declaration = declarations[display]
-            if analysis["created_at"] < job["started_at"]:
-                continue
-            require(display not in found, "advanced CodeQL selected display has ambiguous upload categories")
-            successful_analysis(analysis, head)
-            category_language = re.search(r"(?:^|/)language:([a-z0-9+-]+)$", category)
-            require(environment.get("category") == category == declaration["category"]
-                    and environment.get("scope") == declaration["scope"]
-                    and language == canonical_language(declaration["language"])
-                    and category_language is not None
-                    and canonical_language(category_language[1]) == language
-                    and job["started_at"] <= analysis["created_at"] <= job["completed_at"],
-                    "advanced CodeQL analysis upload does not belong to selected full-run job")
-            found.add(display)
-            languages.add(language)
-            if found == set(selected):
-                break
-        if found == set(selected):
-            require({canonical_language(value) for value in minima} <= languages,
-                    "required CodeQL language analysis missing")
-            fresh = latest_full_codeql_run(coordinate, branch, head, events)
-            require(all(fresh[key] == run[key] for key in
-                        ("id", "run_attempt", "head_sha", "head_branch", "event", "path", "check_suite_id")),
-                    "advanced CodeQL full run changed during preflight")
-            require(api(check_endpoint) == check, "advanced CodeQL validation check changed during preflight")
-            require(pages(jobs_endpoint, "jobs") == jobs, "advanced CodeQL full-run jobs changed during preflight")
-            for path, source in sources.items():
-                require(contents(coordinate, path, branch) == source,
-                        "advanced CodeQL producer source changed during preflight")
-            return "current full-event CodeQL producer covers policy minima and every declared partition upload"
-    raise Deferred("required advanced CodeQL partition upload missing within bounded evidence")
+    coverage = advanced_codeql_coverage(coordinate, branch, head, minima, selected, declarations)
+    fresh = latest_full_codeql_run(coordinate, branch, head, events)
+    require(all(fresh[key] == run[key] for key in
+                ("id", "run_attempt", "head_sha", "head_branch", "event", "path", "check_suite_id")),
+            "advanced CodeQL full run changed during preflight")
+    require(api(check_endpoint) == check, "advanced CodeQL validation check changed during preflight")
+    require(pages(jobs_endpoint, "jobs") == jobs, "advanced CodeQL full-run jobs changed during preflight")
+    for path, source in sources.items():
+        require(contents(coordinate, path, branch) == source,
+                "advanced CodeQL producer source changed during preflight")
+    require(advanced_codeql_coverage(coordinate, branch, head, minima, selected, declarations) == coverage,
+            "advanced CodeQL analysis coverage changed during preflight")
+    return "current full-event CodeQL producer covers policy minima and every declared partition upload"
 
 
 def codeql(coordinate):

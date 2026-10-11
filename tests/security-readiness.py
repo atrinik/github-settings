@@ -162,6 +162,8 @@ class Fixture:
         self.codeql_check = check("CodeQL validation", identifier=999)
         self.codeql_check["check_suite"]["id"] = 777
         self.codeql_jobs = []
+        self.analysis_reads = 0
+        self.fresh_analyses = None
         self.analyses = [{"id": 1, "created_at": "2026-10-11T12:00:00Z", "tool": {"name": "CodeQL"},
                           "ref": "refs/heads/main", "commit_sha": HEAD, "category": "/language:rust",
                           "environment": '{"language":"rust"}', "error": "", "rules_count": 42}]
@@ -235,7 +237,11 @@ class Fixture:
             return {"commit": {"sha": self.branch_head}}
         if "/code-scanning/analyses?" in endpoint:
             page = int(parse_qs(urlparse(endpoint).query)["page"][0])
-            return copy.deepcopy(self.analyses[(page - 1) * 100:page * 100])
+            if page == 1:
+                self.analysis_reads += 1
+            analyses = (self.fresh_analyses if self.analysis_reads > 1 and self.fresh_analyses is not None
+                        else self.analyses)
+            return copy.deepcopy(analyses[(page - 1) * 100:page * 100])
         if endpoint.endswith("/code-scanning/default-setup"):
             return copy.deepcopy(self.setup)
         raise AssertionError("Unexpected read-only API endpoint: " + endpoint)
@@ -1104,7 +1110,7 @@ class ReadinessTests(unittest.TestCase):
         old.update(commit_sha=OLD, category="/partition:retired/language:rust")
         self.fixture.analyses.extend([old] * 1200)
         self.assertEqual(self.invoke("codeql")[0], 0)
-        self.assertEqual(len([call for call in self.fixture.calls if "/analyses?" in call]), 1)
+        self.assertEqual(len([call for call in self.fixture.calls if "/analyses?" in call]), 2)
 
     def test_codeql_retired_category_failure_does_not_gate(self):
         old = copy.deepcopy(self.fixture.analyses[0])
@@ -1242,7 +1248,7 @@ class ReadinessTests(unittest.TestCase):
         self.fixture.analyses.insert(0, retired)
         self.fixture.analyses.extend([retired] * 1200)
         self.assertEqual(self.invoke("codeql")[0], 0)
-        self.assertEqual(len([call for call in self.fixture.calls if "/analyses?" in call]), 1)
+        self.assertEqual(len([call for call in self.fixture.calls if "/analyses?" in call]), 2)
 
     def test_codeql_advanced_partial_uploads_deferred(self):
         self.enable_advanced()
@@ -1279,6 +1285,81 @@ class ReadinessTests(unittest.TestCase):
         self.enable_advanced()
         self.fixture.analyses[0]["created_at"] = "2026-10-11T13:00:00Z"
         self.assert_deferred("codeql", "selected full-run job")
+
+    def prepare_analysis_recheck(self, advanced):
+        if advanced:
+            self.enable_advanced()
+        self.fixture.analysis_reads = 0
+        self.fixture.fresh_analyses = copy.deepcopy(self.fixture.analyses)
+
+    def test_codeql_newer_failure_during_preflight_deferred(self):
+        for advanced in (False, True):
+            with self.subTest(advanced=advanced):
+                self.prepare_analysis_recheck(advanced)
+                failed = copy.deepcopy(self.fixture.analyses[0])
+                failed.update(id=1000, error="new analysis failed")
+                self.fixture.fresh_analyses.insert(0, failed)
+                self.assert_deferred("codeql", "failed")
+                self.assertEqual(self.fixture.analysis_reads, 2)
+
+    def test_codeql_newer_zero_rules_during_preflight_deferred(self):
+        for advanced in (False, True):
+            with self.subTest(advanced=advanced):
+                self.prepare_analysis_recheck(advanced)
+                empty = copy.deepcopy(self.fixture.analyses[0])
+                empty.update(id=1000, rules_count=0)
+                self.fixture.fresh_analyses.insert(0, empty)
+                self.assert_deferred("codeql", "no executed rules")
+
+    def test_codeql_deleted_selected_analysis_during_preflight_deferred(self):
+        for advanced in (False, True):
+            with self.subTest(advanced=advanced):
+                self.prepare_analysis_recheck(advanced)
+                del self.fixture.fresh_analyses[0]
+                self.assert_deferred("codeql", "missing within bounded evidence")
+
+    def test_codeql_replaced_successful_coverage_during_preflight_deferred(self):
+        for advanced in (False, True):
+            with self.subTest(advanced=advanced):
+                self.prepare_analysis_recheck(advanced)
+                replacement = copy.deepcopy(self.fixture.analyses[0])
+                replacement["id"] = 1000
+                self.fixture.fresh_analyses.insert(0, replacement)
+                self.assert_deferred("codeql", "analysis coverage changed during preflight")
+
+    def test_codeql_selected_analysis_mutation_during_preflight_deferred(self):
+        for advanced in (False, True):
+            with self.subTest(advanced=advanced):
+                self.prepare_analysis_recheck(advanced)
+                self.fixture.fresh_analyses[0]["rules_count"] += 1
+                self.assert_deferred("codeql", "analysis coverage changed during preflight")
+
+    def test_codeql_new_retired_analysis_during_preflight_preserves_readiness(self):
+        for advanced in (False, True):
+            with self.subTest(advanced=advanced):
+                self.prepare_analysis_recheck(advanced)
+                retired = copy.deepcopy(self.fixture.analyses[0])
+                retired.update(id=1000, commit_sha=OLD, category="/retired/language:c-cpp",
+                               environment='{"display":"Retired"}')
+                self.fixture.fresh_analyses.insert(0, retired)
+                self.assertEqual(self.invoke("codeql")[0], 0)
+                self.assertEqual(self.fixture.analysis_reads, 2)
+
+    def test_codeql_default_new_failure_with_changed_language_does_not_fallback(self):
+        self.prepare_analysis_recheck(False)
+        failed = copy.deepcopy(self.fixture.analyses[0])
+        failed.update(id=1000, error="new analysis failed", environment='{"language":"python"}')
+        self.fixture.fresh_analyses.insert(0, failed)
+        self.assert_deferred("codeql", "failed")
+
+    def test_codeql_advanced_new_failure_without_display_does_not_fallback(self):
+        for environment in ('{}', '{"display":"Renamed"}'):
+            with self.subTest(environment=environment):
+                self.prepare_analysis_recheck(True)
+                failed = copy.deepcopy(self.fixture.analyses[0])
+                failed.update(id=1000, error="new analysis failed", environment=environment)
+                self.fixture.fresh_analyses.insert(0, failed)
+                self.assert_deferred("codeql", "partition upload missing")
 
     def test_codeql_latest_error_masks_older_success(self):
         failed = copy.deepcopy(self.fixture.analyses[0])
