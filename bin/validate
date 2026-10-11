@@ -53,7 +53,12 @@ jq -e '
 
 jq -e --slurpfile repositories "${repositories_config}" \
   --slurpfile advanced "${advanced_codeql_config}" '
-  (keys == ["code_scanning", "codeql_required_languages", "dependency_review"]) and
+  . as $policy |
+  (keys == ["activation", "code_scanning", "codeql_required_languages", "dependency_review"]) and
+  (.activation | type == "object" and keys == ["code_scanning", "dependency_review"]) and
+  all(["code_scanning", "dependency_review"][]; . as $kind |
+    ($policy.activation[$kind] | type == "object" and keys == $policy[$kind]) and
+    all($policy.activation[$kind][]; IN("pending", "enforced"))) and
   .dependency_review == ($repositories[0].required_ci | keys) and
   .code_scanning == .dependency_review and
   (.codeql_required_languages | type == "object") and

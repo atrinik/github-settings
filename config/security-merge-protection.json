@@ -49,5 +49,53 @@
     "content-toolkit": [
       "rust"
     ]
+  },
+  "activation": {
+    "code_scanning": {
+      "agent-integrations": "pending",
+      "atrinik": "pending",
+      "classic": "pending",
+      "client": "pending",
+      "content": "pending",
+      "content-toolkit": "pending",
+      "deploy-control": "pending",
+      "devcontainer": "pending",
+      "editor": "pending",
+      "github-settings": "pending",
+      "metaserver-worker": "pending",
+      "observatory": "pending",
+      "playtester": "pending",
+      "protocol": "pending",
+      "renderer": "pending",
+      "resources": "pending",
+      "server": "pending",
+      "service-updater": "pending",
+      "sound": "pending",
+      "tools": "pending",
+      "website": "pending"
+    },
+    "dependency_review": {
+      "agent-integrations": "pending",
+      "atrinik": "pending",
+      "classic": "pending",
+      "client": "pending",
+      "content": "pending",
+      "content-toolkit": "pending",
+      "deploy-control": "pending",
+      "devcontainer": "pending",
+      "editor": "pending",
+      "github-settings": "pending",
+      "metaserver-worker": "pending",
+      "observatory": "pending",
+      "playtester": "pending",
+      "protocol": "pending",
+      "renderer": "pending",
+      "resources": "pending",
+      "server": "pending",
+      "service-updater": "pending",
+      "sound": "pending",
+      "tools": "pending",
+      "website": "pending"
+    }
   }
 }

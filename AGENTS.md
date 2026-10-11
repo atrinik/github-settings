@@ -222,13 +222,17 @@
   ownership, policy scope, publisher behavior, required checks, or validation.
 
 - `config/security-merge-protection.json` owns the dependency-review and CodeQL
-  target sets and default-setup required language minima. Keep both sets equal
-  to the required-CI inventory. Union required languages with live default-setup
+  target sets, per-gate `pending`/`enforced` activation intent, and default-setup
+  required language minima. Keep both sets and activation keys equal to the
+  required-CI inventory. Union required languages with live default-setup
   languages, fail on unreadable language state, and patch only real drift.
 - Keep `06 - CodeQL security` and `07 - Dependency review` repository-owned in
   both policy scopes; Team has no organization code-scanning rule support.
-  New gates require read-only `bin/security-readiness` evidence for landed and
-  successful producers; existing active gates survive later PR failures. Keep
+  Pending gates only probe readiness. Promote intent through source review after
+  read-only `bin/security-readiness` proves landed successful producers, before
+  the first authorized live installation. Enforced gates remain required when
+  deleted or producers fail; audit fails on absence and publication restores
+  protection without fresh initial qualification. Keep
   aggregate checks, zero approvals, and owner pull-request-only bypass intact.
 - `config/actions-sha-pinning.json` persists SHA rollout as `pending` with no
   canary or `enforced` with an accepted PR coordinate. Promote it through normal
@@ -238,8 +242,10 @@
   if proof cannot be revalidated; audit reports disabled enforced policy as
   drift. Preserve existing true settings. Allow action names with `@*`; keep
   full SHAs in producer workflows instead of duplicate pin catalogs.
-- Existing security gates may waive initial producer readiness only when the
-  effective default-branch API proves the same ruleset and desired tool/context.
-  Retired targets lose only exact repository-owned managed security rules;
+- Adoption of existing security gates into enforced source intent requires the
+  effective default-branch API to prove the repository-owned ruleset and desired
+  tool/context. Never infer activation from target membership or silently change
+  source intent. Retire target and activation entries together. Retired targets
+  lose only exact repository-owned managed security rules;
   preserve archived, foreign, and modified same-name rules. Keep repository
   workflow overrides read-only and unable to approve PRs, with delta-aware writes.

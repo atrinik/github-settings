@@ -61,9 +61,9 @@ def rulesets(repository):
     if repository in repositories['release_tags'] or scenario in (
             'inherited-tag-unaffected', 'tag-extra-nonrelease', 'tag-all-nonrelease', 'tag-repository-nonrelease'):
         specs.append(('immutable-release-tags', None))
-    if repository in policy['code_scanning'] and scenario not in ('pending-codeql', 'ready-missing-codeql', 'codeql-readiness-unreadable'):
+    if repository in policy['code_scanning'] and scenario not in ('pending-codeql', 'ready-missing-codeql', 'codeql-readiness-unreadable', 'enforced-missing-codeql', 'enforced-unreadable-codeql'):
         specs.append(('code-scanning', None))
-    if repository in policy['dependency_review'] and scenario not in ('pending', 'ready-missing', 'dependency-readiness-unreadable'):
+    if repository in policy['dependency_review'] and scenario not in ('pending', 'ready-missing', 'dependency-readiness-unreadable', 'enforced-missing-dependency', 'enforced-unreadable-dependency'):
         specs.append(('dependency-review', None))
     if scenario == 'foreign-tag':
         specs.append(('immutable-release-tags', 'Foreign tag retention'))

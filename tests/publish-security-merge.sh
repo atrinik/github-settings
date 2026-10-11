@@ -118,7 +118,20 @@ github_api() {
   repos/atrinik/content-toolkit/rulesets/6 | repos/atrinik/content-toolkit/rulesets/7)
     local template=code-scanning
     [[ ${endpoint##*/} != 7 ]] || template=dependency-review
-    if [[ ${ruleset_state} == exact || ${ruleset_state} == removal-owned ]]; then
+    if [[ ${ruleset_state} == api-default-* ]]; then
+      jq --argjson id "${endpoint##*/}" --arg state "${ruleset_state}" '
+        . + {id: $id, source_type: "Repository", source: "atrinik/content-toolkit"} |
+        .bypass_actors[0].actor_id = null |
+        if $id == 7 then
+          .rules[0].parameters.do_not_enforce_on_create =
+            (if $state == "api-default-false" then false
+             elif $state == "api-default-true" then true else null end) |
+          if $state == "api-default-unknown" then
+            .rules[0].parameters.do_not_enforce_on_create = false |
+            .rules[0].parameters.unknown_future_control = false
+          else . end
+        else . end' "${root}/config/rulesets/${template}.json"
+    elif [[ ${ruleset_state} == exact || ${ruleset_state} == removal-owned ]]; then
       jq --argjson id "${endpoint##*/}" \
         '. + {id: $id, source_type: "Repository", source: "atrinik/content-toolkit"}' \
         "${root}/config/rulesets/${template}.json"
@@ -140,11 +153,32 @@ github_api() {
         "${root}/config/rulesets/${template}.json"
     elif [[ ${ruleset_state} == owner-null ]]; then
       jq '.bypass_actors[0].actor_id = null' "${root}/config/rulesets/${template}.json"
+    elif [[ ${ruleset_state} == foreign-repository-source ]]; then
+      jq '.source = "foreign/content-toolkit"' "${root}/config/rulesets/${template}.json"
+    elif [[ ${ruleset_state} == extra-rule ]]; then
+      jq '.rules += [{type: "deletion"}]' "${root}/config/rulesets/${template}.json"
+    elif [[ ${ruleset_state} == unknown-rule-parameter ]]; then
+      jq '.rules[0].parameters.unknown_future_control = true' \
+        "${root}/config/rulesets/${template}.json"
+    elif [[ ${ruleset_state} == unknown-condition ]]; then
+      jq '.conditions.unknown_future_scope = {}' \
+        "${root}/config/rulesets/${template}.json"
     elif [[ ${ruleset_state} == active-wrong-ref ]]; then
       jq '.conditions.ref_name.include = ["refs/heads/feature"]' \
         "${root}/config/rulesets/${template}.json"
     elif [[ ${ruleset_state} == active-drift ]]; then
+      jq '.conditions.ref_name.include = ["refs/heads/main"]' "${root}/config/rulesets/${template}.json"
+    elif [[ ${ruleset_state} == active-bypass-drift ]]; then
       jq '.bypass_actors = []' "${root}/config/rulesets/${template}.json"
+    elif [[ ${ruleset_state} == unknown-ref-condition ]]; then
+      jq '.conditions.ref_name.unknown_future_scope = true' "${root}/config/rulesets/${template}.json"
+    elif [[ ${ruleset_state} == changed-severity ]]; then
+      if [[ ${template} == code-scanning ]]; then
+        jq '.rules[0].parameters.code_scanning_tools[0].security_alerts_threshold = "critical"' \
+          "${root}/config/rulesets/${template}.json"
+      else
+        cat "${root}/config/rulesets/${template}.json"
+      fi
     elif [[ ${ruleset_state} == active-unrelated-gate ]]; then
       if [[ ${template} == code-scanning ]]; then
         jq '.rules[0].parameters.code_scanning_tools[0].tool = "Another scanner"' \
@@ -157,7 +191,8 @@ github_api() {
       jq '.rules = []' "${root}/config/rulesets/${template}.json"
     else
       jq '.enforcement = "disabled"' "${root}/config/rulesets/${template}.json"
-    fi
+    fi | jq --argjson id "${endpoint##*/}" \
+      '{id: $id, source_type: "Repository", source: "atrinik/content-toolkit"} + .'
     ;;
   orgs/atrinik/actions/permissions) printf '%s\n' "${actions_state}" ;;
   orgs/atrinik/actions/permissions/selected-actions)
@@ -304,20 +339,90 @@ for policy_scope in organization repository; do
     # shellcheck source=/dev/null
     source "${temporary}/dispatch.sh" >"${temporary}/${policy_scope}-${producer}.txt"
     [[ $(cat "${temporary}/order") == "${policy_scope}-rules"$'\n'"${policy_scope}-security" ]]
+    assert_no_writes
     if [[ ${producer} == ready ]]; then
-      jq -se --slurpfile codeql "${root}/config/rulesets/code-scanning.json" \
-        --slurpfile dependency "${root}/config/rulesets/dependency-review.json" '
-        [.[] | select(.method != "GET")] == [
-          {method: "POST", endpoint: "repos/atrinik/content-toolkit/rulesets", payload: $codeql[0]},
-          {method: "POST", endpoint: "repos/atrinik/content-toolkit/rulesets", payload: $dependency[0]}
-        ]' "${api_log}" >/dev/null
-    else
-      assert_no_writes
+      [[ $(grep -c '^READY ' "${temporary}/${policy_scope}-${producer}.txt") == 2 ]]
     fi
     jq -se '[.[].mode] == ["codeql", "dependency"] and
       all(.[]; .repository == "atrinik/content-toolkit")' "${readiness_log}" >/dev/null
     jq -se 'all(.[]; .endpoint | startswith("repos/atrinik/content-toolkit/"))' \
       "${api_log}" >/dev/null
+  done
+done
+
+# Reviewed enforced intent precedes initial installation and survives deletion,
+# disablement, and ref drift independently of current producer health.
+for policy_scope in organization repository; do
+  for producer in failed unreadable; do
+    for state in missing disabled active-wrong-ref; do
+      reset_case
+      ruleset_state=${state}
+      effective_state=absent
+      export READINESS_STATUS=${producer}
+      jq '.activation |= with_entries(.value |= with_entries(.value = "enforced"))' \
+        "${security_merge_config}" >"${temporary}/enforced.json"
+      cp "${temporary}/enforced.json" "${security_merge_config}"
+      # shellcheck source=/dev/null
+      source "${temporary}/dispatch.sh" >"${temporary}/enforced-${policy_scope}-${producer}-${state}.txt"
+      method=PUT
+      [[ ${state} != missing ]] || method=POST
+      jq -se --arg method "${method}" \
+        --slurpfile codeql "${root}/config/rulesets/code-scanning.json" \
+        --slurpfile dependency "${root}/config/rulesets/dependency-review.json" '
+        [.[] | select(.method != "GET")] |
+        [.[].payload] == [$codeql[0], $dependency[0]] and
+        all(.[]; .method == $method)' "${api_log}" >/dev/null
+      [[ ! -s ${readiness_log} ]]
+    done
+  done
+done
+
+# The two gate phases are independent; qualification does not mutate source.
+reset_case
+export READINESS_STATUS=failed
+jq '.activation.code_scanning["content-toolkit"] = "enforced"' \
+  "${security_merge_config}" >"${temporary}/mixed.json"
+cp "${temporary}/mixed.json" "${security_merge_config}"
+publish_security_merge_rulesets >"${temporary}/mixed.txt"
+jq -se '[.[] | select(.method != "GET")] | length == 1 and
+  .[0].payload.name == "06 - CodeQL security"' "${api_log}" >/dev/null
+jq -se '[.[].mode] == ["dependency"]' "${readiness_log}" >/dev/null
+cmp "${temporary}/mixed.json" "${security_merge_config}"
+
+# Enforced restoration preserves foreign/ambiguous same-name rules and rejects
+# archived or replaced repositories at the point of mutation.
+for state in removal-foreign removal-id-drift removal-name-collision active-unrelated-gate active-without-gate unknown-rule-parameter unknown-condition unknown-ref-condition active-bypass-drift changed-severity foreign-repository-source extra-rule; do
+  reset_case
+  ruleset_state=${state}
+  jq '.activation |= with_entries(.value |= with_entries(.value = "enforced"))' \
+    "${security_merge_config}" >"${temporary}/enforced.json"
+  cp "${temporary}/enforced.json" "${security_merge_config}"
+  if publish_security_merge_rulesets >"${temporary}/enforced-collision-${state}.txt" 2>&1; then
+    echo 'expected enforced gate ownership collision to fail closed' >&2
+    exit 1
+  fi
+  assert_no_writes
+  [[ ! -s ${readiness_log} ]]
+done
+for kind in code_scanning dependency_review; do
+  for metadata in \
+    '{"id":123,"full_name":"atrinik/content-toolkit","archived":true,"default_branch":"main"}' \
+    '{"id":999,"full_name":"atrinik/content-toolkit","archived":false,"default_branch":"main"}' \
+    '{"id":123,"full_name":"atrinik/renamed-toolkit","archived":false,"default_branch":"main"}' \
+    '{"id":123,"full_name":"foreign/content-toolkit","archived":false,"default_branch":"main"}'; do
+    reset_case
+    export READINESS_STATUS=failed
+    repository_state=${metadata}
+    jq --arg kind "${kind}" '.activation[$kind]["content-toolkit"] = "enforced"' \
+      "${security_merge_config}" >"${temporary}/enforced.json"
+    cp "${temporary}/enforced.json" "${security_merge_config}"
+    if publish_security_merge_rulesets >"${temporary}/enforced-metadata-${kind}.txt" 2>&1; then
+      echo 'expected enforced repository identity fence to fail closed' >&2
+      exit 1
+    fi
+    assert_no_writes
+    jq -se --arg mode "$([[ ${kind} == code_scanning ]] && echo codeql || echo dependency)" \
+      'all(.[]; .mode != $mode)' "${readiness_log}" >/dev/null
   done
 done
 
@@ -341,15 +446,14 @@ jq -se '[.[] | select(.method != "GET")] | length == 2 and
   all(.[]; .method == "PUT" and .payload.enforcement == "active")' \
   "${api_log}" >/dev/null
 [[ ! -s ${readiness_log} ]]
-for ruleset_state in disabled active-without-gate active-unrelated-gate; do
-  effective_state=absent
-  : >"${api_log}"
-  : >"${readiness_log}"
-  export READINESS_STATUS=failed
-  publish_security_merge_rulesets >"${temporary}/${ruleset_state}.txt"
-  assert_no_writes
-  jq -se '[.[].mode] == ["codeql", "dependency"]' "${readiness_log}" >/dev/null
-done
+ruleset_state=disabled
+effective_state=absent
+: >"${api_log}"
+: >"${readiness_log}"
+export READINESS_STATUS=failed
+publish_security_merge_rulesets >"${temporary}/${ruleset_state}.txt"
+assert_no_writes
+jq -se '[.[].mode] == ["codeql", "dependency"]' "${readiness_log}" >/dev/null
 
 # An active rule on another ref does not grandfather a new default-branch gate.
 for effective_state in absent different-id; do
@@ -363,7 +467,7 @@ for effective_state in absent different-id; do
 done
 reset_case
 ruleset_state=active-drift
-repository_state='{"id":123,"archived":false,"default_branch":"release/current"}'
+repository_state='{"id":123,"full_name":"atrinik/content-toolkit","archived":false,"default_branch":"release/current"}'
 export READINESS_STATUS=failed
 publish_security_merge_rulesets >"${temporary}/encoded-ref.txt"
 jq -se 'any(.[]; .endpoint == "repos/atrinik/content-toolkit/rules/branches/release%2Fcurrent") and
@@ -386,7 +490,7 @@ done
 for removal in removal-owned removal-owner-null removal-foreign removal-id-drift removal-name-collision; do
   reset_case
   ruleset_state=${removal}
-  jq '.code_scanning -= ["content-toolkit"] | .dependency_review -= ["content-toolkit"]' \
+  jq '.code_scanning -= ["content-toolkit"] | .dependency_review -= ["content-toolkit"] | del(.activation.code_scanning["content-toolkit"], .activation.dependency_review["content-toolkit"])' \
     "${security_merge_config}" >"${temporary}/removed.json"
   cp "${temporary}/removed.json" "${security_merge_config}"
   publish_security_merge_rulesets >"${temporary}/${removal}.txt"
@@ -402,12 +506,47 @@ for removal in removal-owned removal-owner-null removal-foreign removal-id-drift
   [[ ! -s ${readiness_log} ]]
 done
 
+# GitHub expands an omitted create-exemption flag to false. Both publisher
+# scopes must keep exact active API payloads and retire only exact owned gates.
+for policy_scope in organization repository; do
+  reset_case
+  ruleset_state=api-default-false
+  export READINESS_STATUS=failed
+  : >"${temporary}/order"
+  # shellcheck source=/dev/null
+  source "${temporary}/dispatch.sh" >"${temporary}/${policy_scope}-api-default-keep.txt"
+  assert_no_writes
+  [[ ! -s ${readiness_log} ]]
+  grep -Fq 'KEEP /repos/atrinik/content-toolkit/rulesets/7 07 - Dependency review' \
+    "${temporary}/${policy_scope}-api-default-keep.txt"
+  for default_state in false true null unknown; do
+    reset_case
+    ruleset_state=api-default-${default_state}
+    jq '.dependency_review -= ["content-toolkit"] | del(.activation.dependency_review["content-toolkit"])' \
+      "${security_merge_config}" >"${temporary}/removed.json"
+    cp "${temporary}/removed.json" "${security_merge_config}"
+    : >"${temporary}/order"
+    # shellcheck source=/dev/null
+    source "${temporary}/dispatch.sh" >"${temporary}/${policy_scope}-api-default-${default_state}.txt"
+    if [[ ${default_state} == false ]]; then
+      jq -se '[.[] | select(.method != "GET")] == [
+        {method: "DELETE", endpoint: "repos/atrinik/content-toolkit/rulesets/7"}
+      ]' "${api_log}" >/dev/null
+    else
+      assert_no_writes
+      grep -Fq '07 - Dependency review: unrecognized ownership or payload; retained' \
+        "${temporary}/${policy_scope}-api-default-${default_state}.txt"
+    fi
+    [[ ! -s ${readiness_log} ]]
+  done
+done
+
 # Retirements also fence a repository archived or replaced after enumeration.
 for retired_state in '{"id":123,"archived":true}' '{"id":999,"archived":false}'; do
   reset_case
   repository_state=${retired_state}
   ruleset_state="removal-owned"
-  jq '.code_scanning -= ["content-toolkit"] | .dependency_review -= ["content-toolkit"]' \
+  jq '.code_scanning -= ["content-toolkit"] | .dependency_review -= ["content-toolkit"] | del(.activation.code_scanning["content-toolkit"], .activation.dependency_review["content-toolkit"])' \
     "${security_merge_config}" >"${temporary}/removed.json"
   cp "${temporary}/removed.json" "${security_merge_config}"
   publish_security_merge_rulesets >"${temporary}/removed-state-changed.txt"

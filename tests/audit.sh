@@ -12,9 +12,10 @@ cp "${root}/bin/audit" "${temporary}/full/bin/audit"
 printf '#!/usr/bin/env bash\nexit 0\n' >"${temporary}/full/bin/validate"
 cat >"${temporary}/full/bin/security-readiness" <<'EOF'
 #!/usr/bin/env bash
+printf '%s\n' "$1" >>"${AUDIT_READINESS_LOG}"
 case ${GH_TEST_SCENARIO:-pass} in
-  pending|pending-codeql|pending-wrong-dependency-scope) exit 1 ;;
-  readiness-unreadable|dependency-readiness-unreadable|codeql-readiness-unreadable) exit 2 ;;
+  pending|pending-codeql|pending-wrong-dependency-scope|enforced-missing-dependency|enforced-missing-codeql) exit 1 ;;
+  readiness-unreadable|dependency-readiness-unreadable|codeql-readiness-unreadable|enforced-unreadable-dependency|enforced-unreadable-codeql) exit 2 ;;
   *) exit 0 ;;
 esac
 EOF
@@ -63,7 +64,22 @@ run_audit() {
         >"${temporary}/${fixture}/config/actions-sha-pinning.json"
       ;;
   esac
+  cp "${root}/config/security-merge-protection.json" "${temporary}/${fixture}/config/security-merge-protection.json"
+  case ${scenario} in
+    enforced-missing-dependency|enforced-unreadable-dependency)
+      jq '.activation.dependency_review.observatory = "enforced"' \
+        "${temporary}/${fixture}/config/security-merge-protection.json" >"${temporary}/activation.json"
+      mv "${temporary}/activation.json" "${temporary}/${fixture}/config/security-merge-protection.json"
+      ;;
+    enforced-missing-codeql|enforced-unreadable-codeql)
+      jq '.activation.code_scanning.observatory = "enforced"' \
+        "${temporary}/${fixture}/config/security-merge-protection.json" >"${temporary}/activation.json"
+      mv "${temporary}/activation.json" "${temporary}/${fixture}/config/security-merge-protection.json"
+      ;;
+  esac
+  : >"${temporary}/${scenario}.readiness-log"
   GH_TEST_SCENARIO=${scenario} \
+    AUDIT_READINESS_LOG="${temporary}/${scenario}.readiness-log" \
     PATH="${temporary}/mock:${PATH}" \
     AUDIT_CONFIG_ROOT="${temporary}/${fixture}" \
     AUDIT_API_LOG="${temporary}/api.log" \
@@ -174,8 +190,27 @@ assert_drift private-reporting 'private vulnerability reporting disabled or unre
 assert_drift secret-baseline 'exposed security baseline drift'
 assert_drift effective-unreadable 'effective default-branch rules could not be read'
 assert_drift ruleset-unreadable 'ruleset contents could not be read'
-assert_drift ready-missing 'effective required CI contexts or app drift'
-assert_drift ready-missing-codeql 'effective CodeQL merge protection drift'
+for scenario in enforced-missing-dependency enforced-unreadable-dependency; do
+  assert_drift "${scenario}" 'effective required CI contexts or app drift'
+  [[ ! -s ${temporary}/${scenario}.readiness-log ]]
+  if grep -Fq 'PENDING Dependency review' "${temporary}/${scenario}.out"; then
+    echo 'enforced dependency protection must never fall back to pending' >&2
+    exit 1
+  fi
+done
+for scenario in enforced-missing-codeql enforced-unreadable-codeql; do
+  assert_drift "${scenario}" 'effective CodeQL merge protection drift'
+  [[ ! -s ${temporary}/${scenario}.readiness-log ]]
+  if grep -Fq 'PENDING CodeQL' "${temporary}/${scenario}.out"; then
+    echo 'enforced CodeQL protection must never fall back to pending' >&2
+    exit 1
+  fi
+done
+for scenario in ready-missing ready-missing-codeql; do
+  output=$(run_audit "${scenario}")
+  grep -Fq 'merge protection awaits reviewed activation intent' <<<"${output}"
+  grep -Fq 'Governance audit baseline passed with' <<<"${output}"
+done
 assert_drift dependency-readiness-unreadable 'Dependency review readiness could not be read'
 assert_drift codeql-readiness-unreadable 'CodeQL readiness could not be read'
 output=$(run_audit pending-codeql)

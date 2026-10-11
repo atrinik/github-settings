@@ -1077,7 +1077,13 @@ security_ruleset_matches() {
       .bypass_actors |= (map(
         if .actor_type == "OrganizationAdmin" and .actor_id == null then
           .actor_id = 1
-        else . end) | sort_by(.actor_type, .actor_id, .bypass_mode));
+        else . end) | sort_by(.actor_type, .actor_id, .bypass_mode)) |
+      # GitHub expands this omitted request parameter to false. Keep true,
+      # null and unknown parameters visible so modified gates are not retired.
+      .rules |= map(if .type == "required_status_checks" and
+        .parameters.do_not_enforce_on_create == false then
+          .parameters |= del(.do_not_enforce_on_create)
+        else . end);
     normalize as $current |
     all($desired[0] | normalize | to_entries[]; $current[.key] == .value)
   ' <<<"${current}" >/dev/null
@@ -1148,7 +1154,7 @@ delete_removed_security_merge_rulesets() {
 # These repository rules remain repository-owned even in organization scope:
 # GitHub Team does not support organization-level code-scanning rules.
 publish_security_merge_rulesets() {
-  local repository kind template name existing id current reason status readiness_mode
+  local repository kind template name existing id current reason status readiness_mode phase metadata
   delete_removed_security_merge_rulesets
   for kind in code_scanning dependency_review; do
     if [[ ${kind} == code_scanning ]]; then
@@ -1164,6 +1170,12 @@ publish_security_merge_rulesets() {
         echo "SKIP ${organization}/${repository} is not active; ${name}"
         continue
       fi
+      phase=$(jq -er --arg kind "${kind}" --arg repository "${repository}" \
+        '.activation[$kind][$repository] | select(. == "pending" or . == "enforced")' \
+        "${security_merge_config}") || {
+        echo "error: invalid security gate activation intent: ${repository} ${kind}" >&2
+        return 1
+      }
       existing=$(github_api \
         "repos/${organization}/${repository}/rulesets?includes_parents=false")
       if ! jq -e --arg name "${name}" \
@@ -1176,20 +1188,49 @@ publish_security_merge_rulesets() {
       current='{}'
       if [[ -n ${id} ]]; then
         current=$(github_api "repos/${organization}/${repository}/rulesets/${id}")
+        if ! jq -e --argjson id "${id}" --arg name "${name}" \
+          --arg source "${organization}/${repository}" '
+          .id == $id and .name == $name and
+          .source_type == "Repository" and .source == $source and
+          (.enforcement | IN("active", "disabled", "evaluate"))
+        ' <<<"${current}" >/dev/null ||
+          ! security_ruleset_matches "${template}" "$(jq --slurpfile desired "${template}" '
+            .enforcement = $desired[0].enforcement |
+            .conditions.ref_name.include = $desired[0].conditions.ref_name.include |
+            .conditions.ref_name.exclude = $desired[0].conditions.ref_name.exclude
+          ' <<<"${current}")"; then
+          echo "error: security gate ownership or managed rule identity changed; retained: ${repository} ${name}" >&2
+          return 1
+        fi
         if security_ruleset_matches "${template}" "${current}"; then
           echo "KEEP /repos/${organization}/${repository}/rulesets/${id} ${name}"
           continue
         fi
       fi
-      # Preserve an already active gate when a later pull request fails it.
-      if [[ -z ${id} ]] || ! security_gate_applies_to_default_branch "${repository}" "${kind}" "${id}"; then
+      # Pending qualification cannot create protection before reviewed intent is
+      # persisted. Existing effective gates still survive producer failures.
+      if [[ ${phase} == pending ]] && { [[ -z ${id} ]] ||
+        ! security_gate_applies_to_default_branch "${repository}" "${kind}" "${id}"; }; then
         status=0
         reason=$("${root}/bin/security-readiness" "${readiness_mode}" \
           "${organization}/${repository}") || status=$?
-        if ((status != 0)); then
+        if ((status == 0)); then
+          echo "READY ${organization}/${repository} ${name}: promote reviewed activation intent before installation"
+        else
           echo "PENDING ${organization}/${repository} ${name}: ${reason}"
-          continue
         fi
+        continue
+      fi
+      # Enforced source is durable intent, not a claim about current producer
+      # health. Restore it only on the same active repository and owned gate.
+      metadata=$(github_api "repos/${organization}/${repository}") || return 1
+      if ! jq -e --argjson id "${active_repository_ids["${repository}"]}" \
+        --arg name "${organization}/${repository}" '
+        .id == $id and .full_name == $name and .archived == false and
+        (.default_branch | type == "string" and length > 0)
+      ' <<<"${metadata}" >/dev/null; then
+        echo "error: security gate repository identity or archive state changed: ${repository}" >&2
+        return 1
       fi
       if [[ -n ${id} ]]; then
         run_api PUT "repos/${organization}/${repository}/rulesets/${id}" "${template}"

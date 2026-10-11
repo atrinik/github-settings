@@ -154,7 +154,10 @@ available.
 
 `config/security-merge-protection.json` targets the 21 repositories in
 `required_ci`, including `service-updater`; `.github` and `web-platform` are
-excluded. Existing aggregate checks and zero required approvals remain intact.
+excluded. Its `activation` map records each target gate's reviewed `pending` or
+`enforced` intent. `enforced` means protection is required, including when the
+live rule is missing; it is not evidence of a successful installation. Existing
+aggregate checks and zero required approvals remain intact.
 The existing publisher restores `service-updater`'s already inventoried PR,
 `Updater validation`/title CI, and release-tag protections.
 
@@ -212,8 +215,9 @@ Rollout is owned by an organization administrator:
    `Dependency review` jobs. Merge this policy and review `bin/publish`'s plan.
 2. Apply only with separate live-settings authorization. Existing governance,
    the wildcard action allowance, and the Rust language correction can converge
-   while security gates remain `PENDING`. The publisher creates each gate only
-   after `bin/security-readiness` verifies its producer. Dependency readiness
+   while security gates remain `PENDING`. Pending gates only probe
+   `bin/security-readiness`; even a successful probe cannot activate protection
+   or silently promote source intent. Dependency readiness
    requires the reviewed workflow contract on the default branch, a successful
    latest PR run/job, and the same workflow at the check suite's executed
    revision. Synthetic merge revisions must bind the associated PR's base and
@@ -226,16 +230,25 @@ Rollout is owned by an organization administrator:
    changed-path PR subsets cannot establish readiness. The bounded newest-first
    query stops once current coverage is proven; retired categories and old
    analysis history do not require manual cleanup.
-3. Rerun the plan after the pending analyses complete. Existing active gates
-   remain enforced even when a later PR fails a security check. Scope migrations
+3. After successful initial producer qualification, promote that gate's
+   `activation` entry to `enforced` through source review and merge, retaining
+   the qualification evidence in the policy PR. Adoption of existing protection
+   instead requires read-only evidence of an active, repository-owned gate with
+   the intended tool/context applying to the live default branch. Desired target
+   membership alone never proves activation. Review the next plan and apply only
+   with live-settings authorization. Persisted intent precedes the first write,
+   so interrupted installation or later deletion cannot revert to pending.
+   The publisher creates or restores enforced protection without requiring a
+   currently healthy producer; audit reports missing or modified protection as
+   drift even when producer evidence fails or cannot be read. Scope migrations
    preserve these repository-owned gates. A converged security gate or language
    configuration causes no mutation or security-configuration reattachment.
-   Moving a rule from another branch onto the default branch requires fresh
-   producer proof; only an already effective gate with the same tool or
-   dependency context can retain protection after a later producer failure.
-   Retiring a target removes its required-CI and security inventory entries
-   together. The publisher removes only matching repository-owned security
-   rules from active retired targets, preserving foreign or modified same-name
+   Existing-rule repair accepts only recognized enforcement and ref-scope drift
+   on the exact repository-owned rule. Changed bypass, tool, context, severity,
+   or unknown policy fields are retained and reported for explicit review.
+   Retiring a target removes its required-CI, security target, and activation
+   entries together through source review. The publisher removes only matching
+   repository-owned security rules from active retired targets, preserving foreign or modified same-name
    rules for explicit review and leaving archived repositories untouched.
 4. Desired organization `sha_pinning_required` is true. Its durable rollout
    contract is `config/actions-sha-pinning.json`: the initial `pending` phase

@@ -424,14 +424,17 @@ for repository in "${!expected_active[@]}"; do
   dependency_required=false
   if jq -e --arg repository "${repository}" '.dependency_review | index($repository) != null' \
     "${root}/config/security-merge-protection.json" >/dev/null; then
-    if jq -e 'any(.[]; .type == "required_status_checks" and
+    if jq -e --arg repository "${repository}" \
+      '.activation.dependency_review[$repository] == "enforced"' \
+        "${root}/config/security-merge-protection.json" >/dev/null ||
+      jq -e 'any(.[]; .type == "required_status_checks" and
       any(.parameters.required_status_checks[]; .context == "Dependency review"))' \
         <<<"${effective}" >/dev/null ||
       jq -e 'any(.[]; .name == "07 - Dependency review")' <<<"${rulesets}" >/dev/null; then
       dependency_required=true
     elif "${root}/bin/security-readiness" dependency "${organization}/${repository}" \
       >"${temporary}/${repository}.readiness" 2>&1; then
-      dependency_required=true
+      pending+=("Dependency review merge protection awaits reviewed activation intent: ${organization}/${repository}")
     else
       readiness_status=$?
       if ((readiness_status == 1)); then
@@ -496,12 +499,15 @@ for repository in "${!expected_active[@]}"; do
   if jq -e --arg repository "${repository}" '.code_scanning | index($repository) != null' \
     "${root}/config/security-merge-protection.json" >/dev/null; then
     codeql_required=false
-    if jq -e 'any(.[]; .type == "code_scanning")' <<<"${effective}" >/dev/null ||
+    if jq -e --arg repository "${repository}" \
+      '.activation.code_scanning[$repository] == "enforced"' \
+        "${root}/config/security-merge-protection.json" >/dev/null ||
+      jq -e 'any(.[]; .type == "code_scanning")' <<<"${effective}" >/dev/null ||
       jq -e 'any(.[]; .name == "06 - CodeQL security")' <<<"${rulesets}" >/dev/null; then
       codeql_required=true
     elif "${root}/bin/security-readiness" codeql "${organization}/${repository}" \
       >"${temporary}/${repository}.codeql-readiness" 2>&1; then
-      codeql_required=true
+      pending+=("CodeQL merge protection awaits reviewed activation intent: ${organization}/${repository}")
     else
       readiness_status=$?
       if ((readiness_status == 1)); then

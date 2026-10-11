@@ -25,6 +25,15 @@ reject security-merge-protection.json '.dependency_review += ["web-platform"]'
 reject security-merge-protection.json '.codeql_required_languages["content-toolkit"] = []'
 reject security-merge-protection.json '.codeql_required_languages.classic = ["rust"]'
 reject security-merge-protection.json '.codeql_required_languages.server = ["invented"]'
+for filter in 'del(.activation)' '.activation = null' '.activation = []' \
+  '.activation.unexpected = {}' 'del(.activation.code_scanning)' \
+  '.activation.code_scanning = []' '.activation.code_scanning = null' \
+  'del(.activation.code_scanning.classic)' '.activation.code_scanning.classic = null' \
+  '.activation.code_scanning.classic = "unknown"' '.activation.code_scanning.classic = true' \
+  '.activation.dependency_review.classic = {}' '.activation.dependency_review.classic = "ready"' \
+  '.activation.dependency_review.nawerhals = "enforced"'; do
+  reject security-merge-protection.json "${filter}"
+done
 reject rulesets/code-scanning.json '.bypass_actors[0].bypass_mode = "always"'
 reject rulesets/code-scanning.json '.rules[0].parameters.code_scanning_tools[0].security_alerts_threshold = "critical"'
 reject rulesets/code-scanning.json '.rules[0].parameters.code_scanning_tools[0].alerts_threshold = "errors"'
@@ -45,10 +54,16 @@ jq '.phase = "enforced" | .canary = "atrinik/github-settings/99"' \
 "${temporary}/bin/validate" >/dev/null
 cp "${root}/config/actions-sha-pinning.json" "${temporary}/config/actions-sha-pinning.json"
 
+# Source review can promote gates independently without a version catalog.
+jq '.activation.code_scanning.classic = "enforced" | .activation.dependency_review.atrinik = "enforced"' \
+  "${root}/config/security-merge-protection.json" >"${temporary}/config/security-merge-protection.json"
+"${temporary}/bin/validate" >/dev/null
+cp "${root}/config/security-merge-protection.json" "${temporary}/config/security-merge-protection.json"
+
 # A coordinated target retirement is valid; unrelated governed policies stay.
 jq 'del(.required_ci["service-updater"])' "${root}/config/repositories.json" \
   >"${temporary}/config/repositories.json"
-jq '.code_scanning -= ["service-updater"] | .dependency_review -= ["service-updater"]' \
+jq '.code_scanning -= ["service-updater"] | .dependency_review -= ["service-updater"] | del(.activation.code_scanning["service-updater"], .activation.dependency_review["service-updater"])' \
   "${root}/config/security-merge-protection.json" >"${temporary}/config/security-merge-protection.json"
 "${temporary}/bin/validate" >/dev/null
 
