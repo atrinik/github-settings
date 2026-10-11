@@ -62,6 +62,98 @@ class WorkflowBoundaryTests(unittest.TestCase):
             with self.subTest(index=index):
                 self.reject(self.publish, self.publication, mutation)
 
+    def test_automatic_jobs_reject_matrix_and_reusable_job_fields(self):
+        for job_name in ("automatic-verify", "automatic-publish"):
+            for field, value in (
+                ("strategy", {"matrix": {"target": ["unreviewed"]}}),
+                ("uses", "./.github/workflows/unreviewed.yml"),
+                ("with", {"target": "unreviewed"}),
+                ("secrets", "inherit"),
+            ):
+                with self.subTest(job=job_name, field=field):
+                    self.reject(
+                        self.publish,
+                        self.publication,
+                        lambda w, job_name=job_name, field=field, value=value:
+                        w["jobs"][job_name].update({field: value}),
+                    )
+
+    def test_source_jobs_reject_matrix_and_reusable_job_fields(self):
+        for job_name in ("package", "attest", "release"):
+            for field, value in (
+                ("strategy", {"matrix": {"target": ["unreviewed"]}}),
+                ("uses", "./.github/workflows/unreviewed.yml"),
+                ("with", {"target": "unreviewed"}),
+                ("secrets", "inherit"),
+            ):
+                with self.subTest(job=job_name, field=field):
+                    self.reject(
+                        self.source,
+                        self.signing,
+                        lambda w, job_name=job_name, field=field, value=value:
+                        w["jobs"][job_name].update({field: value}),
+                    )
+
+    def test_registry_token_expressions_are_confined_to_the_upload_binding(self):
+        token_references = (
+            "${{ steps.auth.outputs.token }}",
+            "${{ Steps.AUTH.outputs.token }}",
+            "${{ toJSON(steps) }}",
+            "${{ steps[inputs.x].outputs.token }}",
+            "${{ steps.auth.outputs.token }} ",
+        )
+
+        def inject(job, location, token):
+            if location == "extra-env":
+                job["env"]["UNREVIEWED_TOKEN"] = token
+            elif location == "outputs":
+                job["outputs"] = {"token": token}
+            elif location == "concurrency":
+                job["concurrency"] = {"group": token, "cancel-in-progress": False}
+            elif location == "checkout-with":
+                job["steps"][0]["with"]["fetch-depth"] = token
+            elif location == "step-name":
+                job["steps"][1]["name"] = token
+            elif location == "step-run":
+                job["steps"][1]["run"] += " # " + token
+            elif location == "step-if":
+                job["steps"][1]["if"] = token
+            elif location == "step-env":
+                job["steps"][1]["env"] = {"UNREVIEWED_TOKEN": token}
+            else:
+                self.fail(f"unknown token injection location: {location}")
+
+        locations = (
+            "extra-env", "outputs", "concurrency", "checkout-with",
+            "step-name", "step-run", "step-if", "step-env",
+        )
+        for job_name in ("automatic-verify", "automatic-publish"):
+            for location in locations:
+                for token in token_references:
+                    with self.subTest(job=job_name, location=location, token=token):
+                        self.reject(
+                            self.publish,
+                            self.publication,
+                            lambda w, job_name=job_name, location=location, token=token:
+                            inject(w["jobs"][job_name], location, token),
+                        )
+
+    def test_only_the_exact_upload_token_expression_is_allowed(self):
+        variants = (
+            "${{ Steps.AUTH.outputs.token }}",
+            "${{ toJSON(steps) }}",
+            "${{ steps[inputs.x].outputs.token }}",
+            "${{ steps.auth.outputs.token }} ",
+        )
+        for token in variants:
+            with self.subTest(token=token):
+                self.reject(
+                    self.publish,
+                    self.publication,
+                    lambda w, token=token: w["jobs"]["automatic-publish"]["steps"][3]["env"].update(
+                        {"CARGO_REGISTRY_TOKEN": token}),
+                )
+
     def test_signer_isolation_and_dependency(self):
         mutations = [
             lambda w: w["jobs"]["package"].update({"permissions": {"contents": "read", "id-token": "write"}}),
