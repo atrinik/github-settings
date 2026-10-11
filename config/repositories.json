@@ -17,6 +17,7 @@
     "renderer",
     "resources",
     "server",
+    "service-updater",
     "sound",
     "tools",
     "web-platform",
@@ -54,6 +55,10 @@
     ],
     "server": [
       "Server validation",
+      "Conventional PR title"
+    ],
+    "service-updater": [
+      "Updater validation",
       "Conventional PR title"
     ],
     "website": [
@@ -121,6 +126,7 @@
     "renderer",
     "resources",
     "server",
+    "service-updater",
     "sound",
     "tools",
     "website"
