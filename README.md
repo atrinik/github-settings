@@ -282,7 +282,8 @@ Rollout is owned by an organization administrator:
    repository enablement, exact PR changes, and successful PR-bound current-head
    checks. These include configured CI, desired Dependency review for targeted
    repositories, and all effective ruleset and legacy branch-protection status
-   contexts, with trusted app identities. This proves current policy and PR-run
+   contexts, with trusted app identities. Legacy-check absence requires verified
+   protection evidence; bare or ambiguous 404 responses fail closed. This proves current policy and PR-run
    evidence; it does not attest historical organization settings.
    Ordinary subsequent publication uses that stored canary. It first converges
    selected mode, then allowed-action patterns, then revalidates the canary
@@ -315,6 +316,10 @@ read-only GraphQL query may instead prove that the identified active repository
 and exact existing branch have an explicitly null legacy-rule association.
 Missing, conflicting or unreadable evidence remains drift. Historical rules on
 other branches remain untouched. The audit never removes branch protections.
+
+Publisher identity, absence, update and retirement decisions use the complete
+validated ruleset inventory across all pages, including ordinary organization
+and repository rules. Unreadable pages cannot count as absent rules.
 
 Repository-scope retirement of an existing `03 - Required CI` rule also needs a
 reviewed `config/retired-required-ci.json` record with its exact repository and

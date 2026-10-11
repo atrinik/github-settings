@@ -9,6 +9,7 @@ temporary=$(mktemp -d)
 trap 'rm -rf "${temporary}"' EXIT
 sed -n '/^converge_organization_settings() {/,/^organization_metadata=/p' \
   "${source_root}/bin/publish" | sed '$d' >"${temporary}/functions.sh"
+sed -n '/^list_rulesets() {/,/^}/p' "${source_root}/bin/publish" >>"${temporary}/functions.sh"
 # shellcheck source=/dev/null
 source "${temporary}/functions.sh"
 root=${temporary}/fixture
@@ -128,7 +129,12 @@ assert_retained
 grep -Fq 'config/retired-required-ci.json' "${temporary}/output"
 reset_case
 printf '[{"id":3,"name":"03 - Required CI"},{"id":4,"name":"03 - Required CI"}]\n' >"${temporary}/list.json"
-assert_retained
+if publish_repository_rulesets >"${temporary}/output" 2>&1; then
+  echo 'expected ambiguous live ruleset inventory to fail' >&2
+  exit 1
+fi
+jq -se 'all(.[]; .method == "GET")' "${log}" >/dev/null
+grep -Fq 'ambiguous complete ruleset inventory' "${temporary}/output"
 reset_case
 printf '[{"id":4,"name":"03 - Required CI"}]\n' >"${temporary}/list.json"
 assert_retained

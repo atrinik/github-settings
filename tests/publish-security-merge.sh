@@ -18,6 +18,7 @@ cp "${source_root}/config/rulesets/"*.json "${root}/config/rulesets/"
 # live publication. Every API call is replaced below by a fail-closed mock.
 sed -n '/^converge_organization_settings() {/,/^organization_metadata=/p' \
   "${source_root}/bin/publish" | sed '$d' >"${temporary}/functions.sh"
+sed -n '/^list_rulesets() {/,/^}/p' "${source_root}/bin/publish" >>"${temporary}/functions.sh"
 # shellcheck source=/dev/null
 source "${temporary}/functions.sh"
 # Exercise the production scope dispatch, including its following gate call.

@@ -254,7 +254,10 @@
   enforcement. Enforced policy uses its stored proof to restore drift and fails
   if proof cannot be revalidated; audit reports disabled enforced policy as
   drift. Preserve existing true settings. Allow action names with `@*`; keep
-  full SHAs in producer workflows instead of duplicate pin catalogs.
+  full SHAs in producer workflows instead of duplicate pin catalogs. Canary
+  legacy-check absence requires verified protection evidence; a bare or
+  ambiguous 404 is unreadable. Enumerate and validate every ruleset page before
+  publisher identity, absence, update or retirement decisions.
 - Adoption of existing security gates into enforced source intent requires the
   effective default-branch API to prove the repository-owned ruleset and desired
   tool/context. Never infer activation from target membership or silently change

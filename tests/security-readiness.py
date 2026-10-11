@@ -307,10 +307,8 @@ class Fixture:
                     "repositories": copy.deepcopy(self.enabled_repositories)}
         if "/rules/branches/" in endpoint:
             return copy.deepcopy(self.effective_rules)
-        if endpoint.endswith("/protection/required_status_checks"):
-            if self.legacy_checks is None:
-                raise readiness.APIError(endpoint, 404)
-            return copy.deepcopy(self.legacy_checks)
+        if endpoint.endswith("/protection"):
+            return {"required_status_checks": copy.deepcopy(self.legacy_checks)}
         if "/actions/permissions/selected-actions" in endpoint:
             return copy.deepcopy(self.live)
         if "/pulls/12/files" in endpoint:
@@ -793,6 +791,131 @@ class ReadinessTests(unittest.TestCase):
         self.fixture.checks[HEAD].append(check("Legacy check", identifier=30))
         self.assertEqual(self.invoke("sha")[0], 0)
 
+    def legacy_error(self, message, status="404"):
+        def response(endpoint):
+            if endpoint.endswith("/protection"):
+                raise readiness.APIError(endpoint, 404, {"message": message, "status": status})
+            return self.fixture(endpoint)
+        return patch.object(readiness, "api", response)
+
+    def disabled_legacy_response(self):
+        return {"data": {"repository": {"databaseId": 42, "nameWithOwner": "atrinik/example",
+                "isArchived": False, "ref": {"name": "main", "branchProtectionRule": None}}}}
+
+    def test_sha_only_exact_unprotected_error_proves_absence(self):
+        for message, status, expected in (("Branch not protected", "404", 0),
+                ("Resource not found", "404", 2), ("Not Found", "404", 2),
+                ("Resource not accessible by integration", "404", 2),
+                ("Branch not protected", None, 2), ("Branch not protected", 404, 2)):
+            with self.subTest(message=message, status=status), self.legacy_error(message, status):
+                self.assertEqual(self.invoke("sha")[0], expected)
+
+    def test_sha_missing_or_malformed_full_protection_not_absence(self):
+        for value in ({}, [], None, {"required_status_checks": False},
+                {"required_status_checks": {}},
+                {"required_status_checks": {"checks": None, "contexts": []}},
+                {"required_status_checks": {"checks": [], "contexts": None}}):
+            def response(endpoint):
+                return value if endpoint.endswith("/protection") else self.fixture(endpoint)
+            with self.subTest(value=value), patch.object(readiness, "api", response):
+                self.assertEqual(self.invoke("sha")[0], 2)
+
+    def test_sha_disabled_legacy_requires_exact_readonly_identity_proof(self):
+        result = subprocess.CompletedProcess([], 0, stdout=json.dumps(self.disabled_legacy_response()), stderr="")
+        with self.legacy_error("Branch protection has been disabled on this repository."), \
+                patch.object(readiness.subprocess, "run", return_value=result) as mocked:
+            self.assertEqual(self.invoke("sha")[0], 0)
+        self.assertEqual(mocked.call_count, 2)
+        args = mocked.call_args.args[0]
+        self.assertEqual(args[args.index("--method") + 1], "POST")
+        self.assertIn("graphql", args)
+        self.assertIn("owner=atrinik", args)
+        self.assertIn("name=example", args)
+        self.assertIn("qualifiedName=refs/heads/main", args)
+        query = next(arg for arg in args if arg.startswith("query="))
+        self.assertTrue(query.startswith("query=query LegacyBranchProtection("))
+        self.assertNotIn("mutation", query)
+
+    def test_sha_disabled_legacy_ambiguous_identity_or_presence_rejected(self):
+        mutations = [lambda r: r.update(errors=[]),
+            lambda r: r["data"].update(repository=None),
+            lambda r: r["data"]["repository"].update(databaseId=43),
+            lambda r: r["data"]["repository"].update(databaseId=True),
+            lambda r: r["data"]["repository"].update(nameWithOwner="foreign/example"),
+            lambda r: r["data"]["repository"].update(isArchived=True),
+            lambda r: r["data"]["repository"].update(ref=None),
+            lambda r: r["data"]["repository"]["ref"].update(name="other"),
+            lambda r: r["data"]["repository"]["ref"].pop("branchProtectionRule"),
+            lambda r: r["data"]["repository"]["ref"].update(branchProtectionRule={"id": "rule"})]
+        for index, mutate in enumerate(mutations):
+            response = self.disabled_legacy_response()
+            mutate(response)
+            result = subprocess.CompletedProcess([], 0, stdout=json.dumps(response), stderr="")
+            with self.subTest(index=index), self.legacy_error("Branch protection has been disabled on this repository."), \
+                    patch.object(readiness.subprocess, "run", return_value=result):
+                self.assertEqual(self.invoke("sha")[0], 2)
+
+    def test_sha_disabled_legacy_unreadable_or_invalid_graphql_rejected(self):
+        for result in (subprocess.CompletedProcess([], 1, stdout="", stderr="denied"),
+                       subprocess.CompletedProcess([], 0, stdout="not json", stderr="")):
+            with self.subTest(result=result), self.legacy_error("Branch protection has been disabled on this repository."), \
+                    patch.object(readiness.subprocess, "run", return_value=result):
+                self.assertEqual(self.invoke("sha")[0], 2)
+
+    def test_sha_disabled_legacy_fresh_rest_identity_required(self):
+        for field, value in (("id", 43), ("full_name", "foreign/example"),
+                             ("default_branch", "other"), ("archived", True)):
+            count = 0
+            def response(endpoint):
+                nonlocal count
+                if endpoint.endswith("/protection"):
+                    raise readiness.APIError(endpoint, 404, {
+                        "message": "Branch protection has been disabled on this repository.", "status": "404"})
+                current = self.fixture(endpoint)
+                if endpoint == "repos/atrinik/example":
+                    count += 1
+                    if count > 1:
+                        current[field] = value
+                return current
+            with self.subTest(field=field), patch.object(readiness, "api", response), \
+                    patch.object(readiness.subprocess, "run") as mocked:
+                self.assertNotEqual(self.invoke("sha")[0], 0)
+                mocked.assert_not_called()
+
+    def test_sha_disabled_legacy_proof_rechecked_before_acceptance(self):
+        initial = self.disabled_legacy_response()
+        changed = copy.deepcopy(initial)
+        changed["data"]["repository"]["ref"]["branchProtectionRule"] = {"id": "new-rule"}
+        results = [subprocess.CompletedProcess([], 0, stdout=json.dumps(value), stderr="")
+                   for value in (initial, changed)]
+        with self.legacy_error("Branch protection has been disabled on this repository."), \
+                patch.object(readiness.subprocess, "run", side_effect=results):
+            self.assertEqual(self.invoke("sha")[0], 2)
+
+    def test_sha_full_legacy_checks_array_requires_all_bound_contexts(self):
+        self.fixture.legacy_checks = {"contexts": [], "checks": [
+            {"context": "Legacy check", "app_id": 15368},
+            {"context": "Second legacy check", "app_id": None}]}
+        self.assert_deferred("sha", "Legacy check")
+        self.fixture.checks[HEAD].append(check("Legacy check", identifier=30))
+        self.assert_deferred("sha", "Second legacy check")
+        self.fixture.checks[HEAD].append(check("Second legacy check", identifier=31))
+        self.assertEqual(self.invoke("sha")[0], 0)
+        self.fixture.checks[HEAD][-1]["conclusion"] = "failure"
+        self.assert_deferred("sha", "Second legacy check")
+
+    def test_sha_legacy_absence_must_remain_readable_at_final_fence(self):
+        count = 0
+        def response(endpoint):
+            nonlocal count
+            if endpoint.endswith("/protection"):
+                count += 1
+                if count > 1:
+                    raise readiness.APIError(endpoint, 404, {"message": "Not Found", "status": "404"})
+            return self.fixture(endpoint)
+        with patch.object(readiness, "api", response):
+            self.assertEqual(self.invoke("sha")[0], 2)
+
     def test_sha_non_actions_app_binding_never_satisfied_by_same_named_actions_check(self):
         self.fixture.effective_rules = [self.effective_check("Required checks", 999)]
         self.assert_deferred("sha", "non-Actions app")
@@ -808,7 +931,7 @@ class ReadinessTests(unittest.TestCase):
         self.assert_deferred("sha", "Required checks")
 
     def test_sha_effective_rule_or_legacy_changes_during_preflight_rejected(self):
-        for endpoint_part in ("/rules/branches/", "/protection/required_status_checks"):
+        for endpoint_part in ("/rules/branches/", "/protection"):
             with self.subTest(endpoint=endpoint_part):
                 count = 0
                 def drift(endpoint):
@@ -818,13 +941,13 @@ class ReadinessTests(unittest.TestCase):
                         if count > 1:
                             if "rules/branches" in endpoint:
                                 return [self.effective_check("New gate")]
-                            return {"contexts": ["New gate"], "checks": []}
+                            return {"required_status_checks": {"contexts": ["New gate"], "checks": []}}
                     return self.fixture(endpoint)
                 with patch.object(readiness, "api", drift):
                     self.assert_deferred("sha", "effective required checks changed")
 
     def test_sha_effective_rules_and_legacy_unreadable_fail_closed(self):
-        for endpoint_part in ("/rules/branches/", "/protection/required_status_checks"):
+        for endpoint_part in ("/rules/branches/", "/protection"):
             with self.subTest(endpoint=endpoint_part):
                 def unreadable(endpoint):
                     if endpoint_part in endpoint:
@@ -1824,6 +1947,17 @@ class ReadinessTests(unittest.TestCase):
         args = mocked.call_args.args[0]
         self.assertEqual(args[args.index("--method") + 1], "GET")
         self.assertIn("X-GitHub-Api-Version: 2026-03-10", args)
+
+    def test_api_error_retains_structured_response_without_printing_body(self):
+        self.api_patch.stop()
+        for body in ('{"message":"Branch not protected","status":"404"}', "not json", "null"):
+            result = subprocess.CompletedProcess([], 1, stdout=body, stderr="gh: error (HTTP 404)")
+            with self.subTest(body=body), patch.object(readiness.subprocess, "run", return_value=result):
+                with self.assertRaises(readiness.APIError) as raised:
+                    readiness.api("repos/atrinik/example/branches/main/protection")
+                self.assertEqual(raised.exception.status, 404)
+                self.assertEqual(raised.exception.response, json.loads(body) if body != "not json" else None)
+                self.assertNotIn(body, str(raised.exception))
 
     def test_executable_wrapper_is_bash_and_delegates_python(self):
         wrapper = ROOT / "bin/security-readiness"

@@ -40,8 +40,9 @@ class EvidenceError(Exception):
 
 
 class APIError(EvidenceError):
-    def __init__(self, endpoint, status=None):
+    def __init__(self, endpoint, status=None, response=None):
         self.status = status
+        self.response = response
         super().__init__(f"API unreadable: {endpoint.split('?')[0]}"
                          + (f" (HTTP {status})" if status else ""))
 
@@ -58,7 +59,11 @@ def api(endpoint):
         raise APIError(endpoint) from exc
     if result.returncode:
         status = re.search(r"HTTP (\d{3})", result.stderr)
-        raise APIError(endpoint, int(status[1]) if status else None)
+        try:
+            response = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            response = None
+        raise APIError(endpoint, int(status[1]) if status else None, response)
     try:
         return json.loads(result.stdout)
     except json.JSONDecodeError as exc:
@@ -447,21 +452,77 @@ def canary_actions_policy(coordinate, metadata):
             "repository": repository_policy, "selected": selected}
 
 
-def canary_required_checks(coordinate, branch):
+def disabled_legacy_absent(coordinate, metadata):
+    """Prove absence only for the exact REST repository-disabled response."""
+    branch = metadata["default_branch"]
+    fresh = repository(coordinate)
+    if (type(metadata["id"]) is not int or metadata["id"] <= 0
+            or fresh["id"] != metadata["id"] or type(fresh["id"]) is not int
+            or fresh["full_name"] != coordinate or metadata["full_name"] != coordinate
+            or fresh["default_branch"] != branch):
+        raise EvidenceError("legacy protection repository identity/default branch changed")
+    # This fixed query is read-only. GraphQL requires POST; variables remain
+    # separate literal fields and cannot add operations to the query.
+    query = ("query LegacyBranchProtection($owner: String!, $name: String!, $qualifiedName: String!) "
+             "{ repository(owner: $owner, name: $name) { databaseId nameWithOwner isArchived "
+             "ref(qualifiedName: $qualifiedName) { name branchProtectionRule { id } } } }")
+    owner, name = coordinate.split("/")
+    try:
+        result = subprocess.run(
+            ["gh", "api", "--method", "POST", "-H", f"X-GitHub-Api-Version: {VERSION}",
+             "graphql", "-f", f"query={query}", "-f", f"owner={owner}", "-f", f"name={name}",
+             "-f", f"qualifiedName=refs/heads/{branch}"],
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise EvidenceError("legacy protection GraphQL unreadable") from exc
+    if result.returncode:
+        raise EvidenceError("legacy protection GraphQL unreadable")
+    try:
+        response = json.loads(result.stdout)
+        repo = response["data"]["repository"]
+        ref = repo["ref"]
+        valid = ("errors" not in response and type(repo["databaseId"]) is int
+                 and repo["databaseId"] == metadata["id"] and repo["nameWithOwner"] == coordinate
+                 and repo["isArchived"] is False and ref["name"] == branch
+                 and "branchProtectionRule" in ref and ref["branchProtectionRule"] is None)
+    except (json.JSONDecodeError, KeyError, TypeError):
+        valid = False
+    if not valid:
+        raise EvidenceError("legacy protection absence not proven for repository/default branch")
+
+
+def canary_legacy_checks(coordinate, metadata):
+    branch = quote(metadata["default_branch"], safe="")
+    try:
+        protection = api(f"repos/{coordinate}/branches/{branch}/protection")
+    except APIError as exc:
+        body = exc.response
+        if exc.status != 404 or not isinstance(body, dict) or body.get("status") != "404":
+            raise
+        if body.get("message") == "Branch not protected":
+            return None
+        if body.get("message") == "Branch protection has been disabled on this repository.":
+            disabled_legacy_absent(coordinate, metadata)
+            return None
+        raise
+    if not isinstance(protection, dict) or "required_status_checks" not in protection:
+        raise EvidenceError("legacy branch protection malformed")
+    return protection["required_status_checks"]
+
+
+def canary_required_checks(coordinate, metadata):
+    branch = metadata["default_branch"]
     rules = pages(f"repos/{coordinate}/rules/branches/{quote(branch, safe='')}")
     entries = []
     for rule in rules:
         if rule["type"] == "required_status_checks":
             entries.extend((item["context"], item["integration_id"])
                            for item in rule["parameters"]["required_status_checks"])
-    try:
-        legacy = api(f"repos/{coordinate}/branches/{quote(branch, safe='')}/protection/required_status_checks")
-    except APIError as exc:
-        if exc.status != 404:
-            raise
-        legacy = None
+    legacy = canary_legacy_checks(coordinate, metadata)
     if legacy is not None:
-        if (not isinstance(legacy["checks"], list) or not isinstance(legacy["contexts"], list)
+        if (not isinstance(legacy, dict) or not isinstance(legacy["checks"], list)
+                or not isinstance(legacy["contexts"], list)
                 or not all(isinstance(value, str) and value for value in legacy["contexts"])):
             raise EvidenceError("legacy required status checks malformed")
         entries.extend((item["context"], item["app_id"]) for item in legacy["checks"])
@@ -494,7 +555,7 @@ def sha(coordinate, number):
     require(bool(SHA.fullmatch(pr["head"]["sha"])), "canary head SHA missing")
     actions_policy = canary_actions_policy(coordinate, metadata)
     selected = config("actions-selected.json")
-    required, required_evidence = canary_required_checks(coordinate, metadata["default_branch"])
+    required, required_evidence = canary_required_checks(coordinate, metadata)
     files = pages(f"repos/{coordinate}/pulls/{number}/files")
     require(bool(files) and len(files) == pr["changed_files"], "canary file evidence incomplete")
     updates = 0
@@ -593,7 +654,7 @@ def sha(coordinate, number):
             and (fresh["merged"] or not fresh["draft"]), "canary changed during preflight")
     require(canary_actions_policy(coordinate, metadata) == actions_policy,
             "live Actions permissions changed during preflight")
-    require(canary_required_checks(coordinate, metadata["default_branch"])
+    require(canary_required_checks(coordinate, metadata)
             == (required, required_evidence), "effective required checks changed during preflight")
     fresh_metadata = repository(coordinate)
     require(fresh_metadata["default_branch"] == metadata["default_branch"]

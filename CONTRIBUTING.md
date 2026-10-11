@@ -157,6 +157,10 @@ not pending rollout; ordinary publication revalidates the recorded proof before
 restoring it. Test rule retirement, effective default-branch applicability, and
 repository workflow permission overrides. Action allowances use owner/action wildcards;
 full commit pins belong in workflows, not redundant version assertions.
+Canary legacy-check absence requires verified protection evidence; bare or
+ambiguous 404 responses fail closed. Publisher identity and absence decisions
+require a complete validated ruleset inventory across all pages, including
+retirement and ordinary repository/organization rules.
 
 Advanced CodeQL readiness must validate executable YAML wiring from classifier
 invocation and outputs through the dynamic analysis matrix, scoped generated

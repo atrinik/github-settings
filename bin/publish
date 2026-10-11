@@ -74,6 +74,31 @@ github_api() {
   gh api -H "X-GitHub-Api-Version: ${api_version}" "$@"
 }
 
+# Capture every page before any caller treats a ruleset as present or absent.
+# gh 2.46 emits one JSON array per page; --slurp is unavailable on that host.
+list_rulesets() {
+  local endpoint=$1 pages
+  pages=$(github_api "${endpoint}" --paginate) || {
+    echo "error: cannot read complete ruleset inventory: ${endpoint}" >&2
+    return 1
+  }
+  jq -ecs '
+    if length > 0 and all(.[];
+      type == "array" and all(.[];
+        type == "object" and
+        (.id | type == "number" and . > 0 and floor == .) and
+        (.name | type == "string" and length > 0))) then
+      add |
+      if (map(.id) | length == (unique | length)) and
+         (map(.name) | length == (unique | length)) then .
+      else error("duplicate ruleset identity or name") end
+    else error("invalid ruleset page") end
+  ' <<<"${pages}" || {
+    echo "error: invalid or ambiguous complete ruleset inventory: ${endpoint}" >&2
+    return 1
+  }
+}
+
 run_api() {
   local method=$1
   local endpoint=$2
@@ -177,7 +202,7 @@ retire_maintenance_branch_ruleset() {
     exit 1
   fi
 
-  rulesets=$(github_api "orgs/${organization}/rulesets")
+  rulesets=$(list_rulesets "orgs/${organization}/rulesets") || return 1
   while IFS=$'\t' read -r preserved_id preserved_name; do
     if ! jq -e --argjson id "${preserved_id}" --arg name "${preserved_name}" '
       any(.[]; .id == $id and .name == $name and .enforcement == "active")
@@ -250,7 +275,7 @@ retire_maintenance_branch_ruleset() {
   run_api DELETE "orgs/${organization}/rulesets/${ruleset_id}"
 
   if ${apply}; then
-    rulesets=$(github_api "orgs/${organization}/rulesets")
+    rulesets=$(list_rulesets "orgs/${organization}/rulesets") || return 1
     if jq -e --argjson id "${ruleset_id}" 'any(.[]; .id == $id)' \
       <<<"${rulesets}" >/dev/null; then
       echo "error: retirement ruleset still exists after apply" >&2
@@ -346,13 +371,11 @@ is_temporary_security_advisory_repository() {
 upsert_repository_ruleset() {
   local repository=$1
   local input=$2
-  local name id
+  local name id rulesets
 
   name=$(jq -r '.name' "${input}")
-  id=$(
-    github_api "repos/${organization}/${repository}/rulesets?includes_parents=false" |
-      jq -r --arg name "${name}" 'map(select(.name == $name))[0].id // empty'
-  )
+  rulesets=$(list_rulesets "repos/${organization}/${repository}/rulesets?includes_parents=false") || return 1
+  id=$(jq -r --arg name "${name}" 'map(select(.name == $name))[0].id // empty' <<<"${rulesets}")
 
   if [[ -n ${id} ]]; then
     run_api PUT "repos/${organization}/${repository}/rulesets/${id}" "${input}"
@@ -363,13 +386,11 @@ upsert_repository_ruleset() {
 
 upsert_organization_ruleset() {
   local input=$1
-  local name id
+  local name id rulesets
 
   name=$(jq -r '.name' "${input}")
-  id=$(
-    github_api "orgs/${organization}/rulesets" |
-      jq -r --arg name "${name}" 'map(select(.name == $name))[0].id // empty'
-  )
+  rulesets=$(list_rulesets "orgs/${organization}/rulesets") || return 1
+  id=$(jq -r --arg name "${name}" 'map(select(.name == $name))[0].id // empty' <<<"${rulesets}")
 
   if [[ -n ${id} ]]; then
     run_api PUT "orgs/${organization}/rulesets/${id}" "${input}"
@@ -475,9 +496,10 @@ maintenance_ruleset_is_desired() {
 }
 
 delete_stale_repository_maintenance_rulesets() {
-  local repository ruleset name id
+  local repository ruleset name id rulesets
 
   for repository in "${active_repositories[@]}"; do
+    rulesets=$(list_rulesets "repos/${organization}/${repository}/rulesets?includes_parents=false") || return 1
     while IFS= read -r ruleset; do
       name=$(jq -r '.name' <<<"${ruleset}")
       id=$(jq -r '.id' <<<"${ruleset}")
@@ -485,24 +507,21 @@ delete_stale_repository_maintenance_rulesets() {
         continue
       fi
       if ! maintenance_ruleset_is_desired "${repository}" "${name}"; then
-        run_api DELETE "repos/${organization}/${repository}/rulesets/${id}"
+        run_api DELETE "repos/${organization}/${repository}/rulesets/${id}" || return 1
       fi
-    done < <(
-      github_api \
-        "repos/${organization}/${repository}/rulesets?includes_parents=false" |
-        jq -c '.[]'
-    )
+    done < <(jq -c '.[]' <<<"${rulesets}")
   done
 }
 
 delete_stale_repository_advisory_rulesets() {
-  local repository ruleset name id window_active
+  local repository ruleset name id window_active rulesets
 
   while IFS= read -r repository; do
     window_active=false
     if repository_has_advisory_merge_window "${repository}"; then
       window_active=true
     fi
+    rulesets=$(list_rulesets "repos/${organization}/${repository}/rulesets?includes_parents=false") || return 1
     while IFS= read -r ruleset; do
       name=$(jq -r '.name' <<<"${ruleset}")
       id=$(jq -r '.id' <<<"${ruleset}")
@@ -512,7 +531,7 @@ delete_stale_repository_advisory_rulesets() {
           "01 - Default branch linear history" | \
           "02 - Changes through pull requests")
           run_api DELETE \
-            "repos/${organization}/${repository}/rulesets/${id}"
+            "repos/${organization}/${repository}/rulesets/${id}" || return 1
           ;;
         esac
       else
@@ -521,22 +540,19 @@ delete_stale_repository_advisory_rulesets() {
           "01 - Default branch linear history - ${repository}" | \
           "02 - Changes through pull requests - ${repository}")
           run_api DELETE \
-            "repos/${organization}/${repository}/rulesets/${id}"
+            "repos/${organization}/${repository}/rulesets/${id}" || return 1
           ;;
         esac
       fi
-    done < <(
-      github_api \
-        "repos/${organization}/${repository}/rulesets?includes_parents=false" |
-        jq -c '.[]'
-    )
+    done < <(jq -c '.[]' <<<"${rulesets}")
   done < <(jq -r '.pull_request_gate[]' "${repositories_config}")
 }
 
 delete_managed_repository_rulesets() {
   local repository=$1
-  local ruleset name id
+  local ruleset name id rulesets
 
+  rulesets=$(list_rulesets "repos/${organization}/${repository}/rulesets?includes_parents=false") || return 1
   while IFS= read -r ruleset; do
     name=$(jq -r '.name' <<<"${ruleset}")
     id=$(jq -r '.id' <<<"${ruleset}")
@@ -550,18 +566,16 @@ delete_managed_repository_rulesets() {
       "03 - Required CI" | \
       "04 - Immutable release tags" | \
       "05 - Maintenance branch - "*)
-      run_api DELETE "repos/${organization}/${repository}/rulesets/${id}"
+      run_api DELETE "repos/${organization}/${repository}/rulesets/${id}" || return 1
       ;;
     esac
-  done < <(
-    github_api "repos/${organization}/${repository}/rulesets?includes_parents=false" |
-      jq -c '.[]'
-  )
+  done < <(jq -c '.[]' <<<"${rulesets}")
 }
 
 delete_managed_organization_rulesets() {
-  local ruleset name id
+  local ruleset name id rulesets
 
+  rulesets=$(list_rulesets "orgs/${organization}/rulesets") || return 1
   while IFS= read -r ruleset; do
     name=$(jq -r '.name' <<<"${ruleset}")
     id=$(jq -r '.id' <<<"${ruleset}")
@@ -575,10 +589,10 @@ delete_managed_organization_rulesets() {
       "04 - Immutable release tags" | \
       "03 - Required CI - "* | \
       "05 - Maintenance branch - "*)
-      run_api DELETE "orgs/${organization}/rulesets/${id}"
+      run_api DELETE "orgs/${organization}/rulesets/${id}" || return 1
       ;;
     esac
-  done < <(github_api "orgs/${organization}/rulesets" | jq -c '.[]')
+  done < <(jq -c '.[]' <<<"${rulesets}")
 }
 
 retired_required_ci_matches() {
@@ -596,7 +610,7 @@ delete_retired_repository_required_ci() {
       "${repositories_config}" >/dev/null; then
       continue
     fi
-    listed=$(github_api "repos/${organization}/${repository}/rulesets?includes_parents=false")
+    listed=$(list_rulesets "repos/${organization}/${repository}/rulesets?includes_parents=false") || return 1
     listed=$(jq -c '[.[] | select(.name == "03 - Required CI")]' <<<"${listed}")
     [[ $(jq length <<<"${listed}") != 0 ]] || continue
     record=$(jq -c --arg repository "${repository}" \
@@ -617,12 +631,12 @@ delete_retired_repository_required_ci() {
       .rules[0].parameters.required_status_checks =
         ($record.required_ci | map({context: ., integration_id: 15368}))
     ' "${root}/config/rulesets/required-ci.json" >"${template}"
-    current=$(github_api "repos/${organization}/${repository}/rulesets/${id}")
+    current=$(github_api "repos/${organization}/${repository}/rulesets/${id}") || return 1
     if ! retired_required_ci_matches "${repository}" "${id}" "${template}" "${current}"; then
       echo "SKIP ${organization}/${repository} 03 - Required CI: modified or foreign rule; retained"
       continue
     fi
-    metadata=$(github_api "repos/${organization}/${repository}")
+    metadata=$(github_api "repos/${organization}/${repository}") || return 1
     if ! jq -e --argjson record "${record}" --argjson enumerated "${active_repository_ids["${repository}"]}" \
       --arg full_name "${organization}/${repository}" '
       .id == $record.repository_id and .id == $enumerated and
@@ -631,12 +645,12 @@ delete_retired_repository_required_ci() {
       echo "SKIP ${organization}/${repository} 03 - Required CI: repository identity or archive state changed; retained"
       continue
     fi
-    fresh=$(github_api "repos/${organization}/${repository}/rulesets/${id}")
+    fresh=$(github_api "repos/${organization}/${repository}/rulesets/${id}") || return 1
     if ! retired_required_ci_matches "${repository}" "${id}" "${template}" "${fresh}"; then
       echo "SKIP ${organization}/${repository} 03 - Required CI: rule changed during retirement preflight; retained"
       continue
     fi
-    run_api DELETE "repos/${organization}/${repository}/rulesets/${id}"
+    run_api DELETE "repos/${organization}/${repository}/rulesets/${id}" || return 1
   done
 }
 
@@ -651,7 +665,7 @@ publish_repository_rulesets() {
       ruleset_config=${root}/config/rulesets/default-branch-linear-history-classic.json
     fi
     upsert_repository_ruleset "${repository}" \
-      "${ruleset_config}"
+      "${ruleset_config}" || return 1
   done
 
   for repository in "${active_repositories[@]}"; do
@@ -660,7 +674,7 @@ publish_repository_rulesets() {
       ruleset_config=${root}/config/rulesets/default-branch-integrity-classic.json
     fi
     upsert_repository_ruleset "${repository}" \
-      "${ruleset_config}"
+      "${ruleset_config}" || return 1
   done
 
   while IFS= read -r repository; do
@@ -669,7 +683,7 @@ publish_repository_rulesets() {
       ruleset_config=${root}/config/rulesets/pull-request-gate-classic.json
     fi
     upsert_repository_ruleset "${repository}" \
-      "${ruleset_config}"
+      "${ruleset_config}" || return 1
   done < <(jq -r '.pull_request_gate[]' "${repositories_config}")
 
   while IFS= read -r repository; do
@@ -690,12 +704,12 @@ publish_repository_rulesets() {
           ($repositories[0].required_ci[$repository] |
            map({context: ., integration_id: $app_id}))
       ' "${root}/config/rulesets/required-ci.json" >"${ci_payload}"
-    upsert_repository_ruleset "${repository}" "${ci_payload}"
+    upsert_repository_ruleset "${repository}" "${ci_payload}" || return 1
   done < <(jq -r '.required_ci | keys[]' "${repositories_config}")
 
   while IFS= read -r repository; do
     upsert_repository_ruleset "${repository}" \
-      "${root}/config/rulesets/immutable-release-tags.json"
+      "${root}/config/rulesets/immutable-release-tags.json" || return 1
   done < <(jq -r '.release_tags[]' "${repositories_config}")
 
   while IFS= read -r maintenance; do
@@ -705,22 +719,22 @@ publish_repository_rulesets() {
     input=$(make_maintenance_ruleset \
       "${repository}" "${branch}" "${required_ci}" repository)
     temporary_files+=("${input}")
-    upsert_repository_ruleset "${repository}" "${input}"
+    upsert_repository_ruleset "${repository}" "${input}" || return 1
   done < <(jq -c '.maintenance_branches[]' "${repositories_config}")
 
-  delete_retired_repository_required_ci
-  delete_stale_repository_maintenance_rulesets
-  delete_stale_repository_advisory_rulesets
+  delete_retired_repository_required_ci || return 1
+  delete_stale_repository_maintenance_rulesets || return 1
+  delete_stale_repository_advisory_rulesets || return 1
 
   if [[ ${organization_plan} != free ]]; then
-    delete_managed_organization_rulesets
+    delete_managed_organization_rulesets || return 1
   fi
 }
 
 publish_organization_rulesets() {
   local input repository ci_payload maintenance branch required_ci
   local -a desired_rulesets
-  local repositories ruleset name id desired
+  local repositories ruleset name id desired rulesets
 
   desired_rulesets=(
     "01 - Default branch integrity"
@@ -741,12 +755,12 @@ publish_organization_rulesets() {
       "${root}/config/rulesets/default-branch-integrity-classic.json" \
       "01 - Default branch integrity - classic" '["classic"]')
     temporary_files+=("${input}")
-    upsert_organization_ruleset "${input}"
+    upsert_organization_ruleset "${input}" || return 1
     input=$(make_organization_ruleset \
       "${root}/config/rulesets/default-branch-linear-history-classic.json" \
       "01 - Default branch linear history - classic" '["classic"]')
     temporary_files+=("${input}")
-    upsert_organization_ruleset "${input}"
+    upsert_organization_ruleset "${input}" || return 1
   fi
 
   repositories=$(jq -c '.repositories' "${advisory_merge_windows_config}")
@@ -755,13 +769,13 @@ publish_organization_rulesets() {
     "${root}/config/rulesets/default-branch-linear-history.json" \
     "01 - Default branch linear history" '["~ALL"]' "${repositories}")
   temporary_files+=("${input}")
-  upsert_organization_ruleset "${input}"
+  upsert_organization_ruleset "${input}" || return 1
 
   input=$(make_organization_ruleset \
     "${root}/config/rulesets/default-branch-integrity.json" \
     "01 - Default branch integrity" '["~ALL"]' "${repositories}")
   temporary_files+=("${input}")
-  upsert_organization_ruleset "${input}"
+  upsert_organization_ruleset "${input}" || return 1
 
   # Establish the Classic-specific policy before excluding it from the shared
   # pull-request policy.
@@ -770,7 +784,7 @@ publish_organization_rulesets() {
       "${root}/config/rulesets/pull-request-gate-classic.json" \
       "02 - Changes through pull requests - classic" '["classic"]')
     temporary_files+=("${input}")
-    upsert_organization_ruleset "${input}"
+    upsert_organization_ruleset "${input}" || return 1
   fi
 
   repositories=$(jq -c \
@@ -781,14 +795,14 @@ publish_organization_rulesets() {
     "${root}/config/rulesets/pull-request-gate.json" \
     "02 - Changes through pull requests" "${repositories}")
   temporary_files+=("${input}")
-  upsert_organization_ruleset "${input}"
+  upsert_organization_ruleset "${input}" || return 1
 
   repositories=$(jq -c '.release_tags' "${repositories_config}")
   input=$(make_organization_ruleset \
     "${root}/config/rulesets/immutable-release-tags.json" \
     "04 - Immutable release tags" "${repositories}")
   temporary_files+=("${input}")
-  upsert_organization_ruleset "${input}"
+  upsert_organization_ruleset "${input}" || return 1
 
   while IFS= read -r repository; do
     name="03 - Required CI - ${repository}"
@@ -817,7 +831,7 @@ publish_organization_rulesets() {
           ($repositories[0].required_ci[$repository] |
            map({context: ., integration_id: $app_id}))
       ' "${root}/config/rulesets/required-ci.json" >"${ci_payload}"
-    upsert_organization_ruleset "${ci_payload}"
+    upsert_organization_ruleset "${ci_payload}" || return 1
   done < <(jq -r '.required_ci | keys[]' "${repositories_config}")
 
   while IFS= read -r maintenance; do
@@ -829,9 +843,10 @@ publish_organization_rulesets() {
     input=$(make_maintenance_ruleset \
       "${repository}" "${branch}" "${required_ci}" organization)
     temporary_files+=("${input}")
-    upsert_organization_ruleset "${input}"
+    upsert_organization_ruleset "${input}" || return 1
   done < <(jq -c '.maintenance_branches[]' "${repositories_config}")
 
+  rulesets=$(list_rulesets "orgs/${organization}/rulesets") || return 1
   while IFS= read -r ruleset; do
     name=$(jq -r '.name' <<<"${ruleset}")
     id=$(jq -r '.id' <<<"${ruleset}")
@@ -853,12 +868,12 @@ publish_organization_rulesets() {
       fi
     done
     if ! ${desired}; then
-      run_api DELETE "orgs/${organization}/rulesets/${id}"
+      run_api DELETE "orgs/${organization}/rulesets/${id}" || return 1
     fi
-  done < <(github_api "orgs/${organization}/rulesets" | jq -c '.[]')
+  done < <(jq -c '.[]' <<<"${rulesets}")
 
   for repository in "${active_repositories[@]}"; do
-    delete_managed_repository_rulesets "${repository}"
+    delete_managed_repository_rulesets "${repository}" || return 1
   done
 }
 
@@ -1212,7 +1227,7 @@ delete_removed_security_merge_rulesets() {
         template=${root}/config/rulesets/dependency-review.json
       fi
       name=$(jq -r '.name' "${template}")
-      existing=$(github_api "repos/${organization}/${repository}/rulesets?includes_parents=false") || return 1
+      existing=$(list_rulesets "repos/${organization}/${repository}/rulesets?includes_parents=false") || return 1
       while IFS= read -r rule; do
         id=$(jq -r '.id' <<<"${rule}")
         current=$(github_api "repos/${organization}/${repository}/rulesets/${id}") || return 1
@@ -1267,8 +1282,8 @@ publish_security_merge_rulesets() {
         echo "error: invalid security gate activation intent: ${repository} ${kind}" >&2
         return 1
       }
-      existing=$(github_api \
-        "repos/${organization}/${repository}/rulesets?includes_parents=false")
+      existing=$(list_rulesets \
+        "repos/${organization}/${repository}/rulesets?includes_parents=false") || return 1
       if ! jq -e --arg name "${name}" \
         '[.[] | select(.name == $name)] | length <= 1' <<<"${existing}" >/dev/null; then
         echo "error: ambiguous managed ruleset ${name} on ${repository}" >&2
