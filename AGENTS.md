@@ -234,6 +234,12 @@
   deleted or producers fail; audit fails on absence and publication restores
   protection without fresh initial qualification. Keep
   aggregate checks, zero approvals, and owner pull-request-only bypass intact.
+- Advanced CodeQL readiness parses executable YAML with the declared validation
+  dependency: bind classification outputs, matrix, scoped config, official
+  full-SHA init/analyze actions, and the always-running aggregate. Reject
+  duplicate keys, disconnected or disabled steps, and failure suppression.
+  Producer helpers remain trusted; preserve owner-controlled action updates,
+  category names and paths without a duplicate version/path catalog.
 - `config/actions-sha-pinning.json` persists SHA rollout as `pending` with no
   canary or `enforced` with an accepted PR coordinate. Promote it through normal
   source review only after ordinary PR-bound action-update evidence passes.
@@ -249,3 +255,8 @@
   lose only exact repository-owned managed security rules;
   preserve archived, foreign, and modified same-name rules. Keep repository
   workflow overrides read-only and unable to approve PRs, with delta-aware writes.
+- Repository-scope `03 - Required CI` retirement requires reviewed exact prior
+  repository/ruleset IDs and contexts in `config/retired-required-ci.json`.
+  Delete only the unchanged Actions-bound template after fresh identity/archive
+  and payload checks. Preserve modified/foreign rules and missing-provenance
+  rules with actionable `SKIP`; retain records for idempotent reruns.

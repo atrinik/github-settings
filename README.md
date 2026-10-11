@@ -209,6 +209,17 @@ for those Dependabot PRs; it does not inherit those CodeQL exceptions. CodeQL me
 on the alert's affected lines appearing in the PR diff. Ordinary quality alerts
 remain excluded by `alerts_threshold: none`.
 
+Classic readiness parses the executable workflow with the declared PyYAML
+validation dependency. It binds classification outputs to the analysis matrix,
+regenerates each selected scope's configuration, and follows that output into
+the official CodeQL initialization and analysis steps and the always-running
+validation aggregate. Disabled steps, failure suppression, disconnected inputs,
+and ambiguous YAML fail closed. The current producer uses `build-mode: none`;
+full-SHA action updates remain producer-owned, and classifier source owns path
+selection and category names. This structural check trusts repository writers
+and their Python helpers; it does not attest that arbitrary writer-controlled
+classifier or aggregate code behaves honestly. It adds no approval requirement.
+
 Rollout is owned by an organization administrator:
 
 1. Merge the dependency workflow PRs and let ordinary pull requests prove their
@@ -254,6 +265,10 @@ Rollout is owned by an organization administrator:
    contract is `config/actions-sha-pinning.json`: the initial `pending` phase
    has no accepted canary and never enables the field. Verify an ordinary
    action-pin update PR with `bin/security-readiness sha OWNER/REPOSITORY/PR`.
+   Qualifying changes update action pins only. Reusable workflow references are
+   [excluded from GitHub's action SHA enforcement](https://docs.github.com/en/organizations/managing-organization-settings/disabling-or-limiting-github-actions-for-your-organization), so changing one cannot qualify
+   a canary, even alongside an action update. Unchanged reusable references and
+   real action subpaths remain supported.
    The optional publisher `--sha-pinning-canary` argument only reports readiness
    while pending. After successful PR evidence, promote the source to
    `{"phase":"enforced","canary":"OWNER/REPOSITORY/PR"}` through the normal
@@ -274,6 +289,16 @@ Rollout is owned by an organization administrator:
    as drift, never as initial rollout pending. A live true setting is always
    preserved. Full SHA pinning does not prove an allowed action is trustworthy.
 
+Repository-scope retirement of an existing `03 - Required CI` rule also needs a
+reviewed `config/retired-required-ci.json` record with its exact repository and
+ruleset IDs and previous required contexts. Remove the repository from
+`required_ci` and both security target/activation inventories in the same source
+change. Publication deletes only the unchanged GitHub Actions-bound template
+after fresh repository identity, archive-state and rule-payload checks. Missing
+provenance or modified/foreign rules are retained with an actionable `SKIP`;
+keep retirement records for idempotent reruns. This does not delete branches or
+ordinary branch protections.
+
 Read-only preflight failures and unfinished producers are explicit pending
 controls, never successful rollout evidence. The audit reports pending controls
 separately and rejects unreadable evidence. No paid subscription is introduced.
@@ -283,8 +308,10 @@ merges. Do not remove a gate merely because a vulnerable PR fails it.
 
 ## Usage
 
-Requirements: `git`, `gh`, `jq`, `python3`, and an authenticated organization-owner
-account.
+Requirements: `git`, `gh`, `jq`, `python3`, the packages in
+`requirements-validation.txt`, and an authenticated organization-owner account.
+Install the declared validation dependencies before local publisher, audit, or
+advanced CodeQL readiness checks; the owning workflows install them too.
 
 ```sh
 gh auth refresh -h github.com -s admin:org,project,repo

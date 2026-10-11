@@ -216,6 +216,26 @@ jq -e '
     ($branches | length) == ($branches | unique | length))
 ' "${repositories_config}" >/dev/null
 
+jq -e --slurpfile repositories "${repositories_config}" '
+  (keys == ["retirements"]) and (.retirements | type == "array") and
+  all(.retirements[];
+    (keys == ["repository", "repository_id", "required_ci", "ruleset_id"]) and
+    (.repository | type == "string" and length > 0) and
+    (.repository_id | type == "number" and floor == . and . > 0) and
+    (.ruleset_id | type == "number" and floor == . and . > 0) and
+    (.required_ci | type == "array" and length > 0) and
+    all(.required_ci[]; type == "string" and test("[^[:space:]]")) and
+    ((.required_ci | length) == (.required_ci | unique | length)) and
+    (.repository as $repository |
+      ($repositories[0].required_ci | has($repository) | not) and
+      ($repositories[0].pull_request_gate | index($repository)) != null and
+      ($repositories[0].archive | index($repository)) == null)
+  ) and
+  ((.retirements | map(.repository) | length) == (.retirements | map(.repository) | unique | length)) and
+  ((.retirements | map(.repository_id) | length) == (.retirements | map(.repository_id) | unique | length)) and
+  ((.retirements | map(.ruleset_id) | length) == (.retirements | map(.ruleset_id) | unique | length))
+' "${root}/config/retired-required-ci.json" >/dev/null
+
 jq -e \
   --slurpfile repositories "${repositories_config}" '
     (keys == ["retirements"]) and

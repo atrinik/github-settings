@@ -581,6 +581,65 @@ delete_managed_organization_rulesets() {
   done < <(github_api "orgs/${organization}/rulesets" | jq -c '.[]')
 }
 
+retired_required_ci_matches() {
+  local repository=$1 id=$2 template=$3 current=$4
+  jq -e --argjson id "${id}" --arg source "${organization}/${repository}" '
+    .id == $id and .source_type == "Repository" and .source == $source
+  ' <<<"${current}" >/dev/null && security_ruleset_matches "${template}" "${current}"
+}
+
+delete_retired_repository_required_ci() {
+  local repository listed record id template current metadata fresh
+  for repository in "${active_repositories[@]}"; do
+    [[ -v active_repository_ids["${repository}"] ]] || continue
+    if jq -e --arg repository "${repository}" '.required_ci | has($repository)' \
+      "${repositories_config}" >/dev/null; then
+      continue
+    fi
+    listed=$(github_api "repos/${organization}/${repository}/rulesets?includes_parents=false")
+    listed=$(jq -c '[.[] | select(.name == "03 - Required CI")]' <<<"${listed}")
+    [[ $(jq length <<<"${listed}") != 0 ]] || continue
+    record=$(jq -c --arg repository "${repository}" \
+      '[.retirements[] | select(.repository == $repository)]' "${root}/config/retired-required-ci.json")
+    if [[ $(jq length <<<"${listed}") != 1 || $(jq length <<<"${record}") != 1 ]]; then
+      echo "SKIP ${organization}/${repository} 03 - Required CI: retained; requires one reviewed config/retired-required-ci.json record and unique live rule"
+      continue
+    fi
+    record=$(jq -c '.[0]' <<<"${record}")
+    id=$(jq -r '.ruleset_id' <<<"${record}")
+    if ! jq -e --argjson id "${id}" '.[0].id == $id' <<<"${listed}" >/dev/null; then
+      echo "SKIP ${organization}/${repository} 03 - Required CI: recorded ruleset identity differs; retained"
+      continue
+    fi
+    template=$(mktemp)
+    temporary_files+=("${template}")
+    jq --argjson record "${record}" '
+      .rules[0].parameters.required_status_checks =
+        ($record.required_ci | map({context: ., integration_id: 15368}))
+    ' "${root}/config/rulesets/required-ci.json" >"${template}"
+    current=$(github_api "repos/${organization}/${repository}/rulesets/${id}")
+    if ! retired_required_ci_matches "${repository}" "${id}" "${template}" "${current}"; then
+      echo "SKIP ${organization}/${repository} 03 - Required CI: modified or foreign rule; retained"
+      continue
+    fi
+    metadata=$(github_api "repos/${organization}/${repository}")
+    if ! jq -e --argjson record "${record}" --argjson enumerated "${active_repository_ids["${repository}"]}" \
+      --arg full_name "${organization}/${repository}" '
+      .id == $record.repository_id and .id == $enumerated and
+      .full_name == $full_name and .archived == false
+    ' <<<"${metadata}" >/dev/null; then
+      echo "SKIP ${organization}/${repository} 03 - Required CI: repository identity or archive state changed; retained"
+      continue
+    fi
+    fresh=$(github_api "repos/${organization}/${repository}/rulesets/${id}")
+    if ! retired_required_ci_matches "${repository}" "${id}" "${template}" "${fresh}"; then
+      echo "SKIP ${organization}/${repository} 03 - Required CI: rule changed during retirement preflight; retained"
+      continue
+    fi
+    run_api DELETE "repos/${organization}/${repository}/rulesets/${id}"
+  done
+}
+
 publish_repository_rulesets() {
   local repository ruleset_config ci_payload maintenance branch required_ci
   local input
@@ -649,6 +708,7 @@ publish_repository_rulesets() {
     upsert_repository_ruleset "${repository}" "${input}"
   done < <(jq -c '.maintenance_branches[]' "${repositories_config}")
 
+  delete_retired_repository_required_ci
   delete_stale_repository_maintenance_rulesets
   delete_stale_repository_advisory_rulesets
 
@@ -1080,9 +1140,10 @@ security_ruleset_matches() {
         else . end) | sort_by(.actor_type, .actor_id, .bypass_mode)) |
       # GitHub expands this omitted request parameter to false. Keep true,
       # null and unknown parameters visible so modified gates are not retired.
-      .rules |= map(if .type == "required_status_checks" and
-        .parameters.do_not_enforce_on_create == false then
-          .parameters |= del(.do_not_enforce_on_create)
+      .rules |= map(if .type == "required_status_checks" then
+          .parameters |= (
+            if .do_not_enforce_on_create == false then del(.do_not_enforce_on_create) else . end |
+            .required_status_checks |= sort_by(.context, .integration_id))
         else . end);
     normalize as $current |
     all($desired[0] | normalize | to_entries[]; $current[.key] == .value)

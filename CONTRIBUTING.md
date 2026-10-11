@@ -140,6 +140,10 @@ first live installation. Pending publication only probes readiness. Enforced
 intent survives missing rules and later producer failures, allowing restoration
 without fresh initial proof; it does not claim live installation success. Remove
 activation entries with retired targets, preserving exact owned-rule rollback.
+For an existing repository-owned `03 - Required CI` rule, also record exact repository
+and ruleset IDs and its prior contexts in `config/retired-required-ci.json`.
+Validate retained/modified/foreign rules and fresh identity checks; keep records
+for idempotent retirement. Missing provenance must retain the rule.
 Tests must cover missing/failed producers, unreadable evidence, archived targets, language unions, both scopes,
 and zero security mutations on a converged rerun. SHA enforcement must remain
 pending until an ordinary action-update canary proves successful PR-bound
@@ -149,6 +153,16 @@ not pending rollout; ordinary publication revalidates the recorded proof before
 restoring it. Test rule retirement, effective default-branch applicability, and
 repository workflow permission overrides. Action allowances use owner/action wildcards;
 full commit pins belong in workflows, not redundant version assertions.
+
+Advanced CodeQL readiness must validate executable YAML wiring from classifier
+invocation and outputs through the dynamic analysis matrix, scoped generated
+configuration, official full-SHA CodeQL actions, and the unconditional aggregate.
+Use the existing validation dependency with duplicate-key rejection. Test
+comments-only markers, disconnected inputs, disabled or failure-suppressed steps,
+checkout revision drift, and ambiguous YAML; preserve full-SHA updates, formatting
+changes, additional partitions, and category renames. Classification path
+semantics remain in trusted producer helpers; do not add a central source-path or
+action-version catalog or claim resistance to malicious repository writers.
 
 Crates.io publication contracts bind exact repository/workflow/environment and
 official auth-action identities with full immutable workflow SHA references;

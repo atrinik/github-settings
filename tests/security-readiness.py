@@ -64,16 +64,113 @@ jobs:
 """
 SELECTED = {"github_owned_allowed": True, "verified_allowed": False,
             "patterns_allowed": ["rust-lang/crates-io-auth-action@*", "docker/setup-buildx-action@*"]}
+# Executable Classic workflow snapshot; action pins remain producer-owned.
 CODEQL_WORKFLOW = b"""name: CodeQL
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  merge_group:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 2"
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+concurrency:
+  group: classic-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  classify:
+    name: CodeQL classification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.classify.outputs.codeql_matrix }}
+      run: ${{ steps.classify.outputs.codeql_run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: classify
+        name: Select analysis languages and paths
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 tools/ci/classify_changes.py \\
+            --event "${EVENT_NAME}" \\
+            --base "${BASE_SHA}" \\
+            --head "${HEAD_SHA}" \\
+            --github-output "${GITHUB_OUTPUT}" \\
+            --codeql-config build/codeql-config.yml
+
   analyze:
     name: CodeQL analysis (${{ matrix.display }})
-    run: python3 tools/ci/classify_changes.py
-    languages: ${{ matrix.language }}
-    category: ${{ matrix.category }}
-  validation:
+    needs: classify
+    if: needs.classify.outputs.run == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.classify.outputs.matrix) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: classify
+        name: Recreate the trusted path configuration
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 tools/ci/classify_changes.py \\
+            --event "${EVENT_NAME}" \\
+            --base "${BASE_SHA}" \\
+            --head "${HEAD_SHA}" \\
+            --github-output "${GITHUB_OUTPUT}" \\
+            --codeql-config build/codeql-config.yml \\
+            --codeql-scope "${{ matrix.scope }}"
+      - name: Initialize CodeQL
+        if: matrix.run == true
+        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          build-mode: none
+          config-file: ${{ steps.classify.outputs.codeql_config }}
+          languages: ${{ matrix.language }}
+      - name: Analyze
+        if: matrix.run == true
+        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          category: ${{ matrix.category }}
+
+  codeql-validation:
     name: CodeQL validation
-    run: python3 tools/ci/require_checks.py optional '${{ needs.classify.outputs.run }}' '${{ needs.analyze.result }}'
+    if: always()
+    needs:
+      - classify
+      - analyze
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Require every selected analysis
+        run: |
+          python3 tools/ci/require_checks.py optional \\
+            --label CodeQL \\
+            --classifier-result '${{ needs.classify.result }}' \\
+            --required '${{ needs.classify.outputs.run }}' \\
+            --result '${{ needs.analyze.result }}'
 """
 PARTITIONS = [
     {"display": "C/C++ client", "scope": "client", "language": "c-cpp",
@@ -841,6 +938,51 @@ class ReadinessTests(unittest.TestCase):
         self.fixture.after = f"steps:\n  - uses: actions/checkout@{NEW} # v6\n".encode()
         self.assertEqual(self.invoke("sha")[0], 0)
 
+    def allow_canary_action_family(self, pattern):
+        self.fixture.live["patterns_allowed"].append(pattern)
+        (self.root / "config/actions-selected.json").write_text(json.dumps(self.fixture.live))
+
+    def test_sha_reusable_workflow_update_is_not_action_enforcement_evidence(self):
+        self.allow_canary_action_family("atrinik/shared/*")
+        for suffix in ("yml", "yaml"):
+            with self.subTest(suffix=suffix):
+                workflow = ("name: Check\non: pull_request\njobs:\n  validation:\n"
+                            f"    uses: atrinik/shared/.github/workflows/check.{suffix}@{{pin}}\n")
+                self.fixture.before = workflow.format(pin=OLD).encode()
+                self.fixture.after = workflow.format(pin=NEW).encode()
+                self.assert_deferred("sha", "reusable workflow reference")
+        # GitHub-owned allowances do not turn a reusable workflow into an action.
+        self.fixture.before = self.fixture.before.replace(b"atrinik/shared", b"github/shared")
+        self.fixture.after = self.fixture.after.replace(b"atrinik/shared", b"github/shared")
+        self.assert_deferred("sha", "reusable workflow reference")
+
+    def test_sha_mixed_reusable_and_action_updates_rejected(self):
+        self.allow_canary_action_family("atrinik/shared/*")
+        workflow = ("name: Check\non: pull_request\njobs:\n  validation:\n"
+                    "    uses: atrinik/shared/.github/workflows/check.yml@{workflow_pin}\n"
+                    "  local:\n    runs-on: ubuntu-24.04\n    steps:\n"
+                    "      - uses: actions/checkout@{action_pin}\n")
+        self.fixture.before = workflow.format(workflow_pin=OLD, action_pin=OLD).encode()
+        self.fixture.after = workflow.format(workflow_pin=NEW, action_pin=NEW).encode()
+        self.assert_deferred("sha", "reusable workflow reference")
+        # An unchanged reusable reference is ordinary context, not changed proof.
+        self.fixture.after = workflow.format(workflow_pin=OLD, action_pin=NEW).encode()
+        result, message = self.invoke("sha")
+        self.assertEqual(result, 0, message)
+
+    def test_sha_real_action_subpath_update_remains_eligible(self):
+        self.allow_canary_action_family("atrinik/shared/*")
+        for action in ("atrinik/shared/actions/check", "atrinik/shared/.github/actions/check",
+                       "github/codeql-action/init"):
+            with self.subTest(action=action):
+                workflow = ("name: Check\non: pull_request\njobs:\n  validation:\n"
+                            "    runs-on: ubuntu-24.04\n    steps:\n"
+                            f"      - uses: {action}@{{pin}}\n")
+                self.fixture.before = workflow.format(pin=OLD).encode()
+                self.fixture.after = workflow.format(pin=NEW).encode()
+                result, message = self.invoke("sha")
+                self.assertEqual(result, 0, message)
+
     def test_sha_live_old_exact_pin_deferred(self):
         self.fixture.live["patterns_allowed"][-1] = "rust-lang/crates-io-auth-action@" + OLD
         self.assert_deferred("sha", "live selected-actions")
@@ -1160,6 +1302,206 @@ class ReadinessTests(unittest.TestCase):
     def set_classifier_source(self, source):
         self.fixture.codeql_sources["tools/ci/classify_changes.py"] = source
         self.fixture.codeql_head_sources["tools/ci/classify_changes.py"] = source
+
+    def set_codeql_workflow(self, source):
+        self.fixture.codeql_sources[".github/workflows/codeql.yml"] = source
+        self.fixture.codeql_head_sources[".github/workflows/codeql.yml"] = source
+
+    def codeql_document(self):
+        import yaml
+        # Preserve Actions' on key when constructing modified fixtures.
+        return yaml.safe_load(CODEQL_WORKFLOW.replace(b"\non:", b"\n'on':"))
+
+    def set_codeql_document(self, document):
+        import yaml
+        self.set_codeql_workflow(yaml.safe_dump(document, sort_keys=False).encode())
+
+    def test_codeql_yaml_dependency_missing_fails_closed_without_affecting_other_modes(self):
+        self.enable_advanced()
+        with patch.dict(sys.modules, {"yaml": None}):
+            result, message = self.invoke("codeql")
+            self.assertEqual(result, 2, message)
+            self.assertIn("install requirements-validation.txt", message)
+            self.assertEqual(self.invoke("dependency")[0], 0)
+
+    def test_codeql_advanced_comments_cannot_prove_executable_wiring(self):
+        self.enable_advanced()
+        source = b"name: CodeQL\njobs:\n  fake:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: true\n"
+        source += b"\n".join(b"# " + line for line in CODEQL_WORKFLOW.splitlines())
+        self.set_codeql_workflow(source)
+        self.assert_deferred("codeql", "executable workflow contract")
+
+    def test_codeql_advanced_disconnected_wiring_rejected_despite_green_uploads(self):
+        changes = [
+            (("classify", "outputs", "matrix"), '${{ steps.other.outputs.codeql_matrix }}'),
+            (("classify", "outputs", "run"), 'true'),
+            (("classify", "steps", 1, "id"), 'other'),
+            (("classify", "steps", 1, "env", "EVENT_NAME"), 'push'),
+            (("classify", "steps", 1, "env", "HEAD_SHA"), '${{ github.event.pull_request.base.sha }}'),
+            (("analyze", "needs"), 'other'),
+            (("analyze", "if"), 'false'),
+            (("analyze", "name"), 'CodeQL analysis (C/C++ client)'),
+            (("analyze", "strategy", "matrix"), {"include": PARTITIONS}),
+            (("analyze", "strategy", "matrix"), '${{ fromJSON(needs.other.outputs.matrix) }}'),
+            (("analyze", "steps", 2, "with", "config-file"), 'unrelated-codeql.yml'),
+            (("analyze", "steps", 2, "with", "config-file"), '${{ steps.other.outputs.codeql_config }}'),
+            (("analyze", "steps", 2, "with", "languages"), 'c-cpp'),
+            (("analyze", "steps", 2, "with", "build-mode"), 'autobuild'),
+            (("analyze", "steps", 3, "with", "category"), '/partition:client/language:c-cpp'),
+            (("codeql-validation", "if"), 'success()'),
+            (("codeql-validation", "needs"), ['classify']),
+            (("codeql-validation", "strategy"), {"matrix": {"fake": [1]}}),
+        ]
+        for path, value in changes:
+            with self.subTest(path=path, value=value):
+                self.enable_advanced()
+                document = self.codeql_document()
+                target = document["jobs"]
+                for key in path[:-1]:
+                    target = target[key]
+                target[path[-1]] = value
+                self.set_codeql_document(document)
+                self.assert_deferred("codeql", "executable workflow contract")
+
+    def test_codeql_advanced_classifier_and_aggregate_arguments_are_executable(self):
+        mutations = [
+            ('classify', '--event "${EVENT_NAME}"', '--event push'),
+            ('classify', '--event "${EVENT_NAME}"', "--event '${EVENT_NAME}'"),
+            ('classify', '--event "${EVENT_NAME}"', '--event "\\${EVENT_NAME}"'),
+            ('classify', '--github-output "${GITHUB_OUTPUT}"', '--github-output /dev/null'),
+            ('analyze', '--codeql-scope "${{ matrix.scope }}"', '--codeql-scope client'),
+            ('analyze', 'build/codeql-config.yml', 'build/disconnected-config.yml'),
+            ('codeql-validation', "'${{ needs.classify.result }}'", 'success'),
+            ('codeql-validation', "'${{ needs.classify.outputs.run }}'", 'true'),
+            ('codeql-validation', "'${{ needs.analyze.result }}'", 'success'),
+        ]
+        for name, before, after in mutations:
+            with self.subTest(name=name, before=before):
+                self.enable_advanced()
+                document = self.codeql_document()
+                step = document['jobs'][name]['steps'][1]
+                self.assertIn(before, step['run'])
+                step['run'] = step['run'].replace(before, after)
+                self.set_codeql_document(document)
+                self.assert_deferred("codeql", "executable workflow contract")
+        for name in ('classify', 'analyze', 'codeql-validation'):
+            for mutation in ('comment-only', 'trailing-command', 'leading-command', 'substitution', 'duplicate-option'):
+                with self.subTest(name=name, mutation=mutation):
+                    self.enable_advanced()
+                    document = self.codeql_document()
+                    step = document['jobs'][name]['steps'][1]
+                    run = step['run']
+                    if mutation == 'comment-only':
+                        step['run'] = '\n'.join('# ' + line for line in run.splitlines()) + '\ntrue\n'
+                    elif mutation == 'trailing-command':
+                        step['run'] = run.rstrip() + '; true\n'
+                    elif mutation == 'leading-command':
+                        step['run'] = 'true\n' + run
+                    elif mutation == 'substitution':
+                        step['run'] = run.replace('python3', '$(echo python3)', 1)
+                    else:
+                        step['run'] = run.rstrip() + ' --event push\n'
+                    self.set_codeql_document(document)
+                    self.assert_deferred("codeql", "executable workflow contract")
+
+    def test_codeql_advanced_disabled_or_overridden_execution_rejected(self):
+        targets = [('classify', None), ('analyze', None), ('codeql-validation', None),
+                   ('classify', 1), ('analyze', 1), ('analyze', 2), ('analyze', 3),
+                   ('codeql-validation', 1)]
+        for name, index in targets:
+            for key, value in [('continue-on-error', True), ('if', 'false'),
+                               ('env', {'PYTHONPATH': 'untrusted'}),
+                               ('defaults', {'run': {'working-directory': 'elsewhere'}}),
+                               ('shell', 'bash {0}'), ('working-directory', 'elsewhere')]:
+                with self.subTest(name=name, index=index, override=key):
+                    self.enable_advanced()
+                    document = self.codeql_document()
+                    target = document['jobs'][name]
+                    if index is not None:
+                        target = target['steps'][index]
+                    target[key] = value
+                    self.set_codeql_document(document)
+                    self.assert_deferred("codeql", "executable workflow contract")
+        for key, value in [('env', {'GITHUB_OUTPUT': '/dev/null'}),
+                           ('defaults', {'run': {'shell': 'true {0}'}})]:
+            with self.subTest(workflow_override=key):
+                self.enable_advanced()
+                document = self.codeql_document()
+                document[key] = value
+                self.set_codeql_document(document)
+                self.assert_deferred("codeql", "executable workflow contract")
+        self.enable_advanced()
+        document = self.codeql_document()
+        document['jobs']['analyze'] = {'uses': 'foreign/repo/.github/workflows/codeql.yml@' + NEW}
+        self.set_codeql_document(document)
+        self.assert_deferred("codeql", "executable workflow contract")
+
+    def test_codeql_advanced_current_complete_checkout_required(self):
+        for name in ('classify', 'analyze', 'codeql-validation'):
+            for key, value in [('ref', 'main'), ('ref', OLD), ('repository', 'foreign/repo'),
+                               ('path', 'elsewhere'), ('sparse-checkout', 'only-one-file')]:
+                with self.subTest(name=name, key=key, value=value):
+                    self.enable_advanced()
+                    document = self.codeql_document()
+                    document['jobs'][name]['steps'][0].setdefault('with', {})[key] = value
+                    self.set_codeql_document(document)
+                    self.assert_deferred("codeql", "executable workflow contract")
+
+    def test_codeql_advanced_step_order_actions_and_duplicate_ids_rejected(self):
+        for mutation in ('order', 'extra', 'duplicate-id', 'mutable-init', 'foreign-analyze'):
+            with self.subTest(mutation=mutation):
+                self.enable_advanced()
+                document = self.codeql_document()
+                steps = document['jobs']['analyze']['steps']
+                if mutation == 'order':
+                    steps[2], steps[3] = steps[3], steps[2]
+                elif mutation == 'extra':
+                    steps.insert(2, {'run': 'echo overwrite generated config'})
+                elif mutation == 'duplicate-id':
+                    steps[0]['id'] = 'classify'
+                elif mutation == 'mutable-init':
+                    steps[2]['uses'] = 'github/codeql-action/init@v4'
+                else:
+                    steps[3]['uses'] = 'foreign/codeql-action/analyze@' + NEW
+                self.set_codeql_document(document)
+                self.assert_deferred("codeql", "executable workflow contract")
+
+    def test_codeql_advanced_duplicate_yaml_is_unreadable(self):
+        for source in (CODEQL_WORKFLOW + b'\njobs: {}\n',
+                       CODEQL_WORKFLOW.replace(b'      - id: classify', b'      - id: classify\n        id: other', 1),
+                       CODEQL_WORKFLOW.replace(b'    if: always()', b'    if: false\n    if: always()'),
+                       b'jobs: [unclosed'):
+            with self.subTest(source=source[-50:]):
+                self.enable_advanced()
+                self.set_codeql_workflow(source)
+                result, message = self.invoke('codeql')
+                self.assertEqual(result, 2, message)
+                self.assertIn('YAML malformed or ambiguous', message)
+
+    def test_codeql_advanced_formatting_and_owner_action_updates_ready(self):
+        self.enable_advanced()
+        document = self.codeql_document()
+        for job in document['jobs'].values():
+            for step in job['steps']:
+                if 'uses' in step:
+                    step['uses'] = step['uses'].split('@')[0] + '@' + NEW
+            job['steps'][0].setdefault('with', {}).update(
+                ref='${{github.sha}}', repository='${{ github.repository }}')
+        for name in ('classify', 'analyze'):
+            step = document['jobs'][name]['steps'][1]
+            step['run'] = ('# executable invocation follows\npython3 tools/ci/classify_changes.py '
+                           '--codeql-config build/new-config.yml --github-output "$GITHUB_OUTPUT" '
+                           '--head "$HEAD_SHA" --base "$BASE_SHA" --event "$EVENT_NAME"')
+            if name == 'analyze':
+                step['run'] += ' --codeql-scope "${{matrix.scope}}"'
+        document['jobs']['analyze']['if'] = "${{needs.classify.outputs.run=='true'}}"
+        document['jobs']['analyze']['strategy']['matrix'] = '${{ fromJSON ( needs.classify.outputs.matrix ) }}'
+        document['jobs']['analyze']['steps'][2]['with']['languages'] = '${{matrix.language}}'
+        document['jobs']['analyze']['steps'][3]['with']['category'] = '${{ matrix.category}}'
+        document['jobs']['codeql-validation']['if'] = '${{ always ( ) }}'
+        self.set_codeql_document(document)
+        result, message = self.invoke('codeql')
+        self.assertEqual(result, 0, message)
 
     def test_codeql_advanced_reduced_source_and_jobs_below_policy_deferred(self):
         self.enable_advanced(PARTITIONS[:1])

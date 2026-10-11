@@ -10,6 +10,7 @@ import fnmatch
 import json
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 from urllib.parse import quote, urlencode
@@ -347,6 +348,11 @@ def pin_changes(before, after, selected):
                 require(left_match[key] == right_match[key], "canary changes action structure")
             require(left_match["sha"] != right_match["sha"], "canary contains unrelated comment changes")
             action = right_match["action"]
+            # GitHub's action SHA requirement excludes reusable workflow refs.
+            # The canary admits only action-pin changes, including in mixed PRs.
+            require(re.fullmatch(r"[^/]+/[^/]+/\.github/workflows/[^/]+\.ya?ml", action,
+                                 flags=re.IGNORECASE) is None,
+                    "canary changes a reusable workflow reference, not only action pins")
             identity = f"{action}@{right_match['sha']}"
             require((selected["github_owned_allowed"] and action.split("/")[0].lower()
                      in {"actions", "github"})
@@ -807,17 +813,215 @@ def advanced_codeql_coverage(coordinate, branch, head, minima, selected, declara
     raise Deferred("required advanced CodeQL partition upload missing within bounded evidence")
 
 
+def advanced_workflow_wiring(source):
+    """Check executable dataflow, not the honesty of repository-owned Python.
+
+    The supported ordinary-job shape is deliberately bounded. Producer-owned
+    action SHAs and classifier path/category declarations are not central pins.
+    """
+    try:
+        import yaml
+    except ImportError as exc:
+        raise EvidenceError("install requirements-validation.txt for CodeQL workflow verification") from exc
+
+    class UniqueLoader(yaml.SafeLoader):
+        # Actions uses `on` as a mapping key. Preserve scalar booleans as text,
+        # as in the existing publication verifier, and validate them explicitly.
+        yaml_implicit_resolvers = {
+            key: [(tag, regex) for tag, regex in values if tag != "tag:yaml.org,2002:bool"]
+            for key, values in yaml.SafeLoader.yaml_implicit_resolvers.items()
+        }
+
+    def unique_mapping(loader, node, deep=False):
+        result = {}
+        for key_node, value_node in node.value:
+            key = loader.construct_object(key_node, deep=deep)
+            if key in result:
+                raise ValueError(f"duplicate YAML key: {key}")
+            result[key] = loader.construct_object(value_node, deep=deep)
+        return result
+
+    UniqueLoader.add_constructor("tag:yaml.org,2002:map", unique_mapping)
+    try:
+        workflow = yaml.load(source, Loader=UniqueLoader)
+    except (yaml.YAMLError, ValueError, TypeError) as exc:
+        raise EvidenceError("advanced CodeQL workflow YAML malformed or ambiguous") from exc
+
+    def check(condition, detail):
+        require(condition, "advanced CodeQL executable workflow contract: " + detail)
+
+    def expression(value, expected, wrapped=True):
+        if not isinstance(value, str):
+            return False
+        value = value.strip()
+        if value.startswith("${{") and value.endswith("}}"):
+            value = value[3:-2].strip()
+        elif wrapped:
+            return False
+        # Ignore token spacing, preserving string contents (including spaces).
+        def tokens(text):
+            return re.findall(r"'(?:[^']|'')*'|[A-Za-z_][A-Za-z_0-9]*|==|\S", text)
+        return tokens(value) == tokens(expected)
+
+    def execution_settings(value, context):
+        check(isinstance(value, dict), context + " must be a mapping")
+        check(not value.get("env") and not value.get("defaults"), context + " execution overrides")
+        check(value.get("continue-on-error", "false") == "false", context + " suppresses failure")
+        check(not any(key in value for key in ("shell", "working-directory", "container", "services")),
+              context + " changes execution context")
+
+    def step(value, context, condition=None):
+        execution_settings(value, context)
+        check(set(value) <= {"name", "id", "uses", "with", "run", "env", "if", "continue-on-error"},
+              context + " unsupported step execution")
+        check(("if" not in value) if condition is None else expression(value.get("if"), condition, False),
+              context + " condition disconnected")
+
+    def action(value, name):
+        check(isinstance(value.get("uses"), str)
+              and re.fullmatch(re.escape(name) + r"@[0-9a-fA-F]{40}", value["uses"]) is not None
+              and "run" not in value, "expected official full-SHA " + name)
+
+    def checkout(value):
+        step(value, "checkout")
+        action(value, "actions/checkout")
+        inputs = value.get("with", {})
+        check(isinstance(inputs, dict)
+              and set(inputs) <= {"fetch-depth", "ref", "repository", "persist-credentials"},
+              "checkout must use the current complete workspace")
+        check("ref" not in inputs or expression(inputs["ref"], "github.sha"),
+              "checkout revision differs from run")
+        check("repository" not in inputs or expression(inputs["repository"], "github.repository"),
+              "checkout repository differs from run")
+
+    def command(value, prefix):
+        check(isinstance(value.get("run"), str) and "uses" not in value and "with" not in value,
+              "helper must execute a run step")
+        try:
+            # Retain shell quoting as well as argument values: single-quoted or
+            # escaped $EVENT_NAME is a literal, not the bound event environment.
+            source = value["run"].replace("\\\r\n", "").replace("\\\n", "")
+            raw = shlex.split(source, comments=True, posix=False)
+            decoded = [shlex.split(token) for token in raw]
+            check(all(len(item) == 1 for item in decoded), "helper shell arguments unsupported")
+            tokens = [item[0] for item in decoded]
+        except ValueError:
+            raw, tokens = [], []
+        check(tokens[:len(prefix)] == prefix, "helper invocation disconnected")
+        arguments, raw_arguments = tokens[len(prefix):], raw[len(prefix):]
+        check(len(arguments) % 2 == 0, "helper arguments malformed")
+        options, quoted_options = {}, {}
+        for index in range(0, len(arguments), 2):
+            key, argument = arguments[index:index + 2]
+            check(key.startswith("--") and key not in options, "helper arguments ambiguous")
+            options[key] = argument
+            quoted_options[key] = raw_arguments[index + 1]
+        return options, quoted_options
+
+    def classifier(value, scoped=False):
+        expected_env = {"BASE_SHA": "github.event.pull_request.base.sha",
+                        "EVENT_NAME": "github.event_name", "HEAD_SHA": "github.event.pull_request.head.sha"}
+        environment = value.get("env")
+        check(isinstance(environment, dict) and set(environment) == set(expected_env)
+              and all(expression(environment[key], expected) for key, expected in expected_env.items()),
+              "classifier event/revision environment disconnected")
+        # Environment is validated above; every other execution override is rejected.
+        step({key: item for key, item in value.items() if key != "env"}, "classifier")
+        check(value.get("id") == "classify", "classifier step identity disconnected")
+        options, quoted = command(value, ["python3", "tools/ci/classify_changes.py"])
+        expected = {"--event": "EVENT_NAME", "--base": "BASE_SHA", "--head": "HEAD_SHA",
+                    "--github-output": "GITHUB_OUTPUT"}
+        check(set(options) == set(expected) | {"--codeql-config"} | ({"--codeql-scope"} if scoped else set()),
+              "classifier arguments disconnected")
+        check(all(quoted[key] in ("$" + variable, "${" + variable + "}",
+                                  '"$' + variable + '"', '"${' + variable + '}"')
+                  for key, variable in expected.items()), "classifier event/output arguments disconnected")
+        path = options["--codeql-config"]
+        check(re.fullmatch(r"(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.ya?ml", path) is not None
+              and ".." not in path.split("/"), "classifier config destination unsupported")
+        if scoped:
+            check(expression(options["--codeql-scope"], "matrix.scope"), "classifier scope disconnected")
+        return path
+
+    execution_settings(workflow, "workflow")
+    jobs = workflow.get("jobs")
+    check(isinstance(jobs, dict) and set(jobs) == {"classify", "analyze", "codeql-validation"},
+          "requires ordinary classification, analysis and validation jobs")
+    for name, job in jobs.items():
+        execution_settings(job, name)
+        check(set(job) <= {"name", "runs-on", "timeout-minutes", "outputs", "steps", "if", "needs",
+                          "strategy", "continue-on-error"}, name + " unsupported job execution")
+        runner = job.get("runs-on")
+        check((isinstance(runner, str) and bool(runner)) or
+              (isinstance(runner, list) and bool(runner) and
+               all(isinstance(item, str) and item for item in runner)), name + " runner missing")
+        steps = job.get("steps")
+        check(isinstance(steps, list) and all(isinstance(item, dict) for item in steps),
+              name + " executable steps missing")
+        identifiers = [item["id"] for item in steps if "id" in item]
+        check(all(isinstance(item, str) for item in identifiers)
+              and len(identifiers) == len(set(identifiers)), name + " duplicate step identities")
+    classify, analyze, validation = (jobs[name] for name in ("classify", "analyze", "codeql-validation"))
+    check(classify.get("name") == "CodeQL classification"
+          and not any(key in classify for key in ("if", "needs", "strategy"))
+          and len(classify["steps"]) == 2, "classification job execution disconnected")
+    outputs = classify.get("outputs", {})
+    check(isinstance(outputs, dict) and set(outputs) == {"matrix", "run"}
+          and expression(outputs["matrix"], "steps.classify.outputs.codeql_matrix")
+          and expression(outputs["run"], "steps.classify.outputs.codeql_run"), "classifier outputs disconnected")
+    checkout(classify["steps"][0])
+    config_path = classifier(classify["steps"][1])
+
+    check(analyze.get("needs") in ("classify", ["classify"])
+          and expression(analyze.get("if"), "needs.classify.outputs.run == 'true'", False),
+          "analysis dependency/condition disconnected")
+    name = analyze.get("name", "")
+    match = re.fullmatch(r"CodeQL analysis \((\$\{\{.*\}\})\)", name) if isinstance(name, str) else None
+    check(match is not None and expression(match[1], "matrix.display"), "analysis display disconnected")
+    strategy = analyze.get("strategy", {})
+    check(isinstance(strategy, dict) and set(strategy) == {"fail-fast", "matrix"}
+          and strategy["fail-fast"] == "false"
+          and expression(strategy["matrix"], "fromJSON(needs.classify.outputs.matrix)"),
+          "analysis matrix disconnected")
+    check("outputs" not in analyze and len(analyze["steps"]) == 4, "analysis step order unsupported")
+    checkout(analyze["steps"][0])
+    check(classifier(analyze["steps"][1], scoped=True) == config_path, "analysis config destination disconnected")
+    initialize, analyze_step = analyze["steps"][2:]
+    step(initialize, "CodeQL init", "matrix.run == true")
+    action(initialize, "github/codeql-action/init")
+    inputs = initialize.get("with", {})
+    check(isinstance(inputs, dict) and set(inputs) == {"build-mode", "config-file", "languages"}
+          and inputs["build-mode"] == "none"
+          and expression(inputs["config-file"], "steps.classify.outputs.codeql_config")
+          and expression(inputs["languages"], "matrix.language"), "CodeQL init/config/language disconnected")
+    step(analyze_step, "CodeQL analysis", "matrix.run == true")
+    action(analyze_step, "github/codeql-action/analyze")
+    inputs = analyze_step.get("with", {})
+    check(isinstance(inputs, dict) and set(inputs) == {"category"}
+          and expression(inputs["category"], "matrix.category"), "CodeQL analysis category disconnected")
+
+    check(validation.get("name") == "CodeQL validation"
+          and expression(validation.get("if"), "always()", False)
+          and isinstance(validation.get("needs"), list) and sorted(validation["needs"]) == ["analyze", "classify"]
+          and not any(key in validation for key in ("strategy", "outputs"))
+          and len(validation["steps"]) == 2, "validation dependency/condition disconnected")
+    checkout(validation["steps"][0])
+    aggregate = validation["steps"][1]
+    step(aggregate, "validation aggregate")
+    options, _ = command(aggregate, ["python3", "tools/ci/require_checks.py", "optional"])
+    check(set(options) == {"--label", "--classifier-result", "--required", "--result"}
+          and options["--label"] == "CodeQL"
+          and expression(options["--classifier-result"], "needs.classify.result")
+          and expression(options["--required"], "needs.classify.outputs.run")
+          and expression(options["--result"], "needs.analyze.result"), "validation result arguments disconnected")
+
+
 def advanced_codeql(coordinate, branch, head, minima, partition_minima):
     sources = {}
     for path in (".github/workflows/codeql.yml", "tools/ci/classify_changes.py", "tools/ci/require_checks.py"):
         sources[path] = contents(coordinate, path, branch)
         require(contents(coordinate, path, head) == sources[path], "advanced CodeQL producer source is stale")
-    workflow = sources[".github/workflows/codeql.yml"].decode()
-    for marker in ("name: CodeQL analysis (${{ matrix.display }})", "languages: ${{ matrix.language }}",
-                   "category: ${{ matrix.category }}", "python3 tools/ci/classify_changes.py",
-                   "python3 tools/ci/require_checks.py optional", "${{ needs.classify.outputs.run }}",
-                   "${{ needs.analyze.result }}"):
-        require(marker in workflow, "advanced CodeQL workflow producer contract unsupported")
+    advanced_workflow_wiring(sources[".github/workflows/codeql.yml"])
     declarations = classifier_partitions(sources["tools/ci/classify_changes.py"], partition_minima)
     events = classifier_full_events(sources["tools/ci/classify_changes.py"])
     run = latest_full_codeql_run(coordinate, branch, head, events)
