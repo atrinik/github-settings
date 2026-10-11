@@ -2,6 +2,11 @@
 
 set -euo pipefail
 
+# This harness supplies a fake `gh` on PATH for every publisher invocation.
+# Keep its CI credential synthetic even when the surrounding test runner
+# deliberately clears GH_TOKEN to exercise other scripts' production gate.
+export GH_TOKEN=test-token
+
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 temporary=$(mktemp -d)
 trap 'rm -rf "${temporary}"' EXIT
