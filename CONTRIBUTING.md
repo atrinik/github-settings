@@ -182,7 +182,10 @@ Pending existing-gate proof requires unchanged enforcement and ref applicability
 in the final rule read; enforced intent retains recognized restoration. Audit
 legacy protection on active default and maintenance branches as drift under the
 canonical ruleset contract; distinguish verified unprotected responses from
-unreadable evidence, and never remove protection during audit. The exact
+unreadable evidence, and never remove protection during audit. Compare the
+complete effective default and maintenance branch policy with declared allowed
+rule types and parameters; additional
+undeclared integrity or restriction types are drift. The exact
 repository-disabled REST response may use the fixed read-only GraphQL fallback;
 require matching repository identity and branch, active state and an explicit
 null legacy-rule association. Errors and missing or conflicting fields fail

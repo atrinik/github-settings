@@ -6,6 +6,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from urllib.parse import unquote
 
 root = Path(os.environ['AUDIT_CONFIG_ROOT'])
 scenario = os.environ.get('GH_TEST_SCENARIO', 'pass')
@@ -393,6 +394,7 @@ elif endpoint.startswith('repos/atrinik/'):
         if payload is None:
             reject('repository ruleset missing')
     elif path.startswith('rules/branches/'):
+        branch = unquote(path.removeprefix('rules/branches/').partition('?')[0])
         if scenario == 'effective-unreadable' and target:
             reject('effective branch read denied')
         payload = []
@@ -401,13 +403,24 @@ elif endpoint.startswith('repos/atrinik/'):
             included = any(pattern == '~ALL' or fnmatch.fnmatchcase(repository, pattern) for pattern in scope['include'])
             excluded = any(pattern == '~ALL' or fnmatch.fnmatchcase(repository, pattern) for pattern in scope['exclude'])
             refs = item['conditions']['ref_name']
-            branch_included = any(pattern == '~DEFAULT_BRANCH' or
-                                  fnmatch.fnmatchcase('refs/heads/main', pattern) for pattern in refs['include'])
-            branch_excluded = any(pattern == '~DEFAULT_BRANCH' or
-                                  fnmatch.fnmatchcase('refs/heads/main', pattern) for pattern in refs['exclude'])
+            branch_included = any((pattern == '~DEFAULT_BRANCH' and branch == 'main') or
+                                  fnmatch.fnmatchcase('refs/heads/' + branch, pattern) for pattern in refs['include'])
+            branch_excluded = any((pattern == '~DEFAULT_BRANCH' and branch == 'main') or
+                                  fnmatch.fnmatchcase('refs/heads/' + branch, pattern) for pattern in refs['exclude'])
             if (item['target'] == 'branch' and item['enforcement'] == 'active'
                     and included and not excluded and branch_included and not branch_excluded):
                 payload.extend(copy.deepcopy(item['rules']))
+        for maintenance in repositories['maintenance_branches']:
+            if maintenance['repository'] == repository and maintenance['branch'] == branch:
+                rules = config('rulesets/maintenance-branch.json')['rules']
+                for rule in rules:
+                    if rule['type'] == 'required_status_checks':
+                        if not maintenance['required_ci']:
+                            continue
+                        rule['parameters']['required_status_checks'] = [
+                            {'context': context, 'integration_id': 15368}
+                            for context in maintenance['required_ci']]
+                    payload.append(rule)
         for rule in payload:
             if target and rule['type'] == 'required_status_checks':
                 if scenario == 'wrong-app':
@@ -427,6 +440,46 @@ elif endpoint.startswith('repos/atrinik/'):
             payload.extend(config('rulesets/code-scanning.json')['rules'])
         if scenario == 'unexpected-pr' and repository == 'web-platform':
             payload.append(config('rulesets/pull-request-gate.json')['rules'][0])
+        if scenario.startswith('closure-'):
+            _, selected_branch, variant = scenario.split('-', 2)
+            selected = (selected_branch == 'default' and branch == 'main') or (
+                selected_branch == 'maintenance' and branch == 'release/next#candidate')
+            if selected:
+                extra = {
+                    'signatures': {'type': 'required_signatures'},
+                    'deployments': {'type': 'required_deployments', 'parameters': {'required_deployment_environments': ['production']}},
+                    'update': {'type': 'update', 'parameters': {'update_allows_fetch_and_merge': False}},
+                    'unknown': {'type': 'future_unconfigured_rule', 'parameters': {'enabled': True}},
+                }
+                if variant in extra:
+                    payload.append(extra[variant])
+                elif variant == 'integrity-parameter':
+                    next(rule for rule in payload if rule['type'] == 'deletion')['parameters'] = {'unexpected': True}
+                elif variant == 'status-parameter':
+                    next(rule for rule in payload if rule['type'] == 'required_status_checks')['parameters']['unexpected'] = True
+                elif variant == 'top-field':
+                    payload[0]['unknown_policy_field'] = True
+                elif variant == 'missing-type':
+                    payload.append({'parameters': {}})
+                elif variant == 'null-item':
+                    payload.append(None)
+                elif variant == 'malformed-parameters':
+                    next(rule for rule in payload if rule['type'] == 'deletion')['parameters'] = []
+                elif variant == 'null-page':
+                    print(json.dumps([payload, None]))
+                    sys.exit(0)
+                elif variant == 'unreadable':
+                    reject('effective branch read denied')
+                elif variant == 'non-json':
+                    print('<html>unavailable</html>')
+                    sys.exit(0)
+                elif variant in ('metadata-organization', 'metadata-repository'):
+                    for rule in payload:
+                        rule.update(ruleset_id=99, ruleset_source='atrinik' if variant.endswith('organization') else 'atrinik/observatory',
+                                    ruleset_source_type='Organization' if variant.endswith('organization') else 'Repository')
+                elif variant == 'signatures-inherited':
+                    payload.append({'type': 'required_signatures', 'ruleset_id': 99,
+                                    'ruleset_source': 'atrinik', 'ruleset_source_type': 'Organization'})
     elif path == 'code-security-configuration':
         advanced = repository in config('codeql-advanced-setup.json')['repositories']
         if scenario == 'configuration-unreadable' and target:

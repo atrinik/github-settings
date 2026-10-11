@@ -246,6 +246,42 @@ def normalize_rules:
   else . end) | sort_by(.type);
 '
 
+read_effective_rules() {
+  local repository=$1 branch=$2 encoded
+  encoded=$(jq -rn --arg branch "${branch}" '$branch | @uri')
+  github_api --paginate --slurp \
+    "repos/${organization}/${repository}/rules/branches/${encoded}?per_page=100" | jq -e '
+      if type == "array" and length > 0 and all(.[]; type == "array") then add
+      else error("invalid effective-rule pages") end |
+      if type == "array" and all(.[]; type == "object" and
+        (.type | type == "string" and length > 0)) then .
+      else error("invalid effective-rule inventory") end'
+}
+
+audit_effective_policy() {
+  local repository=$1 branch=$2 effective=$3 desired=$4
+  # API provenance is diagnostic metadata. Every policy field, including
+  # unknown future parameters, must match the declared contract. CI and
+  # Dependency review may contribute separate rules with the same parameters.
+  if ! jq -e --argjson desired "${desired}" "${ruleset_normalization}"'
+    def policy_fields: map(del(.ruleset_id, .ruleset_source, .ruleset_source_type));
+    def without_checks:
+      if .type == "required_status_checks" then .parameters.required_status_checks = []
+      else . end;
+    def checks:
+      [.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[]] |
+      unique_by(.context, .integration_id) | sort_by(.context, .integration_id);
+    ($desired | normalize_rules) as $wanted |
+    (policy_fields | normalize_rules) as $current |
+    ([$current[].type] | unique) == ([$wanted[].type] | unique) and
+    all($current[]; . as $rule |
+      any($wanted[]; without_checks == ($rule | without_checks))) and
+    ($current | checks) == ($wanted | checks)
+  ' <<<"${effective}" >/dev/null 2>&1; then
+    record_finding "effective branch policy drift requires manual review: ${organization}/${repository}/${branch}"
+  fi
+}
+
 check_ruleset() {
   local repository=$1 name=$2 template=$3 list=$4
   local entry id source endpoint detail wanted scope
@@ -511,14 +547,26 @@ for repository in "${!expected_active[@]}"; do
   done
   branch=$(jq -r '.default_branch' "${repository_defaults}")
   audit_legacy_protection "${repository}" "${branch}" "${metadata_file}"
-  while IFS= read -r maintenance_branch; do
+  while IFS= read -r maintenance; do
+    maintenance_branch=$(jq -r .branch <<<"${maintenance}")
     audit_legacy_protection "${repository}" "${maintenance_branch}" "${metadata_file}"
-  done < <(jq -r --arg repository "${repository}" '
-    .maintenance_branches[] | select(.repository == $repository) | .branch
+    if ! maintenance_effective=$(read_effective_rules "${repository}" "${maintenance_branch}"); then
+      record_finding "effective maintenance-branch rules could not be read: ${organization}/${repository}/${maintenance_branch}"
+      maintenance_effective='[]'
+    fi
+    maintenance_desired=$(jq --argjson checks "$(jq -c .required_ci <<<"${maintenance}")" '
+      .rules | map(if .type == "required_status_checks" then
+        if ($checks | length) == 0 then empty
+        else .parameters.required_status_checks =
+          ($checks | map({context: ., integration_id: 15368})) end
+        else . end)
+    ' "${root}/config/rulesets/maintenance-branch.json")
+    audit_effective_policy "${repository}" "${maintenance_branch}" "${maintenance_effective}" "${maintenance_desired}"
+  done < <(jq -c --arg repository "${repository}" '
+    .maintenance_branches[] | select(.repository == $repository)
   ' "${repositories_config}")
   effective='[]'
-  if ! effective=$(github_api --paginate --slurp \
-    "repos/${organization}/${repository}/rules/branches/${branch}?per_page=100" | jq -e 'add'); then
+  if ! effective=$(read_effective_rules "${repository}" "${branch}"); then
     record_finding "effective default-branch rules could not be read: ${organization}/${repository}"
     effective='[]'
   fi
@@ -560,6 +608,10 @@ for repository in "${!expected_active[@]}"; do
   ' <<<"${effective}" >/dev/null; then
     record_finding "effective required CI contexts or app drift: ${organization}/${repository}"
   fi
+  desired_effective=$(jq --argjson checks "${expected_checks}" '
+    if ($checks | length) == 0 then []
+    else .rules | map(.parameters.required_status_checks = $checks) end
+  ' "${root}/config/rulesets/required-ci.json")
   for policy in default-branch-integrity default-branch-linear-history; do
     template="${root}/config/rulesets/${policy}.json"
     if jq -e --arg repository "${repository}" '.repositories | index($repository) != null' \
@@ -567,6 +619,7 @@ for repository in "${!expected_active[@]}"; do
       template="${root}/config/rulesets/${policy}-classic.json"
     fi
     check_ruleset "${repository}" "$(jq -r .name "${template}")" "${template}" "${rulesets}" "${metadata_file}"
+    desired_effective=$(jq --argjson prior "${desired_effective}" '$prior + .rules' "${template}")
     if ! jq -e --slurpfile desired "${template}" \
       '. as $effective | all($desired[0].rules[]; . as $rule | any($effective[]; .type == $rule.type))' \
       <<<"${effective}" >/dev/null; then
@@ -578,6 +631,7 @@ for repository in "${!expected_active[@]}"; do
     if jq -e --arg repository "${repository}" '.repositories | index($repository) != null' \
       "${advisory_windows}" >/dev/null; then template="${root}/config/rulesets/pull-request-gate-classic.json"; fi
     check_ruleset "${repository}" "$(jq -r .name "${template}")" "${template}" "${rulesets}" "${metadata_file}"
+    desired_effective=$(jq --argjson prior "${desired_effective}" '$prior + .rules' "${template}")
     if ! jq -e --slurpfile desired "${template}" \
       "${ruleset_normalization}"'([.[] | select(.type == "pull_request") | {type, parameters}] |
         normalize_rules) == ($desired[0].rules | normalize_rules)' \
@@ -622,6 +676,8 @@ for repository in "${!expected_active[@]}"; do
     if ${codeql_required}; then
       check_ruleset "${repository}" '06 - CodeQL security' \
         "${root}/config/rulesets/code-scanning.json" "${rulesets}" "${metadata_file}"
+      desired_effective=$(jq --argjson prior "${desired_effective}" '$prior + .rules' \
+        "${root}/config/rulesets/code-scanning.json")
       if ! jq -e --slurpfile desired "${root}/config/rulesets/code-scanning.json" \
         '[.[] | select(.type == "code_scanning") | {type, parameters}] == $desired[0].rules' \
         <<<"${effective}" >/dev/null; then
@@ -631,6 +687,7 @@ for repository in "${!expected_active[@]}"; do
   elif jq -e 'any(.[]; .type == "code_scanning")' <<<"${effective}" >/dev/null; then
     record_finding "unexpected effective CodeQL merge protection: ${organization}/${repository}"
   fi
+  audit_effective_policy "${repository}" "${branch}" "${effective}" "${desired_effective}"
   audit_security "${repository}"
 
   if ! jq -e '

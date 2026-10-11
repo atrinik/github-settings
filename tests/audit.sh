@@ -51,10 +51,16 @@ cp -R "${temporary}/fixture-observatory" "${temporary}/fixture-retired-observato
 jq 'del(.required_ci.observatory)' "${temporary}/full/config/repositories.json" \
   >"${temporary}/fixture-retired-observatory/config/repositories.json"
 
+cp -R "${temporary}/fixture-legacy-branches" "${temporary}/fixture-effective-branches"
+jq '(.maintenance_branches[] | select(.branch == "release/next#candidate") | .required_ci) = ["Conventional PR title"]' \
+  "${temporary}/fixture-legacy-branches/config/repositories.json" \
+  >"${temporary}/fixture-effective-branches/config/repositories.json"
+
 run_audit() {
   local scenario=$1 fixture=${2:-focused} repository=observatory
   if [[ ${fixture} == focused ]]; then
     case ${scenario} in
+      closure-*) repository=effective-branches ;;
       retained-*) repository=.github ;;
       retired-*) repository=retired-observatory ;;
       legacy-maintenance-*|legacy-multiple) repository=legacy-branches ;;
@@ -196,6 +202,21 @@ for scope in retained retired; do
 done
 for variant in unreadable non-json object missing-name null-item partial-page; do
   assert_drift "retained-list-${variant}" 'inherited rulesets could not be read'
+done
+
+# Check the entire effective policy on main and exact maintenance refs. Desired
+# CI, Dependency review and CodeQL coexist; API provenance is metadata only.
+for branch in default maintenance; do
+  for variant in baseline metadata-organization metadata-repository; do
+    output=$(run_audit "closure-${branch}-${variant}")
+    grep -Fq 'Governance audit passed:' <<<"${output}"
+  done
+  for variant in signatures deployments update unknown integrity-parameter status-parameter top-field malformed-parameters signatures-inherited; do
+    assert_drift "closure-${branch}-${variant}" 'effective branch policy drift requires manual review'
+  done
+  for variant in missing-type null-item null-page unreadable non-json; do
+    assert_drift "closure-${branch}-${variant}" "effective ${branch}-branch rules could not be read"
+  done
 done
 
 assert_drift unmanaged 'active repository is not in the desired-state inventory'

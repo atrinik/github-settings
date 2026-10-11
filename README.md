@@ -315,7 +315,9 @@ counts as absent. For the exact repository-disabled REST response, a fixed
 read-only GraphQL query may instead prove that the identified active repository
 and exact existing branch have an explicitly null legacy-rule association.
 Missing, conflicting or unreadable evidence remains drift. Historical rules on
-other branches remain untouched. The audit never removes branch protections.
+other branches remain untouched. Audit compares the complete effective default and maintenance branch
+policy with declared allowed rule types and parameters; extra integrity or restriction types remain
+drift even when every desired rule is present. The audit never removes branch protections.
 
 Publisher identity, absence, update and retirement decisions use the complete
 validated ruleset inventory across all pages, including ordinary organization
