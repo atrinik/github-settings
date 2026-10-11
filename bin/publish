@@ -1245,7 +1245,7 @@ delete_removed_security_merge_rulesets() {
 # These repository rules remain repository-owned even in organization scope:
 # GitHub Team does not support organization-level code-scanning rules.
 publish_security_merge_rulesets() {
-  local repository kind template name existing id current reason status readiness_mode phase metadata effective_branch
+  local repository kind template name existing id current reason status readiness_mode phase metadata effective_branch proven_current
   delete_removed_security_merge_rulesets || return 1
   for kind in code_scanning dependency_review; do
     if [[ ${kind} == code_scanning ]]; then
@@ -1291,6 +1291,7 @@ publish_security_merge_rulesets() {
       # Pending qualification cannot create protection before reviewed intent is
       # persisted. Existing effective gates still survive producer failures.
       effective_branch=
+      proven_current=${current}
       if [[ ${phase} == pending ]] && { [[ -z ${id} ]] ||
         ! effective_branch=$(security_gate_applies_to_default_branch "${repository}" "${kind}" "${id}"); }; then
         status=0
@@ -1328,6 +1329,18 @@ publish_security_merge_rulesets() {
         }
         if ! security_ruleset_restoration_allowed "${repository}" "${id}" "${template}" "${current}"; then
           echo "error: security gate changed during restoration preflight; retained: ${repository} ${name}" >&2
+          return 1
+        fi
+        # Pending intent may preserve a proven effective gate, but cannot
+        # restore protection revoked after that proof. Only enforced intent
+        # authorizes enforcement or ref-scope restoration without qualification.
+        if [[ ${phase} == pending ]] && ! jq -e --argjson proven "${proven_current}" '
+          def protection:
+            {enforcement, ref_name: (.conditions.ref_name |
+              .include |= sort | .exclude |= sort)};
+          protection == ($proven | protection)
+        ' <<<"${current}" >/dev/null; then
+          echo "error: existing security gate protection changed after effective proof; retained: ${repository} ${name}" >&2
           return 1
         fi
         if security_ruleset_matches "${template}" "${current}"; then

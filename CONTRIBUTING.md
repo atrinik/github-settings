@@ -173,7 +173,9 @@ action-version catalog or claim resistance to malicious repository writers.
 Security gate updates must re-read and validate ownership and the recognized
 payload immediately before PUT, preserving concurrent modifications. Bind the
 final metadata default branch to the branch used for pending-gate qualification
-or existing effective-gate proof; a changed branch must not activate a gate. Audit
+or existing effective-gate proof; a changed branch must not activate a gate.
+Pending existing-gate proof requires unchanged enforcement and ref applicability
+in the final rule read; enforced intent retains recognized restoration. Audit
 legacy protection on active default and maintenance branches as drift under the
 canonical ruleset contract; distinguish verified unprotected responses from
 unreadable evidence, and never remove protection during audit. The exact

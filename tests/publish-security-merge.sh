@@ -128,11 +128,18 @@ github_api() {
     local template=code-scanning
     [[ ${endpoint##*/} != 7 ]] || template=dependency-review
     if [[ ${ruleset_state} == pending-branch-race ]]; then
+      local pending_filter=. pending_initial_filter=.
+      [[ ${endpoint##*/} != "${gate_update_id}" ]] || pending_initial_filter=${gate_initial_filter}
+      if [[ ${endpoint##*/} == "${gate_update_id}" ]] &&
+        (( $(jq -s --arg endpoint "${endpoint}" '[.[] | select(.endpoint == $endpoint)] | length' "${api_log}") >= 2 )); then
+        [[ ${gate_update_filter} != unreadable ]] || return 1
+        pending_filter=${gate_update_filter}
+      fi
       jq --argjson id "${endpoint##*/}" --argjson target "${gate_update_id}" \
         --arg branch "$(jq -r '.default_branch' <<<"${repository_state}")" '
         . + {id: $id, source_type: "Repository", source: "atrinik/content-toolkit"} |
         if $id == $target then .conditions.ref_name.include = [("refs/heads/" + $branch)] else . end' \
-        "${root}/config/rulesets/${template}.json"
+        "${root}/config/rulesets/${template}.json" | jq "${pending_initial_filter}" | jq "${pending_filter}"
       return
     elif [[ ${ruleset_state} == restoration-race || ${ruleset_state} == retirement-race ]]; then
       local filter=.
@@ -275,6 +282,7 @@ reset_case() {
   ruleset_state=missing
   gate_update_id=6
   gate_update_filter=.
+  gate_initial_filter=.
   gate_metadata_filter=
   gate_metadata_after_proof_filter=
   effective_state=covering
@@ -541,6 +549,59 @@ for policy_scope in organization repository; do
   jq -se '[.[] | select(.method != "GET")] | length == 2 and all(.[]; .method == "POST")' \
     "${api_log}" >/dev/null
   [[ ! -s ${readiness_log} ]]
+done
+
+# Pending grandfathering cannot restore a gate revoked after its effective
+# proof. Enforced intent deliberately permits the same restoration changes.
+for policy_scope in organization repository; do
+  for pending_gate_id in 6 7; do
+    for phase in pending enforced; do
+      for filter in '.enforcement = "disabled"' '.enforcement = "evaluate"' \
+        '.conditions.ref_name.include = ["refs/heads/other"]' \
+        '.conditions.ref_name.exclude = ["refs/heads/main"]' \
+        'unreadable' '.' \
+        '.bypass_actors[0].actor_id = null | if .rules[0].type == "required_status_checks" then .rules[0].parameters.do_not_enforce_on_create = false else . end' \
+        '.conditions.ref_name.include |= reverse | .conditions.ref_name.exclude |= reverse'; do
+        reset_case
+        ruleset_state=pending-branch-race
+        gate_update_id=${pending_gate_id}
+        gate_update_filter=${filter}
+        if [[ ${filter} == *'|= reverse'* ]]; then
+          gate_initial_filter='.conditions.ref_name.include += ["refs/heads/release/*"] | .conditions.ref_name.exclude = ["refs/heads/excluded-a", "refs/heads/excluded-b"]'
+        fi
+        export READINESS_STATUS=failed
+        jq --arg phase "${phase}" '.activation |= with_entries(.value |= with_entries(.value = $phase))' \
+          "${security_merge_config}" >"${temporary}/proof-phase.json"
+        cp "${temporary}/proof-phase.json" "${security_merge_config}"
+        status=0
+        # shellcheck source=/dev/null
+        source "${temporary}/dispatch.sh" >"${temporary}/pending-proof-fence.txt" 2>&1 || status=$?
+        if [[ ${filter} == unreadable ]] || { [[ ${phase} == pending ]] &&
+          [[ ${filter} == '.enforcement ='* || ${filter} == '.conditions.ref_name.include ='* ||
+             ${filter} == '.conditions.ref_name.exclude ='* ]]; }; then
+          [[ ${status} != 0 ]]
+          assert_no_writes
+          if [[ ${filter} != unreadable ]]; then
+            grep -Fq 'existing security gate protection changed after effective proof; retained' \
+              "${temporary}/pending-proof-fence.txt"
+          fi
+        else
+          [[ ${status} == 0 ]]
+          jq -se --arg endpoint "repos/atrinik/content-toolkit/rulesets/${pending_gate_id}" '
+            [.[] | select(.method != "GET")] | length == 1 and
+            .[0].method == "PUT" and .[0].endpoint == $endpoint' "${api_log}" >/dev/null
+        fi
+        jq -se --arg endpoint "repos/atrinik/content-toolkit/rulesets/${pending_gate_id}" '
+          [.[] | select(.endpoint == $endpoint and .method == "GET")] | length == 2' "${api_log}" >/dev/null
+        if [[ ${phase} == pending ]]; then
+          jq -se 'any(.[]; .endpoint == "repos/atrinik/content-toolkit/rules/branches/main")' \
+            "${api_log}" >/dev/null
+        fi
+        [[ ! -s ${readiness_log} ]]
+        cmp "${temporary}/proof-phase.json" "${security_merge_config}"
+      done
+    done
+  done
 done
 
 # The two gate phases are independent; qualification does not mutate source.

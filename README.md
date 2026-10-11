@@ -301,7 +301,10 @@ existing security gate, publication rechecks its ownership and recognized
 payload immediately before the write, retaining concurrent policy changes.
 Pending-gate qualification and existing effective-gate proof bind the same
 default branch as the final metadata fence; a changed branch cannot activate
-a gate using proof from the earlier branch.
+a gate using proof from the earlier branch. Pending existing-gate proof also
+requires unchanged enforcement and ref applicability in the final rule read;
+concurrent disabling or retargeting invalidates that proof. Enforced intent
+retains its recognized restoration behavior.
 
 Rulesets are the canonical branch protection contract. Audit also reads legacy
 protection on every active default branch and declared maintenance branch. Any

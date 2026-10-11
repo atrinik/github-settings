@@ -274,7 +274,10 @@
 - Before updating an existing security gate, re-read and revalidate its identity
   and recognized payload, retaining concurrent modifications. Bind the final
   metadata default branch to the branch used for pending-gate qualification
-  or existing effective-gate proof; changed branches must not activate a gate. Audit full legacy
+  or existing effective-gate proof; changed branches must not activate a gate.
+  Pending existing-gate proof also requires unchanged enforcement and ref
+  applicability in the final rule read. Enforced intent retains recognized
+  restoration. Audit full legacy
   protection on active default and declared maintenance branches; any presence
   is drift under the canonical ruleset contract. Only verified unprotected
   responses count as absent; unreadable evidence fails closed and audit never
