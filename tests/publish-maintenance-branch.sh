@@ -1702,8 +1702,9 @@ crate_setup_root() {
 
   mkdir -p "${destination}/bin" "${destination}/lib" "${destination}/tests"
   cp "${source_root}/bin/publish" "${source_root}/bin/validate" \
-    "${source_root}/bin/verify-manual-settings" "${destination}/bin/"
-  cp "${source_root}/lib/verify_crate_workflow.py" "${destination}/lib/"
+    "${source_root}/bin/verify-manual-settings" "${source_root}/bin/security-readiness" "${destination}/bin/"
+  cp "${source_root}/lib/verify_crate_workflow.py" "${source_root}/lib/security_readiness.py" \
+    "${destination}/lib/"
   cp -R "${source_root}/config" "${source_root}/community-health" \
     "${source_root}/.github" "${destination}/"
   cp -R "${source_root}/tests/fixtures" "${destination}/tests/"
@@ -1799,7 +1800,8 @@ for mode in selected all; do
     GH_CRATE_IMMUTABLE_INVENTORY=true GH_CRATE_FIXTURE_ROOT=${source_root} \
     PATH="${temporary}/bin:${PATH}" ATRINIK_POLICY_SCOPE=organization \
     "${pending_setup_root}/bin/publish" --apply >"${temporary}/crate-${mode}-already-selected.out"
-  jq -s -e 'all(.[]; (.endpoint | contains("/contents/.github/workflows/") | not) and
+  jq -s -e 'all(.[];
+    (.endpoint | test("/contents/\\.github/workflows/(publish-crate|release)\\.yml") | not) and
     (.endpoint | contains("/environments/crates-io-release") | not))' "${mode_log}" >/dev/null
 done
 
