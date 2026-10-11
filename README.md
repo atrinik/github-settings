@@ -676,8 +676,8 @@ Immutable releases require a stricter release contract than an immutable tag
 alone. Stage repository additions in `config/immutable-releases.json` as pending
 activation, then apply only after reviewed workflow qualification proves draft
 creation/recovery, complete verified assets, and publication as the final step.
-New crate source finalization fails before tags while live owner-enforced
-immutability is disabled; rerun after coordinated activation. Record both the repository name and
+Every registry upload must verify that the actual complete source release is
+immutable; a desired inventory entry alone is not publication evidence. Record both the repository name and
 the ID reported by GitHub. Validation requires every selected repository to be
 active, pull-request governed, and protected by the release-tag ruleset; the
 publisher fails closed if a live repository ID differs from the inventory.
@@ -805,23 +805,25 @@ content-toolkit (`1327107043`). These additions are pending activation until
 reviewed source workflows are merged and qualified. Their release producers
 must assemble and verify the complete crate/archive/manifest payload on a draft
 before publishing it. A published immutable release must be complete because
-its tag and assets can no longer be replaced. The crate source finalizer checks
-live `enabled=true,enforced_by_owner=true` before emitting any tag for a
-nonempty new crate manifest. A merge before policy activation therefore fails
-closed, preserving a retry after coordinated activation.
+its tag and assets can no longer be replaced. Before any registry upload, the crate publication helper verifies the actual
+source release has `immutable=true`. Ordinary `GITHUB_TOKEN` cannot read the
+administrative immutable-settings endpoint, so source workflows do not add an
+unsupported pre-tag query or administrative credentials. This inventory is
+activated only after reviewed draft-first source qualification.
 
 For protocol, separately verify that the actual immutable pinned
 semantic-release GitHub plugin supports the configured draft-first publication
 and the complete asset payload. A configured flag alone is not release proof.
 Qualification includes build, packaging, draft assembly, retry/recovery,
-pre-tag disabled-policy failure, and publication paths.
+actual immutable-release upload gating, and publication paths.
 
 Use this rollout order:
 
 1. Review, merge, and qualify each owning release workflow before activating
    its selection. Confirm draft creation/recovery and complete asset assembly;
    preserve Classic. Retain exact source revision and producer validation
-   evidence, including failure before tags when live immutability is disabled.
+   evidence, including rejection of mutable source releases before registry
+   authentication or upload.
 2. Merge this governance policy. Run `bin/publish` and inspect the exact
    `PUT /orgs/atrinik/settings/immutable-releases` payload. It must select only
    `[1327106950,1327106998,1327107043,1327289971]` in this inventory.
@@ -1185,7 +1187,8 @@ remain explicit. Observed source is parsed structurally on that exact main revis
 the policy and publication workflows install it before verification. The
 parser rejects duplicate YAML keys, comment-only/plain text, disabled automatic
 jobs, missing OIDC, mutable action refs, extra OIDC jobs, widened guards,
-inexact checkout/input bindings, and skipped verification/auth/upload steps.
+inexact checkout/input bindings, shell/workspace overrides, ignored critical
+failures, and skipped verification/auth/upload steps.
 It verifies executable dispatch, repository/ID/protected-main conditions,
 credential-free dependency, environment, scoped permissions, an unconditional
 full-SHA official auth action, and only the returned temporary upload token.

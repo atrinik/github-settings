@@ -172,9 +172,9 @@
   closed on live identity drift, and preserve the exact previous mode and
   selected-ID set for verified automatic rollback. Stage additions as pending
   desired state; apply only after their reviewed draft-first workflows are
-  merged and qualified. Nonempty new crate finalization fails before tags while
-  live owner-enforced immutability is disabled, then retries after coordinated
-  activation. Never apply immutable-release policy from an unmerged branch.
+  merged and qualified. Every registry upload must prove that its actual source
+  release is immutable; ordinary workflow tokens cannot read administrative
+  immutability settings, so do not add an unsupported pre-tag settings query. Never apply immutable-release policy from an unmerged branch.
 - Never print or commit administrative tokens, live secrets, or API responses
   containing credentials.
 - Run `bin/validate`, `bash -n`, ShellCheck on governance scripts, the publisher

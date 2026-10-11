@@ -47,6 +47,21 @@ def expression(value):
     return value
 
 
+def run_configuration(value, context):
+    defaults = value.get("defaults", {})
+    require(isinstance(defaults, dict), f"invalid {context} run defaults")
+    run_defaults = defaults.get("run", {})
+    require(isinstance(run_defaults, dict) and not run_defaults,
+            f"{context} run defaults must not override executable helper semantics")
+
+
+def critical_step(step, context):
+    require("shell" not in step and "working-directory" not in step,
+            f"{context} must use the standard runner shell and workspace")
+    require(step.get("continue-on-error", "false") == "false",
+            f"{context} must fail on execution errors")
+
+
 def helper_run(step, operation):
     if "if" in step or not isinstance(step.get("run"), str):
         return False
@@ -66,6 +81,7 @@ def helper_run(step, operation):
 def verify(source, repository, repository_id):
     workflow = yaml.load(source, Loader=UniqueLoader)
     require(isinstance(workflow, dict), "workflow must be a YAML mapping")
+    run_configuration(workflow, "workflow")
     triggers = workflow.get("on")
     require(isinstance(triggers, dict) and "workflow_dispatch" in triggers
             and set(triggers) <= {"workflow_dispatch", "schedule"},
@@ -100,6 +116,9 @@ def verify(source, repository, repository_id):
     for name in (verify_name, publish_name):
         job = jobs.get(name)
         require(isinstance(job, dict), f"missing job {name}")
+        run_configuration(job, name)
+        require(job.get("continue-on-error", "false") == "false",
+                f"{name} must fail on execution errors")
         terms = expression(job.get("if")).split("&&")
         require(len(terms) == len(guard) and {term.strip() for term in terms} == guard,
                 f"{name} must enforce exactly the repository/id/main/dispatch/automatic guard")
@@ -120,6 +139,7 @@ def verify(source, repository, repository_id):
                      and str(step.get("uses", "")).startswith("actions/checkout@")]
         require(len(checkouts) == 1, f"{name} must check out the exact main revision")
         checkout = checkouts[0]
+        critical_step(checkout, f"{name} checkout")
         require(re.fullmatch(r"actions/checkout@[0-9a-f]{40}", checkout["uses"]) is not None
                 and checkout.get("with", {}).get("ref") == "${{ github.sha }}"
                 and str(checkout.get("with", {}).get("persist-credentials")).lower() == "false"
@@ -130,6 +150,10 @@ def verify(source, repository, repository_id):
                 require(re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}",
                                      str(step["uses"])) is not None,
                         f"{name} action reference must be a full immutable SHA")
+    for name in (verify_name, publish_name):
+        for step in jobs[name]["steps"]:
+            if helper_run(step, "verify"):
+                critical_step(step, f"{name} verification")
     verify_job = jobs[verify_name]
     require(verify_job.get("permissions", workflow["permissions"]) == {"contents": "read"},
             "automatic verification must not request OIDC")
@@ -145,6 +169,7 @@ def verify(source, repository, repository_id):
                   if str(step.get("uses", "")).startswith("rust-lang/crates-io-auth-action@")]
     require(len(auth_steps) == 1, "automatic upload needs one official authentication action")
     auth_index, auth = auth_steps[0]
+    critical_step(auth, "official authentication step")
     require(auth.get("id") == "auth" and "if" not in auth,
             "official authentication step must be executable and have id auth")
     require(any(helper_run(step, "verify") for step in publish["steps"][:auth_index]),
@@ -153,6 +178,7 @@ def verify(source, repository, repository_id):
                if "CARGO_REGISTRY_TOKEN" in step.get("env", {})]
     require(len(uploads) == 1, "only one upload step may receive the registry token")
     upload_index, upload = uploads[0]
+    critical_step(upload, "registry upload step")
     require(upload_index > auth_index and upload.get("id") in (None, "upload") and "if" not in upload
             and upload["env"]["CARGO_REGISTRY_TOKEN"] == "${{ steps.auth.outputs.token }}"
             and helper_run(upload, "upload"),

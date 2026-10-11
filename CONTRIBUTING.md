@@ -99,8 +99,9 @@ the deployment handoff.
 
 An immutable-release inventory change stages desired state and must be activated
 only with a merged, qualified draft-first release workflow in every newly
-selected repository. Nonempty new crate manifests must fail before tags while
-live owner-enforced immutability is disabled, then retry after activation. Review the
+selected repository. Every registry upload must verify the actual source
+release is immutable. Ordinary workflow tokens cannot query administrative
+immutability settings; keep the supported source-release evidence boundary. Review the
 repository name and stable numeric ID, the exact organization selected set,
 owner-enforcement verification, and snapshot rollback tests. Merge the policy
 before requesting explicit authorization for `bin/publish --apply`; never

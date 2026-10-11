@@ -158,6 +158,11 @@ WORKFLOW
   crate-workflow-comments) source="# crates-io-release refs/heads/main automatic rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18" ;;
   crate-workflow-disabled) source=${source//inputs.operation == \'automatic\'/false} ;;
   crate-workflow-no-oidc) source=${source//id-token: write/id-token: none} ;;
+  crate-workflow-shell) source=$(sed '/- run: python3 tools\/crate_release.py verify/a\        shell: echo {0}' <<<"${source}") ;;
+  crate-workflow-ignored-step-failure) source=$(sed '/- run: python3 tools\/crate_release.py verify/a\        continue-on-error: true' <<<"${source}") ;;
+  crate-workflow-ignored-job-failure) source=$(sed '/    runs-on: ubuntu-24.04/a\    continue-on-error: true' <<<"${source}") ;;
+  crate-workflow-default-shell) source=$(printf 'defaults:\n  run:\n    shell: echo {0}\n%s\n' "${source}") ;;
+  crate-workflow-job-default-shell) source=$(sed '/    runs-on: ubuntu-24.04/a\    defaults:\n      run:\n        shell: echo {0}' <<<"${source}") ;;
   crate-workflow-comment-run) source=${source//run: python3/run: \"# python3}; source=${source//\"\$DIGEST\"/\"\$DIGEST\"\"} ;;
   esac
   jq -n --arg content "$(printf '%s' "${source}" | base64)" \
@@ -805,7 +810,9 @@ grep -Fq 'KEEP atrinik/protocol environment crates-io-release metadata' <<<"${ob
 grep -Fq 'GitHub metadata does not verify external registration' <<<"${observed_output}"
 for scenario in crate-workflow-drift crate-env-wait crate-env-reviewer crate-env-bypass \
   crate-env-branch crate-env-secret crate-workflow-comments crate-workflow-plaintext \
-  crate-workflow-disabled crate-workflow-no-oidc; do
+  crate-workflow-disabled crate-workflow-no-oidc crate-workflow-shell \
+  crate-workflow-ignored-step-failure crate-workflow-ignored-job-failure \
+  crate-workflow-default-shell crate-workflow-job-default-shell; do
   if run_verify "${scenario}" "${observed_root}" >"${temporary}/${scenario}.out" \
     2>"${temporary}/${scenario}.err"; then
     echo "error: verifier accepted ${scenario}" >&2
