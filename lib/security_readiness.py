@@ -170,8 +170,41 @@ def dependency_contract(data):
             if item and len(item[1]) > len(block[1]):
                 line = block[1] + "branches: [main]"
                 index += 1
+        # Activity order and flow/block spelling do not change which PR or
+        # merge-group events trigger review. Keep duplicates and unknown events visible to the
+        # contract comparison rather than silently broadening the trigger.
+        activity_flow = re.fullmatch(r"( *)types: *\[(.*)\]", line)
+        activity_block = re.fullmatch(r"( *)types:", line)
+        activities = None
+        if activity_flow:
+            activities = [item.strip() for item in activity_flow[2].split(",")]
+            indentation = activity_flow[1]
+        elif activity_block:
+            activities = []
+            indentation = activity_block[1]
+            while index + 1 < len(lines):
+                item = re.fullmatch(r"( *)- +(.+)", lines[index + 1])
+                if not item or len(item[1]) <= len(indentation):
+                    break
+                activities.append(item[2])
+                index += 1
+        if activities is not None:
+            values = []
+            for activity in activities:
+                value = re.fullmatch(r"(?:([a-z_]+)|'([a-z_]+)'|\"([a-z_]+)\")", activity)
+                require(value is not None, "dependency-review activity types unsupported")
+                values.append(next(part for part in value.groups() if part is not None))
+            line = indentation + "types: [" + ", ".join(sorted(values)) + "]"
         normalized.append(line)
         index += 1
+    # YAML mapping key order does not change the PR trigger. Reorder only the
+    # two recognized, already-normalized keys; retain every value and any
+    # additional or duplicated key for the exact contract comparison below.
+    for index in range(len(normalized) - 2):
+        if (normalized[index] == "  pull_request:"
+                and normalized[index + 1].startswith("    types: [")
+                and normalized[index + 2] == "    branches: [main]"):
+            normalized[index + 1:index + 3] = [normalized[index + 2], normalized[index + 1]]
     return normalized
 
 

@@ -164,13 +164,25 @@ requires the GitHub Actions `Dependency review` job. Both permit only
 organization owners to bypass through a pull request; bypass can merge findings
 and must be a deliberate owner decision. Direct pushes gain no exception.
 
-The dependency workflow runs on every pull request to `main`, with read-only
-contents permission and no checkout. It rejects new high/critical vulnerable
-runtime, development, or unknown-scope dependencies and fails on review errors.
+The dependency workflow runs on pull requests to `main` when opened, updated,
+reopened, or edited, including a base-branch retarget to `main`. It also runs
+for merge queue groups when checks are requested. The action reads each event's
+base and head revisions directly, with read-only contents permission and no
+checkout. It rejects new high/critical
+vulnerable runtime, development, or unknown-scope dependencies and fails on
+review errors.
 It relies on GitHub's dependency graph and submitted snapshots; unsupported or
 missing manifests cannot provide comprehensive dependency coverage. This is
-separate from Dependabot's scheduled update and alert capabilities. Default
-CodeQL setup similarly analyzes supported languages and its detected build
+separate from Dependabot's scheduled update and alert capabilities.
+
+GitHub's [Dependabot alert limitations](https://docs.github.com/en/code-security/concepts/supply-chain-security/dependabot-alerts#limitations)
+exclude advisory alerts for Actions referenced by commit SHA. SHA pinning and
+a passing dependency review therefore do not prove that an Action commit is
+free of known vulnerabilities; review upstream advisories when updating pins.
+The high/critical dependency gate remains enabled for vulnerabilities GitHub
+reports through its supported dependency data.
+
+Default CodeQL setup similarly analyzes supported languages and its detected build
 coverage; enabling it alone does not prove a successful analysis. Rust in
 `content-toolkit` is an explicit minimum, unioned with its existing languages.
 Legacy `javascript`/`typescript` aliases use `javascript-typescript` in the
@@ -179,8 +191,8 @@ Read failures never replace that live language set with an incomplete set.
 
 GitHub's [code-scanning merge-protection limitations](https://docs.github.com/en/code-security/concepts/code-scanning/merge-protection)
 exclude Dependabot pull requests analyzed by default setup and merge queue
-groups. Dependency review remains a required check for those Dependabot PRs;
-it does not inherit that CodeQL exception. CodeQL merge protection also depends
+groups. Dependency review runs for queue groups and remains a required check
+for those Dependabot PRs; it does not inherit those CodeQL exceptions. CodeQL merge protection also depends
 on the alert's affected lines appearing in the PR diff. Ordinary quality alerts
 remain excluded by `alerts_threshold: none`.
 

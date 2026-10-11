@@ -23,10 +23,45 @@ SPEC.loader.exec_module(readiness)
 HEAD, BASE, MERGE = "a" * 40, "b" * 40, "c" * 40
 OLD, NEW = "d" * 40, "e" * 40
 WORKFLOW = ("name: Dependency review\n\non:\n  pull_request:\n    branches: [main]\n"
+            "    types: [opened, synchronize, reopened, edited]\n"
+            "  merge_group:\n    types: [checks_requested]\n"
             "permissions:\n  contents: read\njobs:\n  dependency-review:\n"
             "    name: Dependency review\n    runs-on: ubuntu-24.04\n    steps:\n"
             f"      - uses: actions/dependency-review-action@{OLD} # v5.0.0\n"
             "        with:\n          fail-on-severity: high\n          warn-only: false\n").encode()
+# Snapshot of the actual content-toolkit producer, including its types-first
+# mapping, block branch filter, named step, and complete enforcement settings.
+# Immutable action versions remain producer-owned and are normalized by policy.
+COMPONENT_WORKFLOW = b"""name: Dependency review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+    branches:
+      - main
+  merge_group:
+    types: [checks_requested]
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    name: Dependency review
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+          fail-on-scopes: runtime,development,unknown
+          warn-only: false
+          comment-summary-in-pr: never
+          show-openssf-scorecard: false
+          retry-on-snapshot-warnings: true
+          retry-on-snapshot-warnings-timeout: 120
+"""
 SELECTED = {"github_owned_allowed": True, "verified_allowed": False,
             "patterns_allowed": ["rust-lang/crates-io-auth-action@*", "docker/setup-buildx-action@*"]}
 CODEQL_WORKFLOW = b"""name: CodeQL
@@ -184,6 +219,68 @@ class ReadinessTests(unittest.TestCase):
     def test_dependency_ready_latest_attempt_exact_workflow(self):
         self.assertEqual(self.invoke("dependency")[0], 0)
         self.assertTrue(any("/attempts/2/jobs" in call for call in self.fixture.calls))
+
+    def test_dependency_base_retarget_requires_edited_trigger(self):
+        # An otherwise green producer that ran before retargeting coverage was
+        # added cannot establish the complete default-branch PR contract.
+        old = WORKFLOW.replace(b"opened, synchronize, reopened, edited",
+                               b"opened, synchronize, reopened")
+        self.fixture.default_workflow = old
+        self.fixture.run_workflow = old
+        self.fixture.executed_workflow = old
+        self.assert_deferred("dependency", "not landed")
+
+    def test_dependency_base_retarget_activity_block_ready(self):
+        edited = WORKFLOW.replace(
+            b"    types: [opened, synchronize, reopened, edited]",
+            b"    types:\n      - edited\n      - opened\n      - reopened\n      - synchronize")
+        self.fixture.default_workflow = edited
+        self.fixture.run_workflow = edited
+        self.fixture.executed_workflow = edited
+        self.assertEqual(self.invoke("dependency")[0], 0)
+
+    def test_dependency_extra_activity_type_deferred(self):
+        self.fixture.default_workflow = WORKFLOW.replace(b"reopened, edited]",
+                                                        b"reopened, edited, closed]")
+        self.assert_deferred("dependency", "not landed")
+
+    def test_dependency_merge_queue_trigger_required(self):
+        self.fixture.default_workflow = WORKFLOW.replace(
+            b"  merge_group:\n    types: [checks_requested]\n", b"")
+        self.assert_deferred("dependency", "not landed")
+
+    def test_dependency_merge_queue_activity_block_ready(self):
+        queue = WORKFLOW.replace(b"    types: [checks_requested]",
+                                 b"    types:\n      - checks_requested")
+        self.fixture.default_workflow = queue
+        self.fixture.run_workflow = queue
+        self.fixture.executed_workflow = queue
+        self.assertEqual(self.invoke("dependency")[0], 0)
+
+    def test_dependency_merge_queue_wrong_activity_deferred(self):
+        self.fixture.default_workflow = WORKFLOW.replace(b"[checks_requested]", b"[destroyed]")
+        self.assert_deferred("dependency", "not landed")
+
+    def test_dependency_merge_queue_run_does_not_replace_pr_evidence(self):
+        self.fixture.run["event"] = "merge_group"
+        self.assert_deferred("dependency", "latest dependency-review PR run not successful")
+
+    def test_actual_component_workflow_key_order_matches_central_contract(self):
+        central = (ROOT / ".github/workflows/dependency-review.yml").read_bytes()
+        self.assertEqual(readiness.dependency_contract(COMPONENT_WORKFLOW),
+                         readiness.dependency_contract(central))
+
+    def test_actual_component_key_order_preserves_branch_restriction(self):
+        central = (ROOT / ".github/workflows/dependency-review.yml").read_bytes()
+        changed = COMPONENT_WORKFLOW.replace(b"      - main", b"      - other")
+        self.assertNotEqual(readiness.dependency_contract(changed),
+                            readiness.dependency_contract(central))
+
+    def test_actual_component_key_order_preserves_activity_restriction(self):
+        central = (ROOT / ".github/workflows/dependency-review.yml").read_bytes()
+        changed = COMPONENT_WORKFLOW.replace(b", edited]", b"]")
+        self.assertNotEqual(readiness.dependency_contract(changed),
+                            readiness.dependency_contract(central))
 
     def test_dependency_not_landed(self):
         self.fixture.default_workflow = WORKFLOW.replace(b"fail-on-severity: high", b"fail-on-severity: low")
