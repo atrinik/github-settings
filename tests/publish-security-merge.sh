@@ -312,7 +312,7 @@ for removal in removal-owned removal-owner-null removal-foreign removal-id-drift
     ]' "${api_log}" >/dev/null
   else
     assert_no_writes
-    rg -q '^SKIP ' "${temporary}/${removal}.txt"
+    grep -q '^SKIP ' "${temporary}/${removal}.txt"
   fi
   [[ ! -s ${readiness_log} ]]
 done

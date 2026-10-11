@@ -103,9 +103,12 @@ class Fixture:
                    "head": {"sha": HEAD, "repo": {"full_name": "atrinik/example"}}}
         self.run = {"id": 9, "run_attempt": 2, "event": "pull_request", "status": "completed",
                     "conclusion": "success", "head_sha": HEAD, "check_suite_id": 99,
+                    "path": ".github/workflows/dependency-review.yml",
+                    "head_repository": {"full_name": "atrinik/example"},
                     "pull_requests": [{"number": 12, "head": {"sha": HEAD},
                                        "base": {"sha": BASE, "ref": "main"}}]}
         self.suite_runs = {}
+        self.associated_pulls = [{"number": 12}]
         self.suite = {"id": 99, "head_sha": MERGE, "status": "completed", "conclusion": "success",
                       "app": {"id": 15368}, "pull_requests": copy.deepcopy(self.run["pull_requests"])}
         self.jobs = [{"name": "Dependency review", "status": "completed", "conclusion": "success"}]
@@ -170,6 +173,8 @@ class Fixture:
             return copy.deepcopy(self.live)
         if "/pulls/12/files" in endpoint:
             return copy.deepcopy(self.files)
+        if f"/commits/{HEAD}/pulls?" in endpoint:
+            return copy.deepcopy(self.associated_pulls)
         if endpoint == "repos/atrinik/example/commits/" + MERGE:
             return {"parents": [{"sha": value} for value in self.parents]}
         if "/check-runs?" in endpoint:
@@ -180,8 +185,10 @@ class Fixture:
             return {"workflow_runs": [copy.deepcopy(self.suite_runs.get(suite_id, self.run))]}
         if "/actions/runs?event=pull_request&head_sha=" in endpoint:
             return {"total_count": 1, "workflow_runs": [copy.deepcopy(self.run)]}
-        if "/check-suites/99" in endpoint:
-            return copy.deepcopy(self.suite)
+        if "/check-suites/" in endpoint:
+            value = copy.deepcopy(self.suite)
+            value["id"] = int(endpoint.rsplit("/", 1)[1])
+            return value
         if "/branches/main" in endpoint:
             return {"commit": {"sha": self.branch_head}}
         if "/code-scanning/analyses?" in endpoint:
@@ -228,6 +235,164 @@ class ReadinessTests(unittest.TestCase):
     def test_dependency_ready_latest_attempt_exact_workflow(self):
         self.assertEqual(self.invoke("dependency")[0], 0)
         self.assertTrue(any("/attempts/2/jobs" in call for call in self.fixture.calls))
+
+    def merged_empty_fixture(self, run_empty=True, suite_empty=True):
+        fixture = Fixture()
+        fixture.pr.update(state="closed", merged=True, merge_commit_sha=NEW)
+        if run_empty:
+            fixture.run["pull_requests"] = []
+        if suite_empty:
+            fixture.suite["pull_requests"] = []
+        return fixture
+
+    def test_merged_empty_associations_ready_for_dependency_and_stored_sha_canary(self):
+        for mode in ("dependency", "sha"):
+            for run_empty, suite_empty in ((True, False), (False, True), (True, True)):
+                for direct_head in (False, True):
+                    with self.subTest(mode=mode, run_empty=run_empty, suite_empty=suite_empty,
+                                      direct_head=direct_head):
+                        fixture = self.merged_empty_fixture(run_empty, suite_empty)
+                        if direct_head:
+                            fixture.suite["head_sha"] = HEAD
+                        elif mode == "sha":
+                            fixture.checks[MERGE] = [check("Required checks", MERGE),
+                                                     check("Conventional PR title", MERGE, 2)]
+                            fixture.checks[HEAD] = []
+                        with patch.object(readiness, "api", fixture):
+                            result, output = self.invoke(mode)
+                        self.assertEqual(result, 0, output)
+                        self.assertGreaterEqual(sum(f"/commits/{HEAD}/pulls?" in endpoint
+                                                    for endpoint in fixture.calls), 2)
+
+    def test_merged_empty_association_newer_failed_or_queued_canary_still_blocks(self):
+        for status, conclusion in (("completed", "failure"), ("queued", None)):
+            with self.subTest(status=status):
+                fixture = self.merged_empty_fixture()
+                newer = check("Required checks", identifier=50, status=status, conclusion=conclusion)
+                newer["started_at"] = None
+                newer["check_suite"]["id"] = 100
+                fixture.checks[HEAD].append(newer)
+                run = copy.deepcopy(fixture.run)
+                run.update(id=20, check_suite_id=100, status=status, conclusion=conclusion)
+                fixture.suite_runs[100] = run
+                with patch.object(readiness, "api", fixture):
+                    self.assert_deferred("sha", "workflow run not successful")
+
+    def test_merged_empty_associations_reject_ambiguous_or_missing_commit_pulls(self):
+        for mode in ("dependency", "sha"):
+            for entries in ([], [{"number": 12}, {"number": 13}]):
+                with self.subTest(mode=mode, entries=entries):
+                    fixture = self.merged_empty_fixture()
+                    fixture.associated_pulls = entries
+                    with patch.object(readiness, "api", fixture):
+                        self.assert_deferred(mode, "association missing or ambiguous")
+
+    def test_merged_empty_associations_reject_open_pr(self):
+        for mode in ("dependency", "sha"):
+            with self.subTest(mode=mode):
+                fixture = self.merged_empty_fixture()
+                fixture.pr.update(state="open", merged=False)
+                fixture.pr["merge_commit_sha"] = MERGE
+                with patch.object(readiness, "api", fixture):
+                    self.assert_deferred(mode, "association identity")
+
+    def test_merged_empty_associations_reject_identity_mismatch(self):
+        for mode in ("dependency", "sha"):
+            for field in ("head", "head_repository", "base", "base_repository", "number"):
+                with self.subTest(mode=mode, field=field):
+                    fixture = self.merged_empty_fixture()
+                    # Change only the independently fetched association PR; retain
+                    # the caller's initial canary so its own guards cannot mask this test.
+                    count = 0
+                    def mismatch(endpoint):
+                        nonlocal count
+                        value = fixture(endpoint)
+                        if endpoint.endswith("/pulls/12"):
+                            count += 1
+                            if mode == "dependency" or count > 1:
+                                if field == "head":
+                                    value["head"]["sha"] = OLD
+                                elif field == "head_repository":
+                                    value["head"]["repo"]["full_name"] = "other/example"
+                                elif field == "base":
+                                    value["base"]["ref"] = "other"
+                                elif field == "base_repository":
+                                    value["base"]["repo"]["full_name"] = "other/example"
+                                else:
+                                    value["number"] = 13
+                        return value
+                    with patch.object(readiness, "api", mismatch):
+                        self.assert_deferred(mode, "association identity")
+
+    def test_merged_empty_associations_never_override_nonempty_conflict(self):
+        for mode in ("dependency", "sha"):
+            for conflicting in ("run", "suite"):
+                with self.subTest(mode=mode, conflicting=conflicting):
+                    fixture = self.merged_empty_fixture(conflicting != "run", conflicting != "suite")
+                    source = fixture.run if conflicting == "run" else fixture.suite
+                    source["pull_requests"][0]["base"]["sha"] = OLD
+                    with patch.object(readiness, "api", fixture):
+                        self.assert_deferred(mode, "nonempty PR association conflicts")
+
+    def test_merged_empty_associations_reject_non_pr_event_or_workflow_path(self):
+        for mode in ("dependency", "sha"):
+            for field, value in (("event", "push"), ("event", "workflow_dispatch"),
+                                 ("path", "untrusted.yml")):
+                with self.subTest(mode=mode, field=field, value=value):
+                    fixture = self.merged_empty_fixture()
+                    fixture.run[field] = value
+                    with patch.object(readiness, "api", fixture):
+                        result, output = self.invoke(mode)
+                    self.assertEqual(result, 1, output)
+
+    def test_merged_empty_associations_unreadable_is_error(self):
+        for mode in ("dependency", "sha"):
+            with self.subTest(mode=mode):
+                fixture = self.merged_empty_fixture()
+                def unreadable(endpoint):
+                    if f"/commits/{HEAD}/pulls?" in endpoint:
+                        raise readiness.APIError(endpoint, 403)
+                    return fixture(endpoint)
+                with patch.object(readiness, "api", unreadable):
+                    code, output = self.invoke(mode)
+                self.assertEqual(code, 2, output)
+                self.assertIn("HTTP 403", output)
+
+    def test_merged_empty_association_collection_is_refenced(self):
+        for mode in ("dependency", "sha"):
+            with self.subTest(mode=mode):
+                fixture = self.merged_empty_fixture()
+                verify = readiness.verify_recovered_associations
+                def change_at_fence(coordinate, recovered):
+                    fixture.associated_pulls.append({"number": 13})
+                    return verify(coordinate, recovered)
+                with patch.object(readiness, "api", fixture), patch.object(
+                        readiness, "verify_recovered_associations", change_at_fence):
+                    self.assert_deferred(mode, "association missing or ambiguous")
+
+    def test_merged_empty_association_pr_identity_is_refenced(self):
+        for mode in ("dependency", "sha"):
+            with self.subTest(mode=mode):
+                fixture = self.merged_empty_fixture()
+                verify = readiness.verify_recovered_associations
+                def change_at_fence(coordinate, recovered):
+                    fixture.pr["base"]["sha"] = OLD
+                    return verify(coordinate, recovered)
+                with patch.object(readiness, "api", fixture), patch.object(
+                        readiness, "verify_recovered_associations", change_at_fence):
+                    self.assert_deferred(mode, "association changed during preflight")
+
+    def test_merged_empty_association_preserves_workflow_and_merge_parent_proof(self):
+        for mode in ("dependency", "sha"):
+            with self.subTest(mode=mode):
+                fixture = self.merged_empty_fixture()
+                fixture.parents = [OLD, HEAD]
+                with patch.object(readiness, "api", fixture):
+                    self.assert_deferred(mode, "merge")
+        fixture = self.merged_empty_fixture()
+        fixture.executed_workflow += b"# changed execution bytes\n"
+        with patch.object(readiness, "api", fixture):
+            self.assert_deferred("dependency", "different workflow bytes")
 
     def test_dependency_base_retarget_requires_edited_trigger(self):
         # An otherwise green producer that ran before retargeting coverage was
@@ -371,7 +536,7 @@ class ReadinessTests(unittest.TestCase):
 
     def test_dependency_direct_head_missing_execution_pr_association(self):
         self.fixture.suite.update(head_sha=HEAD, pull_requests=[])
-        self.assert_deferred("dependency", "execution PR association")
+        self.assert_deferred("dependency", "merged PR association")
 
     def test_dependency_executed_merge_wrong_parents_deferred(self):
         self.fixture.parents = [BASE, OLD]

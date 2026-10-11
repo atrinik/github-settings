@@ -208,6 +208,50 @@ def dependency_contract(data):
     return normalized
 
 
+def pull_identity(pr):
+    return {"number": pr["number"], "state": pr["state"], "merged": pr["merged"], "draft": pr["draft"],
+            "head": (pr["head"]["sha"], pr["head"]["repo"]["full_name"]),
+            "base": (pr["base"]["sha"], pr["base"]["ref"], pr["base"]["repo"]["full_name"])}
+
+
+def merged_run_pull(coordinate, run, default_branch):
+    """Recover only an unambiguous, fully fetched merged PR after refs disappear."""
+    require(run["event"] == "pull_request"
+            and re.fullmatch(r"\.github/workflows/[^/]+\.ya?ml", run["path"]) is not None,
+            "merged PR association requires a PR workflow")
+    require(bool(SHA.fullmatch(run["head_sha"])), "merged PR association head missing")
+    associated = pages(f"repos/{coordinate}/commits/{run['head_sha']}/pulls")
+    require(len(associated) == 1, "merged PR association missing or ambiguous")
+    pr = api(f"repos/{coordinate}/pulls/{associated[0]['number']}")
+    require(pr["number"] == associated[0]["number"] and pr["merged"] is True
+            and pr["state"] == "closed" and pr["head"]["sha"] == run["head_sha"]
+            and pr["head"]["repo"]["full_name"].lower() == run["head_repository"]["full_name"].lower()
+            and pr["base"]["repo"]["full_name"].lower() == coordinate.lower()
+            and pr["base"]["ref"] == default_branch,
+            "merged PR association identity does not match run/default branch")
+    return pr
+
+
+def association_references(coordinate, run, suite, default_branch, recovered):
+    if run["pull_requests"] and suite["pull_requests"]:
+        return run["pull_requests"], suite["pull_requests"]
+    pr = merged_run_pull(coordinate, run, default_branch)
+    for references in (run["pull_requests"], suite["pull_requests"]):
+        require(all(item["number"] == pr["number"]
+                    and item["head"]["sha"] == pr["head"]["sha"]
+                    and item["base"]["sha"] == pr["base"]["sha"]
+                    and item["base"]["ref"] == pr["base"]["ref"] for item in references),
+                "nonempty PR association conflicts with merged PR")
+    recovered.append((run, default_branch, pull_identity(pr)))
+    return [pr], [pr]
+
+
+def verify_recovered_associations(coordinate, recovered):
+    for run, default_branch, identity in recovered:
+        require(pull_identity(merged_run_pull(coordinate, run, default_branch)) == identity,
+                "merged PR association changed during preflight")
+
+
 def dependency(coordinate):
     metadata = repository(coordinate)
     path = ".github/workflows/dependency-review.yml"
@@ -218,7 +262,7 @@ def dependency(coordinate):
     run = latest_dependency_run(coordinate)
     require(run["event"] == "pull_request" and run["status"] == "completed"
             and run["conclusion"] == "success", "latest dependency-review PR run not successful")
-    require(bool(run["pull_requests"]), "dependency-review PR association missing")
+    require(run["path"] == path, "dependency-review run workflow path changed")
     suite_endpoint = f"repos/{coordinate}/check-suites/{run['check_suite_id']}"
     suite = api(suite_endpoint)
     require(suite["id"] == run["check_suite_id"] and suite["app"]["id"] == ACTION_APP
@@ -230,8 +274,10 @@ def dependency(coordinate):
     if executed != run["head_sha"]:
         merge_commit = api(f"repos/{coordinate}/commits/{executed}")
         merge_parents = [parent["sha"] for parent in merge_commit["parents"]]
-    pulls = []
-    for reference in run["pull_requests"]:
+    recovered, pulls = [], []
+    references, suite_references = association_references(
+        coordinate, run, suite, metadata["default_branch"], recovered)
+    for reference in references:
         pr = api(f"repos/{coordinate}/pulls/{reference['number']}")
         require(pr["base"]["repo"]["full_name"].lower() == coordinate.lower()
                 and pr["base"]["ref"] == metadata["default_branch"],
@@ -245,7 +291,7 @@ def dependency(coordinate):
                     and item["head"]["sha"] == pr["head"]["sha"]
                     and item["base"]["sha"] == pr["base"]["sha"]
                     and item["base"]["ref"] == pr["base"]["ref"]
-                    for item in suite["pull_requests"]),
+                    for item in suite_references),
                 "dependency-review execution PR association missing or stale")
         if merge_parents is not None:
             require(len(merge_parents) == 2 and set(merge_parents)
@@ -260,7 +306,7 @@ def dependency(coordinate):
             and matches[0]["conclusion"] == "success", "Dependency review job not successful")
     fresh = latest_dependency_run(coordinate)
     run_keys = ("id", "run_attempt", "status", "conclusion", "event", "head_sha",
-                "check_suite_id", "pull_requests")
+                "check_suite_id", "pull_requests", "path", "head_repository")
     require(all(fresh[key] == run[key] for key in run_keys),
             "dependency-review run changed during preflight")
     fresh_suite = api(suite_endpoint)
@@ -275,6 +321,7 @@ def dependency(coordinate):
                 and fresh_pr["base"]["repo"]["full_name"] == pr["base"]["repo"]["full_name"]
                 and all(fresh_pr[key] == pr[key] for key in ("state", "draft", "merged")),
                 "dependency-review PR changed during preflight")
+    verify_recovered_associations(coordinate, recovered)
     require(contents(coordinate, path, metadata["default_branch"]) == landed,
             "default-branch dependency-review workflow changed during preflight")
     require(repository(coordinate)["default_branch"] == metadata["default_branch"],
@@ -311,7 +358,7 @@ def pin_changes(before, after, selected):
     return changed
 
 
-def merge_check_run(coordinate, check, pr, merges, proofs):
+def merge_check_run(coordinate, check, pr, merges, proofs, recovered):
     """Establish PR association before selecting the latest check, even if failing."""
     if check["head_sha"] != pr["head"]["sha"] and check["head_sha"] not in merges:
         return False
@@ -322,12 +369,18 @@ def merge_check_run(coordinate, check, pr, merges, proofs):
         runs = value["workflow_runs"]
         valid = bool(len(runs) == 1 and runs[0]["event"] == "pull_request"
                      and runs[0]["head_sha"] == pr["head"]["sha"]
-                     and runs[0]["check_suite_id"] == suite_id
-                     and any(item["number"] == pr["number"]
-                             and item["head"]["sha"] == pr["head"]["sha"]
-                             and item["base"]["ref"] == pr["base"]["ref"]
-                             for item in runs[0]["pull_requests"]))
-        proofs[suite_id] = {"endpoint": endpoint, "run": runs[0] if valid else None}
+                     and runs[0]["check_suite_id"] == suite_id)
+        suite = None
+        if valid:
+            suite = api(f"repos/{coordinate}/check-suites/{suite_id}")
+            references, suite_references = association_references(
+                coordinate, runs[0], suite, pr["base"]["ref"], recovered)
+            valid = suite["id"] == suite_id and suite["app"]["id"] == ACTION_APP and all(
+                any(item["number"] == pr["number"]
+                    and item["head"]["sha"] == pr["head"]["sha"]
+                    and item["base"]["ref"] == pr["base"]["ref"] for item in refs)
+                for refs in (references, suite_references))
+        proofs[suite_id] = {"endpoint": endpoint, "run": runs[0] if valid else None, "suite": suite}
     return proofs[suite_id]["run"] is not None
 
 
@@ -360,7 +413,7 @@ def sha(coordinate, number):
         updates += pin_changes(contents(coordinate, path, pr["base"]["sha"]),
                                contents(pr["head"]["repo"]["full_name"], path, pr["head"]["sha"]), selected)
     merge = pr.get("merge_commit_sha") if not pr["merged"] else None
-    merges = set()
+    merges, recovered = set(), []
     if merge:
         require(bool(SHA.fullmatch(merge)), "canary merge SHA malformed")
         commit = api(f"repos/{coordinate}/commits/{merge}")
@@ -373,10 +426,14 @@ def sha(coordinate, number):
         runs = pages(f"repos/{coordinate}/actions/runs?event=pull_request&head_sha={pr['head']['sha']}",
                      "workflow_runs")
         for run in runs:
-            references = [item for item in run["pull_requests"] if item["number"] == number]
-            if run["event"] != "pull_request" or run["head_sha"] != pr["head"]["sha"] or not references:
+            if run["event"] != "pull_request" or run["head_sha"] != pr["head"]["sha"]:
                 continue
             suite = api(f"repos/{coordinate}/check-suites/{run['check_suite_id']}")
+            references, _ = association_references(
+                coordinate, run, suite, metadata["default_branch"], recovered)
+            references = [item for item in references if item["number"] == number]
+            if not references:
+                continue
             candidate = suite["head_sha"]
             if candidate == pr["head"]["sha"]:
                 continue
@@ -397,7 +454,7 @@ def sha(coordinate, number):
         candidates = [check for check in checks if check["name"] == context
                       and check["app"]["id"] == ACTION_APP
                       and check["app"]["slug"] == "github-actions"
-                      and merge_check_run(coordinate, check, pr, merges, proofs)]
+                      and merge_check_run(coordinate, check, pr, merges, proofs, recovered)]
         require(bool(candidates), f"required check missing for canary head: {context}")
         # Check IDs order creation, including queued checks with no started_at.
         # Scheduling/start time must not let an older green check hide a newer
@@ -410,7 +467,7 @@ def sha(coordinate, number):
                 f"required check not successful for canary head: {context}")
         selected_checks.append(latest)
     run_keys = ("id", "run_attempt", "event", "head_sha", "check_suite_id", "status", "conclusion",
-                "pull_requests")
+                "pull_requests", "path", "head_repository")
     check_keys = ("id", "name", "head_sha", "status", "conclusion", "app", "check_suite", "started_at")
     fresh_checks = []
     for ref in [pr["head"]["sha"], *sorted(merges)]:
@@ -426,6 +483,11 @@ def sha(coordinate, number):
         fresh_runs = api(proof["endpoint"])["workflow_runs"]
         require(len(fresh_runs) == 1 and all(fresh_runs[0][key] == proof["run"][key] for key in run_keys),
                 "canary PR workflow-run evidence changed during preflight")
+        fresh_suite = api(f"repos/{coordinate}/check-suites/{suite_id}")
+        suite_keys = ("id", "head_sha", "app", "status", "conclusion", "pull_requests")
+        require(all(fresh_suite[key] == proof["suite"][key] for key in suite_keys),
+                "canary check-suite evidence changed during preflight")
+    verify_recovered_associations(coordinate, recovered)
     for check in selected_checks:
         fresh_check = api(f"repos/{coordinate}/check-runs/{check['id']}")
         require(all(fresh_check[key] == check[key] for key in check_keys),
