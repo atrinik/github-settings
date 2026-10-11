@@ -801,7 +801,7 @@ fi
 grep -Fq '2026-08-07T01:00:00Z' "${temporary}/old-success.out"
 grep -Fq 'actions/runs/1' "${temporary}/old-success.out"
 
-if rg -n 'health-token|settings-token' "${temporary}"/*.out \
+if grep -En 'health-token|settings-token' "${temporary}"/*.out \
   "${temporary}"/*.err "${temporary}/step-summary" >/dev/null; then
   echo "error: health output exposed credential material" >&2
   exit 1
