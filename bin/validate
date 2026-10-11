@@ -729,7 +729,7 @@ jq -e \
   ) and
   all(
     $credentials[];
-    (keys == [
+    ((keys - ["environment"]) == [
       "consumers",
       "credential_type",
       "last_verified_on",
@@ -745,8 +745,27 @@ jq -e \
       "secret_name",
       "secret_scope"
     ]) and
-    .credential_type == "classic_pat" and
-    .secret_scope == "repository" and
+    (
+      (if .credential_type == "classic_pat" then
+        .secret_scope == "repository" and (has("environment") | not) and
+        .required_scopes == ["admin:org", "project", "repo"]
+      else
+        .secret_scope == "environment" and .environment == "development" and
+        .repository == "atrinik/metaserver-worker" and .repository_id == 1324297032 and
+        .consumers == [".github/workflows/deploy-development.yml"] and
+        .runbook == "README.md#metaserver-development-credentials" and
+        (if .secret_name == "CLOUDFLARE_API_TOKEN" then
+          .credential_type == "cloudflare_account_token" and
+          .required_scopes == ["D1 Read", "Workers Scripts Edit"]
+        elif .secret_name == "ATRINIK_DELIVERY_RESOURCE_READ_TOKEN" then
+          .credential_type == "cloudflare_account_token" and
+          .required_scopes == ["Workers Scripts Read"]
+        elif .secret_name == "ATRINIK_PRODUCTION_BUILDS_READ_TOKEN" then
+          .credential_type == "cloudflare_user_token" and
+          .required_scopes == ["Workers CI Read", "Workers Scripts Read"]
+        else false end)
+      end)
+    ) and
     (
       .repository |
       type == "string" and
@@ -760,10 +779,6 @@ jq -e \
     ) and
     (.repository_id | type == "number" and . > 0 and floor == .) and
     (.secret_name | type == "string" and test("^[A-Z][A-Z0-9_]*$")) and
-    (
-      .required_scopes |
-      . == ["admin:org", "project", "repo"]
-    ) and
     (
       .consumers |
       type == "array" and
@@ -808,13 +823,18 @@ jq -e \
   )
 ' "${manual_settings_config}" >/dev/null
 
-while IFS= read -r consumer; do
-  if [[ ! -f ${root}/${consumer} ]]; then
-    echo "error: credential consumer workflow is missing: ${consumer}" >&2
-    exit 1
+while IFS= read -r credential; do
+  if [[ $(jq -r ' .credential_type' <<<"${credential}") == classic_pat ]]; then
+    while IFS= read -r consumer; do
+      if [[ ! -f ${root}/${consumer} ]]; then
+        echo "error: credential consumer workflow is missing: ${consumer}" >&2
+        exit 1
+      fi
+    done < <(jq -r '.consumers[]' <<<"${credential}")
   fi
-done < <(jq -r '.github_actions_credentials[].consumers[]' \
-  "${manual_settings_config}")
+  # External metaserver consumers are constrained by stable identity and exact
+  # workflow path above; this local validator cannot prove remote source.
+done < <(jq -c '.github_actions_credentials[]' "${manual_settings_config}")
 
 jq -e --arg today "${validation_today}" '
   .github_packages_actions_access as $access |
@@ -1059,21 +1079,27 @@ jq -e \
         "patterns",
         "protected_branches"
       ]) and
-      .custom_branch_policies == true and
-      .protected_branches == false and
-      (.patterns | type == "array" and length > 0) and
-      ([.patterns[] | [.type, .name]] | length == (unique | length)) and
-      all(
-        .patterns[];
-        (keys == ["name", "type"]) and
+      (
+        (.custom_branch_policies == false and
+          .protected_branches == true and .patterns == []) or
         (
-          (
-            .type == "branch" and
-            (.name | type == "string" and test("^[A-Za-z0-9._/-]+$"))
-          ) or
-          (
-            .type == "tag" and
-            .name == "v*"
+          .custom_branch_policies == true and
+          .protected_branches == false and
+          (.patterns | type == "array" and length > 0) and
+          ([.patterns[] | [.type, .name]] | length == (unique | length)) and
+          all(
+            .patterns[];
+            (keys == ["name", "type"]) and
+            (
+              (
+                .type == "branch" and
+                (.name | type == "string" and test("^[A-Za-z0-9._/-]+$"))
+              ) or
+              (
+                .type == "tag" and
+                .name == "v*"
+              )
+            )
           )
         )
       )

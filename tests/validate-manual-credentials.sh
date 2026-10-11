@@ -23,7 +23,8 @@ assert_invalid() {
 }
 
 reset_manual_settings() {
-  jq '.crates_io_trusted_publishing[].publisher_registration =
+  jq '.github_actions_credentials |= map(select(.credential_type == "classic_pat")) |
+    .crates_io_trusted_publishing[].publisher_registration =
     {state:"pending-owner-registration",observed_on:null,evidence_location:null} |
     .github_packages_actions_access[] |= (.grant_state="pending-owner-ui-read-grant" |
       .observed_on=null | .evidence_location=null) |
@@ -170,7 +171,7 @@ jq -e '
   }]
 ' "${root}/config/manual-settings.json" >/dev/null
 jq -e '
-  .github_actions_credentials == [{
+  [.github_actions_credentials[] | select(.credential_type == "classic_pat")] == [{
     credential_type: "classic_pat",
     consumers: [
       ".github/workflows/check-project-health.yml",
@@ -192,6 +193,35 @@ jq -e '
     secret_scope: "repository"
   }]
 ' "${root}/config/manual-settings.json" >/dev/null
+
+jq -e '
+  [.github_actions_credentials[] | select(.secret_scope == "environment")] as $credentials |
+  ($credentials | length) == 3 and
+  all($credentials[];
+    .repository == "atrinik/metaserver-worker" and .repository_id == 1324297032 and
+    .environment == "development" and .consumers == [".github/workflows/deploy-development.yml"] and
+    .last_verified_on == "2026-10-11" and .rotate_by == "2027-01-09" and
+    .rotation_cadence_days == 90 and .owner == "Zoey Seraphina Rose (Atrinik organization owner)"
+  ) and
+  ([$credentials[].secret_name] | sort) == [
+    "ATRINIK_DELIVERY_RESOURCE_READ_TOKEN", "ATRINIK_PRODUCTION_BUILDS_READ_TOKEN", "CLOUDFLARE_API_TOKEN"
+  ]
+' "${root}/config/manual-settings.json" >/dev/null
+
+for invalid in \
+  '.github_actions_credentials[1].required_scopes = ["Workers Scripts Read"]' \
+  '.github_actions_credentials[2].credential_type = "cloudflare_user_token"' \
+  '.github_actions_credentials[3].environment = "production"' \
+  '.github_actions_credentials[1].repository_id = 1' \
+  '.github_actions_credentials[1].consumers = [".github/workflows/publish.yml"]' \
+  '.github_actions_credentials[1].credential_value = "secret"'; do
+  jq "$invalid" "${root}/config/manual-settings.json" >"${temporary}/config/manual-settings.json"
+  if ATRINIK_VALIDATION_TODAY=2026-10-11 "${temporary}/bin/validate" >/dev/null 2>&1; then
+    echo "error: validator accepted malformed DEV credential lifecycle: ${invalid}" >&2
+    exit 1
+  fi
+done
+reset_manual_settings
 
 rewrite_manual_settings '.external_provider_apps[0].repository_selection = "all"'
 assert_invalid 'an external provider App installed on all repositories'

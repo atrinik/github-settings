@@ -309,16 +309,24 @@ while IFS= read -r credential; do
     status=$?
     exit "${status}"
   fi
-  if load_repository_secrets "${repository}"; then
-    :
-  else
-    status=$?
-    exit "${status}"
-  fi
-
   case ${secret_scope} in
   repository)
+    if load_repository_secrets "${repository}"; then :; else
+      status=$?
+      exit "${status}"
+    fi
     secrets_file=${repository_secret_files["${repository}"]}
+    ;;
+  environment)
+    environment=$(jq -r '.environment' <<<"${credential}")
+    secrets_file=${temporary}/${repository//\//-}-${environment}-credential-secrets.jsonl
+    if load_paginated_metadata \
+      "list ${repository} environment ${environment} credential names" \
+      "repos/${repository}/environments/${environment}/secrets" \
+      secrets "${secrets_file}"; then :; else
+      status=$?
+      exit "${status}"
+    fi
     ;;
   *)
     echo "error: unsupported Actions secret scope for ${repository}: ${secret_scope}" >&2
@@ -552,21 +560,27 @@ while IFS= read -r environment_record; do
     exit 1
   fi
 
-  branch_policies_file=${temporary}/${environment_key}-branch-policies.jsonl
-  if load_paginated_metadata \
-    "list ${repository} environment ${environment} deployment branch policies" \
-    "repos/${repository}/environments/${environment}/deployment-branch-policies" \
-    branch_policies "${branch_policies_file}"; then
-    :
-  else
-    status=$?
-    exit "${status}"
-  fi
   expected_branch_policies=$(jq -c \
     '[.deployment_branch_policy.patterns[] | {name, type}] | sort_by(.type, .name)' \
     <<<"${environment_record}")
-  live_branch_policies=$(jq -sc \
-    '[.[] | {name, type}] | sort_by(.type, .name)' "${branch_policies_file}")
+  if jq -e '.deployment_branch_policy.custom_branch_policies == true' \
+    <<<"${environment_record}" >/dev/null; then
+    branch_policies_file=${temporary}/${environment_key}-branch-policies.jsonl
+    if load_paginated_metadata \
+      "list ${repository} environment ${environment} deployment branch policies" \
+      "repos/${repository}/environments/${environment}/deployment-branch-policies" \
+      branch_policies "${branch_policies_file}"; then
+      :
+    else
+      status=$?
+      exit "${status}"
+    fi
+    live_branch_policies=$(jq -sc \
+      '[.[] | {name, type}] | sort_by(.type, .name)' "${branch_policies_file}")
+  else
+    # GitHub exposes custom policies only for custom-branch-policy mode.
+    live_branch_policies='[]'
+  fi
   if [[ ${live_branch_policies} != "${expected_branch_policies}" ]]; then
     echo "error: deployment branch policy drift for ${repository} ${environment}" >&2
     exit 1
