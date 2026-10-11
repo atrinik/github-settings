@@ -406,8 +406,8 @@ while IFS= read -r pages_record; do
   fi
 done < <(jq -c '.github_pages_sites[]' "${manual_settings}")
 
-# Planned registration has no live publisher/environment identity yet. Verify
-# only its repository identity and report the unresolved activation explicitly.
+# Pending setup is not live activation. Every publisher still requires the
+# exact live repository, main ref, and protected-main identity.
 while IFS= read -r crate_record; do
   repository=$(jq -r '.repository' <<<"${crate_record}")
   repository_id=$(jq -r '.repository_id' <<<"${crate_record}")
@@ -415,25 +415,43 @@ while IFS= read -r crate_record; do
     echo "error: crate publisher repository owner does not match ${organization}" >&2
     exit 1
   fi
-  if verify_repository_identity "${repository}" "${repository_id}"; then
-    :
-  else
-    status=$?
-    exit "${status}"
-  fi
-  reviewer_identity=$(github_api "read crate publishing reviewer identity" "users/zoeyrose")
-  if ! jq -e '.login == "zoeyrose" and .id == 3865595' <<<"${reviewer_identity}" >/dev/null; then
-    echo "error: crate publishing reviewer identity drift" >&2
+  verify_repository_identity "${repository}" "${repository_id}"
+  branch=$(github_api "read ${repository} protected main" "repos/${repository}/branches/main")
+  branch_ref=$(github_api "read ${repository} exact main ref" "repos/${repository}/git/ref/heads/main")
+  if ! jq -en --argjson branch "${branch}" --argjson ref "${branch_ref}" '
+    $branch.name == "main" and $branch.protected == true and
+    ($branch.commit.sha | type == "string" and test("^[0-9a-f]{40}$")) and
+    $ref.ref == "refs/heads/main" and $ref.object.type == "commit" and
+    $ref.object.sha == $branch.commit.sha
+  ' >/dev/null; then
+    echo "error: crate publisher protected main or ref drift for ${repository}" >&2
     exit 1
   fi
-  reviewer_permission=$(github_api "read crate publishing reviewer permission" \
-    "repos/${repository}/collaborators/zoeyrose/permission")
-  if ! jq -e '.role_name == "admin" or .role_name == "maintain"' \
-    <<<"${reviewer_permission}" >/dev/null; then
-    echo "error: crate publishing reviewer is not a repository maintainer" >&2
-    exit 1
+  if [[ $(jq -r '.source_state' <<<"${crate_record}") == observed-reviewed-workflow ]]; then
+    branch_sha=$(jq -r '.object.sha' <<<"${branch_ref}")
+    workflow=$(github_api "read ${repository} publication workflow at exact main" \
+      "repos/${repository}/contents/.github/workflows/publish-crate.yml?ref=${branch_sha}")
+    workflow_source=$(jq -er 'select(.encoding == "base64" and .type == "file") | .content' \
+      <<<"${workflow}" | base64 --decode)
+    for marker in 'crates-io-release' 'refs/heads/main' 'automatic' \
+      "$(jq -r '.authentication_action' <<<"${crate_record}")"; do
+      if [[ ${workflow_source} != *"${marker}"* ]]; then
+        echo "error: crate publication workflow marker drift for ${repository}: ${marker}" >&2
+        exit 1
+      fi
+    done
+    echo "KEEP ${repository} reviewed publication workflow at ${branch_sha}"
   fi
-  echo "PENDING ${repository} crates.io atrinik-protocol via publish-crate.yml / crates-io-release: source release and owner setup remain unverified; no registration or environment applied"
+  crates=$(jq -r '.crates | join(",")' <<<"${crate_record}")
+  echo "KEEP ${repository} exact protected main publication identity"
+  onboarding_status=PENDING
+  if [[ $(jq -r '.publisher_registration.state' <<<"${crate_record}") == owner-observed-registration ]]; then
+    onboarding_status=OWNER-OBSERVED
+  fi
+  echo "${onboarding_status} ${repository} crates.io ${crates} via publish-crate.yml / crates-io-release: source=$(jq -r '.source_state' <<<"${crate_record}"), environment=$(jq -r '.environment_state' <<<"${crate_record}"), registration=$(jq -r '.publisher_registration.state' <<<"${crate_record}")"
+  if [[ $(jq -r '.publisher_registration.state' <<<"${crate_record}") == owner-observed-registration ]]; then
+    echo "MANUAL ${repository} crates.io registration is owner-observed evidence only; GitHub metadata does not verify external registration"
+  fi
 done < <(jq -c '.crates_io_trusted_publishing[]' "${manual_settings}")
 
 while IFS= read -r environment_record; do
@@ -535,6 +553,15 @@ while IFS= read -r environment_record; do
     exit 1
   fi
 
+  if jq -e 'has("wait_timer_minutes")' <<<"${environment_record}" >/dev/null; then
+    if ! jq -e '.can_admins_bypass == false and
+      all(.protection_rules[]; .type != "wait_timer" and .type != "required_reviewers")' \
+      "${environment_file}" >/dev/null; then
+      echo "error: automatic crate environment bypass, reviewer, or wait drift for ${repository}" >&2
+      exit 1
+    fi
+  fi
+
   secrets_file=${temporary}/${environment_key}-secrets.jsonl
   if load_paginated_metadata \
     "list ${repository} environment ${environment} secrets" \
@@ -570,7 +597,14 @@ while IFS= read -r environment_record; do
   fi
 
   echo "KEEP ${repository} environment ${environment} metadata"
-done < <(jq -c '.github_actions_environments[]' "${manual_settings}")
+done < <(jq -c '
+  .github_actions_environments[],
+  (.crates_io_trusted_publishing[] | select(.environment_state == "observed") |
+    . as $publisher | .environment |
+    {repository: $publisher.repository, repository_id: $publisher.repository_id,
+      environment: .name, deployment_branch_policy, required_reviewers,
+      secret_names, variable_names, can_admins_bypass, wait_timer_minutes})
+' "${manual_settings}")
 
 installations_file=${temporary}/${organization}-installations.jsonl
 if load_paginated_metadata \
@@ -768,6 +802,60 @@ while IFS= read -r app_record; do
   echo "KEEP ${repository} repository Actions secret ${secret_name} (updated ${secret_updated_at})"
   echo "KEEP ${repository} repository Actions variable ${variable_name} (updated ${variable_updated_at})"
 done < <(jq -c '.github_actions_apps[]' "${manual_settings}")
+
+# This dedicated App preserves every unrelated installation. The selected
+# repository set needs owner UI proof; administrative APIs cannot enumerate it.
+app_record=$(jq -c '.crate_dependency_update_app' "${manual_settings}")
+app_slug=$(jq -r '.app_slug' <<<"${app_record}")
+if [[ $(jq -r '.status' <<<"${app_record}") == planned ]]; then
+  if jq -se --arg slug "${app_slug}" 'any(.[]; .app_slug == $slug)' \
+    "${installations_file}" >/dev/null; then
+    echo "error: planned crate dependency App has a live installation; record owner observations" >&2
+    exit 1
+  fi
+else
+  installation=$(jq -sc --argjson app "${app_record}" '
+    [.[] | select(.app_id == $app.app_id and .id == $app.installation_id)] |
+    if length == 1 then .[0] else empty end
+  ' "${installations_file}")
+  if [[ -z ${installation} ]] || ! jq -e --argjson app "${app_record}" \
+    --arg organization "${organization}" '
+    .app_slug == $app.app_slug and .target_type == "Organization" and
+    .account.login == $organization and .account.type == "Organization" and
+    .repository_selection == "selected" and .permissions == $app.permissions and
+    .events == [] and .suspended_at == null
+  ' <<<"${installation}" >/dev/null; then
+    echo "error: crate dependency App installation identity or permission drift" >&2
+    exit 1
+  fi
+fi
+while IFS= read -r selected_repository; do
+  repository=$(jq -r '.repository' <<<"${selected_repository}")
+  verify_repository_identity "${repository}" "$(jq -r '.repository_id' <<<"${selected_repository}")"
+  if [[ $(jq -r '.status' <<<"${app_record}") == owner-observed ]]; then
+    load_repository_secrets "${repository}"
+    load_repository_variables "${repository}"
+    for kind in secret variable; do
+      name=$(jq -r ".${kind}_name" <<<"${app_record}")
+      if [[ ${kind} == secret ]]; then
+        metadata_file=${repository_secret_files["${repository}"]}
+      else
+        metadata_file=${repository_variable_files["${repository}"]}
+      fi
+      if ! jq -se --arg name "${name}" '[.[] | select(.name == $name)] | length == 1' \
+        "${metadata_file}" >/dev/null; then
+        echo "error: crate dependency App ${kind} name missing for ${repository}" >&2
+        exit 1
+      fi
+    done
+    echo "KEEP ${repository} crate dependency App credential name metadata; values and scope remain unverified"
+  fi
+done < <(jq -c '.repositories[]' <<<"${app_record}")
+if [[ $(jq -r '.status' <<<"${app_record}") == planned ]]; then
+  echo "PENDING ${app_slug} selected client/editor App installation and repository credential slots; no provisioning applied"
+else
+  echo "MANUAL ${app_slug} selected repositories require current owner UI proof: atrinik/client and atrinik/editor only"
+fi
 
 # GraphQL variables must remain literal for GitHub to substitute.
 # shellcheck disable=SC2016

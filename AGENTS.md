@@ -116,13 +116,24 @@
   branch policies and reviewer sets, and variable and secret names only. Never
   record credential values. Provision them only after the owning workflow is
   merged and reviewed, and do not imply that `bin/publish` applies them.
-- Planned crates.io Trusted Publishing belongs in the value-free manual
-  inventory with exact repository, workflow, environment and immutable action
-  identities. Keep its desired maintainer review policy explicit; pending source
-  releases do not invent release pins or imply live environment/registration.
-  Verify repository/reviewer identities and maintainer permission read-only.
-  Activation, environment provisioning, external registration and dispatch each
-  require their owning authorization; publishers never perform these steps.
+- Crates.io Trusted Publishing is a value-free desired contract for protocol,
+  renderer, and content-toolkit. Bind exact stable repository IDs,
+  `publish-crate.yml`, protected `refs/heads/main`, `crates-io-release`, and the
+  exact immutable official auth action. Reviewed source/version merge approves
+  automatic future publication; environments have zero reviewers/wait and no
+  registry secrets. Keep pending source/environment/registration distinct from
+  observations; verify live repository/ref/protection and observed environments.
+  External registration remains sanitized owner evidence, not a GitHub API fact.
+  First owner-local API-token publication is limited to the fourteen declared
+  renderer/toolkit libraries; exclude CLIs, revoke bootstrap credentials, and
+  use OIDC only afterward. Protocol 0.2 retains its approved manual path.
+- Keep the planned crate dependency App separate from unrelated Apps. Select
+  only client/editor, exactly contents/PR write and metadata read, no events,
+  bypass or auto-merge; inventory names only for repository secret
+  `CRATE_DEPENDENCY_UPDATE_APP_PRIVATE_KEY` and variable
+  `CRATE_DEPENDENCY_UPDATE_APP_ID`. Provision after the hourly/manual reviewed
+  workflows merge and retain exact owner UI selection proof; preparation must
+  verify registry readiness before the isolated job writes an owned PR.
 - Record GitHub Pages sites with stable repository identity, exact provider URL,
   HTTPS enforcement, owning deployment environment, desired Actions source,
   workflow path, and immutable deployment-action marker. Before that marker is

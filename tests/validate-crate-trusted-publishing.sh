@@ -25,21 +25,27 @@ assert_rejected() {
 
 "${temporary}/bin/validate" >/dev/null
 for filter in \
-  '.crates_io_trusted_publishing[0].activation_state = "active"' \
-  '.crates_io_trusted_publishing[0].crate = "other-crate"' \
+  '.crates_io_trusted_publishing[0].source_state = "active"' \
+  '.crates_io_trusted_publishing[0].crates = ["other-crate"]' \
   '.crates_io_trusted_publishing[0].provider = "other-provider"' \
   '.crates_io_trusted_publishing[0].repository = "atrinik/classic"' \
   '.crates_io_trusted_publishing[0].repository_id = 1' \
   '.crates_io_trusted_publishing[0].workflow_filename = "../publish-crate.yml"' \
   '.crates_io_trusted_publishing[0].workflow_ref = "refs/tags/v1.0.0"' \
   '.crates_io_trusted_publishing[0].workflow_trigger = "push"' \
+  '.crates_io_trusted_publishing[0].environment_state = "active"' \
+  '.crates_io_trusted_publishing[0].publisher_registration.state = "active"' \
+  '.crates_io_trusted_publishing[0].publisher_registration.evidence_location = "invented"' \
+  '.crates_io_trusted_publishing[1].bootstrap_crates += ["atrinik-render"]' \
+  '.crates_io_trusted_publishing[2].bootstrap_crates += ["atrinik-content"]' \
+  '.crates_io_trusted_publishing[0].bootstrap_crates = ["atrinik-protocol"]' \
+  '.crates_io_trusted_publishing[0].bootstrap_policy = "api-token-every-release"' \
+  '.crates_io_trusted_publishing[0].release_approval = "per-release-approval"' \
   '.crates_io_trusted_publishing[0].authentication_action = "rust-lang/crates-io-auth-action@v1"' \
   '.crates_io_trusted_publishing[0].environment.name = "crates-io-bootstrap"' \
-  '.crates_io_trusted_publishing[0].environment.required_reviewers = []' \
+  '.crates_io_trusted_publishing[0].environment.required_reviewers = [{type: "User", id: 3865595}]' \
+  '.crates_io_trusted_publishing[0].environment.wait_timer_minutes = 30' \
   '.crates_io_trusted_publishing[0].environment.required_reviewers = null' \
-  '.crates_io_trusted_publishing[0].environment.required_reviewers[0].id = 1' \
-  '.crates_io_trusted_publishing[0].environment.required_reviewers[0].login = "unknown"' \
-  '.crates_io_trusted_publishing[0].environment.required_reviewers[0].type = "Team"' \
   '.crates_io_trusted_publishing[0].environment.prevent_self_review = true' \
   '.crates_io_trusted_publishing[0].environment.can_admins_bypass = true' \
   '.crates_io_trusted_publishing[0].environment.deployment_branch_policy.patterns[0].name = "*"' \
@@ -75,9 +81,44 @@ if "${temporary}/bin/validate" >/dev/null 2>&1; then
   exit 1
 fi
 reset_policy
+# Observed onboarding requires coherent source/environment/external proof.
+jq '.crates_io_trusted_publishing[0] |= (
+  .source_state = "observed-reviewed-workflow" | .environment_state = "observed" |
+  .publisher_registration = {state:"owner-observed-registration", observed_on:"2026-10-11",
+    evidence_location:"atrinik/github-settings#owner-setup"})' "${root}/config/manual-settings.json" \
+  >"${temporary}/config/manual-settings.json"
+"${temporary}/bin/validate" >/dev/null
+reset_policy
+for filter in \
+  '.crates_io_trusted_publishing[0].environment_state = "observed"' \
+  '.crates_io_trusted_publishing[0].publisher_registration = {state:"owner-observed-registration", observed_on:"2026-02-31", evidence_location:"atrinik/github-settings#owner-setup"}' \
+  '.crates_io_trusted_publishing[0] |= (.source_state="observed-reviewed-workflow" | .environment_state="observed" | .publisher_registration={state:"owner-observed-registration",observed_on:"2099-01-01",evidence_location:"atrinik/github-settings#owner-setup"})'; do
+  assert_rejected "${filter}"
+done
+jq '.crate_dependency_update_app |= (.status="owner-observed" | .app_id=85500002 |
+  .installation_id=154000002 | .repository_scope_verification="organization_owner_ui" |
+  .observed_on="2026-08-31" | .evidence_location="atrinik/github-settings#owner-app")' \
+  "${root}/config/manual-settings.json" >"${temporary}/config/manual-settings.json"
+"${temporary}/bin/validate" >/dev/null
+reset_policy
+for filter in \
+  '.crate_dependency_update_app.permissions.administration = "write"' \
+  '.crate_dependency_update_app.events = ["push"]' \
+  '.crate_dependency_update_app.repository_selection = "all"' \
+  '.crate_dependency_update_app.repositories += [{repository:"atrinik/classic", repository_id:1327289971}]' \
+  '.crate_dependency_update_app.repositories[0].repository_id = 1' \
+  '.crate_dependency_update_app.secret_scope = "organization"' \
+  '.crate_dependency_update_app.secret_name = "CARGO_REGISTRY_TOKEN"' \
+  '.crate_dependency_update_app.private_key = "forbidden"' \
+  '.crate_dependency_update_app.pull_request_policy = "auto-merge"' \
+  '.crate_dependency_update_app.status = "active"' \
+  '.crate_dependency_update_app.app_id = 1' \
+  '.crate_dependency_update_app.observed_on = "2026-10-11"'; do
+  assert_rejected "${filter}"
+done
 # Removing unactivated manual intent is a valid reviewed rollback.
 jq '.crates_io_trusted_publishing = []' "${root}/config/manual-settings.json" \
   >"${temporary}/config/manual-settings.json"
 "${temporary}/bin/validate" >/dev/null
 
-echo "Planned crates.io Trusted Publishing validation tests passed."
+echo "Automatic crates.io Trusted Publishing and dependency App validation tests passed."

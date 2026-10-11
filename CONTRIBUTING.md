@@ -125,3 +125,17 @@ organization-owner authorization for `--apply`. Re-run the complete preflight
 after apply and again before separately authorized exact branch deletion;
 never combine either operation with tag, release, asset, default-branch, or
 unrelated policy changes.
+
+Crates.io publication contracts bind exact repository/workflow/environment and
+immutable auth-action identities. Automatic publication follows reviewed
+source/version merges with zero environment reviewers/wait and no registry
+secrets. Keep pending onboarding distinct from observed source/environment and
+owner-observed external registration; verify live protected main and exact
+refs. First owner-local API-token bootstrap is restricted to the fourteen
+listed renderer/toolkit libraries and ends with revocation; subsequent releases
+use OIDC only. Protocol 0.2 retains its approved manual path. Dependency-update
+App setup is client/editor only, exact contents/PR write and metadata read,
+repository credential names only, registry readiness before owned PR creation,
+and ordinary review/checks without auto-merge. Changes require negative schema
+and live-metadata fixture tests plus a complete publisher plan; publishers do
+not provision these integrations.
