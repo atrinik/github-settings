@@ -414,9 +414,9 @@ to update the automation branch, also authorizes Git-reference and release API
 operations. GitHub likewise has no separate create-or-update-PR permission that
 excludes review APIs: `pull requests: write` covers both. The App credential
 therefore cannot by itself prove that tag, release, or review calls are
-technically impossible. Because the App owns its generated pull request, it
-cannot provide the distinct human approval required by the ordinary gate, and
-it has no bypass. The consumer must never review, approve, merge, tag, publish,
+technically impossible. Ordinary pull requests require zero human approvals;
+required checks and the pull-request process still apply, and the App has no
+bypass. The consumer must never review, approve, merge, tag, publish,
 dispatch a release, write the default branch, or change repository settings.
 Its reviewed code, exact branch and changed-path checks, ordinary pull-request
 gate, protected release-tag rules, workflow contract tests, and audit trail
@@ -439,10 +439,11 @@ Provision or rotate the key as an Atrinik organization owner:
    `update-content.yml` and require one App-authored disposable pull request to
    receive ordinary `Classic validation`, `CodeQL validation`, and
    `Conventional PR title` checks.
-4. Confirm the App-authored pull request cannot satisfy its own human approval
-   or merge gate, close the disposable pull request, remove its branch, and
-   only then delete the previous private key. A later scheduled run must also
-   succeed before rotation is considered complete.
+4. Confirm the App-authored pull request receives the required checks, the App
+   has no bypass, and the consumer does not approve or merge the pull request.
+   Close the disposable pull request, remove its branch, and only then delete
+   the previous private key. A later scheduled run must also succeed before
+   rotation is considered complete.
 
 For suspected disclosure or misuse, disable the Classic updater workflow,
 suspend installation `153045686`, delete the repository secret, and revoke the
@@ -1534,7 +1535,8 @@ credential-free preparation verifies exact released versions and registry
 checksums, resolves dependencies, updates Cargo locks, and runs aggregate
 validation before requesting an App token in the isolated PR-writing job. They
 maintain only their owned `automation/released-crate-dependencies` branch and
-pull request; ordinary required checks and human review still govern merging.
+pull request; ordinary required checks and the pull-request process still govern
+merging, with zero required human approvals.
 Missing registry readiness produces no migration PR. They never upload crates,
 approve a pull request, merge it, or loosen branch protection. Prove initial
 App permissions with a disposable/owned PR and current ordinary checks, without

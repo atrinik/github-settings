@@ -14,7 +14,9 @@ source_root=${root}
 # Retain the original Classic rollout/recovery scenarios as a bounded fixture.
 root=${temporary}/classic-policy
 mkdir -p "${root}/bin"
-cp "${source_root}/bin/publish" "${source_root}/bin/validate" "${root}/bin/"
+cp "${source_root}/bin/publish" "${source_root}/bin/validate" \
+  "${source_root}/bin/security-readiness" "${root}/bin/"
+cp -R "${source_root}/lib" "${root}/lib"
 cp -R "${source_root}/config" "${source_root}/community-health" "${source_root}/.github" "${root}/"
 jq '.repositories |= map(select(.name == "classic"))' \
   "${source_root}/config/immutable-releases.json" >"${root}/config/immutable-releases.json"
@@ -370,7 +372,7 @@ repos/atrinik/*/actions/permissions/workflow\|*)
   printf '{"status":"enforced","configuration":{"id":265376}}\n'
   ;;
 "repos/atrinik/protocol/code-scanning/default-setup|"* | "repos/atrinik/renderer/code-scanning/default-setup|"* | "repos/atrinik/content-toolkit/code-scanning/default-setup|"*)
-  printf '{"state":"configured","query_suite":"default"}\n'
+  printf '{"state":"configured","query_suite":"default","languages":["rust"]}\n'
   ;;
 "repos/atrinik/classic/immutable-releases|"*)
   if [[ ${GH_IMMUTABLE_VERIFY_FAILURE:-false} == true ]]; then
