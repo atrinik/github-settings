@@ -1046,8 +1046,9 @@ converge_codeql_default_setup() {
         echo "KEEP /repos/${organization}/${repository}/code-scanning/default-setup is ${desired_state}"
         continue
       fi
-    elif [[ ${required_languages} != '[]' ]]; then
-      # Never replace an unreadable live language set with an incomplete list.
+    else
+      # A failed read is unknown state, including repositories with no policy
+      # language minimum or with advanced setup. Never publish from that state.
       echo "error: cannot read existing CodeQL languages for ${repository}" >&2
       return 1
     fi
@@ -1231,12 +1232,11 @@ converge_actions_permissions() {
   fi
   phase=$(jq -r '.phase' "${root}/config/actions-sha-pinning.json")
   canary=$(jq -r '.canary // empty' "${root}/config/actions-sha-pinning.json")
-  if ! jq -e '.sha_pinning_required == true' <<<"${current}" >/dev/null; then
-    if [[ ${phase} == enforced ]]; then
-      validate_sha_canary_target "${canary}" || return 1
-    elif [[ -n ${sha_pinning_canary} ]]; then
-      validate_sha_canary_target "${sha_pinning_canary}" || return 1
-    fi
+  if [[ ${phase} == pending && -n ${sha_pinning_canary} ]]; then
+    validate_sha_canary_target "${sha_pinning_canary}" || return 1
+  elif [[ ${phase} == enforced ]] &&
+    ! jq -e '.sha_pinning_required == true' <<<"${current}" >/dev/null; then
+    validate_sha_canary_target "${canary}" || return 1
   fi
 
   # GitHub requires selected mode before its selected-actions endpoint can be
@@ -1292,6 +1292,16 @@ converge_actions_permissions() {
       return 1
     fi
   fi
+  # An explicitly requested pending-phase probe is read-only and independent
+  # of whether SHA pinning is already enabled. Do not let preservation skip it.
+  if [[ ${phase} == pending && -n ${sha_pinning_canary} ]]; then
+    validate_sha_canary_target "${sha_pinning_canary}" || return 1
+    if reason=$("${root}/bin/security-readiness" sha "${sha_pinning_canary}"); then
+      echo "READY canary evidence: ${reason}; source rollout phase remains pending"
+    else
+      echo "PENDING canary evidence: ${reason}"
+    fi
+  fi
   if jq -e '.sha_pinning_required == true' <<<"${current}" >/dev/null; then
     return 0
   fi
@@ -1309,14 +1319,6 @@ converge_actions_permissions() {
     run_api PUT "orgs/${organization}/actions/permissions" \
       "${root}/config/actions-permissions.json" || return 1
   else
-    if [[ -n ${sha_pinning_canary} ]]; then
-      validate_sha_canary_target "${sha_pinning_canary}" || return 1
-      if reason=$("${root}/bin/security-readiness" sha "${sha_pinning_canary}"); then
-        echo "READY canary evidence: ${reason}; source rollout phase remains pending"
-      else
-        echo "PENDING canary evidence: ${reason}"
-      fi
-    fi
     echo "PENDING SHA pinning: promote the reviewed source rollout phase and accepted canary after readiness"
   fi
 }

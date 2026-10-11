@@ -61,6 +61,7 @@ case ${READINESS_STATUS:-ready} in
 ready) echo 'producer evidence ready'; exit 0 ;;
 missing) echo 'producer is missing'; exit 1 ;;
 failed) echo 'producer failed'; exit 1 ;;
+stale) echo 'canary base changed during preflight'; exit 1 ;;
 unreadable) echo 'producer evidence unreadable'; exit 2 ;;
 *) exit 99 ;;
 esac
@@ -96,6 +97,10 @@ github_api() {
     printf '%s\n' "${workflow_state}"
     ;;
   repos/atrinik/content-toolkit/code-scanning/default-setup)
+    if [[ ${codeql_state} == http-* ]]; then
+      echo "gh: default-setup read failed (HTTP ${codeql_state#http-})" >&2
+      return 1
+    fi
     [[ ${codeql_state} != unreadable ]] || return 1
     printf '%s\n' "${codeql_state}"
     ;;
@@ -209,6 +214,7 @@ reset_case() {
   repository_state='{"id":123,"full_name":"atrinik/content-toolkit","archived":false,"default_branch":"main"}'
   workflow_state='{"default_workflow_permissions":"write","can_approve_pull_request_reviews":true}'
   cp "${source_root}/config/security-merge-protection.json" "${security_merge_config}"
+  cp "${source_root}/config/codeql-advanced-setup.json" "${codeql_advanced_config}"
   echo '{"phase":"pending","canary":null}' >"${actions_sha_pinning_config}"
   actions_state='{"enabled_repositories":"selected","allowed_actions":"all","sha_pinning_required":false}'
   selected_state=$(cat "${root}/config/actions-selected.json")
@@ -253,6 +259,35 @@ if converge_codeql_default_setup >"${temporary}/languages-malformed.txt" 2>&1; t
   echo 'expected malformed language inventory to fail closed' >&2
   exit 1
 fi
+assert_no_writes
+
+# Read failures are fatal even without a language minimum, in both setup modes.
+for setup_kind in default advanced; do
+  for http_status in 403 404 500; do
+    reset_case
+    jq '.codeql_required_languages = {}' "${security_merge_config}" >"${temporary}/no-minima.json"
+    cp "${temporary}/no-minima.json" "${security_merge_config}"
+    if [[ ${setup_kind} == advanced ]]; then
+      echo '{"repositories":["content-toolkit"]}' >"${codeql_advanced_config}"
+    fi
+    codeql_state=http-${http_status}
+    if converge_codeql_default_setup >"${temporary}/languages-${setup_kind}-${http_status}.txt" 2>&1; then
+      echo 'expected unreadable default setup to fail publication without a language minimum' >&2
+      exit 1
+    fi
+    grep -q 'cannot read existing CodeQL languages' "${temporary}/languages-${setup_kind}-${http_status}.txt"
+    assert_no_writes
+  done
+done
+reset_case
+jq '.codeql_required_languages = {}' "${security_merge_config}" >"${temporary}/no-minima.json"
+cp "${temporary}/no-minima.json" "${security_merge_config}"
+codeql_state='{"state":"configured","query_suite":"default","languages":["python"]}'
+converge_codeql_default_setup >"${temporary}/languages-readable-no-minimum.txt"
+assert_no_writes
+echo '{"repositories":["content-toolkit"]}' >"${codeql_advanced_config}"
+codeql_state='{"state":"not-configured","languages":null}'
+converge_codeql_default_setup >"${temporary}/languages-readable-advanced-null.txt"
 assert_no_writes
 
 # Use the actual dispatch: security producer readiness follows base convergence
@@ -431,6 +466,39 @@ export READINESS_STATUS=failed
 converge_actions_permissions >"${temporary}/sha-keep.txt"
 assert_no_writes
 [[ ! -s ${readiness_log} ]]
+
+# Explicit pending canary probes still run when SHA is already enabled.
+for producer in ready failed unreadable stale; do
+  reset_case
+  actions_state=$(cat "${root}/config/actions-permissions.json")
+  sha_pinning_canary=atrinik/content-toolkit/99
+  export READINESS_STATUS=${producer}
+  converge_actions_permissions >"${temporary}/sha-enabled-probe-${producer}.txt"
+  jq -se '. == [{mode:"sha", repository:"atrinik/content-toolkit/99"}]' "${readiness_log}" >/dev/null
+  jq -se 'all(.[]; .method == "GET" or .method == "PROOF")' "${api_log}" >/dev/null
+  [[ $(jq -r '.sha_pinning_required' <<<"${actions_state}") == true ]]
+  if [[ ${producer} == ready ]]; then
+    grep -q '^READY canary evidence:' "${temporary}/sha-enabled-probe-${producer}.txt"
+  else
+    grep -q '^PENDING canary evidence:' "${temporary}/sha-enabled-probe-${producer}.txt"
+  fi
+done
+for invalid in foreign/content-toolkit/99 atrinik/unregistered/99 replaced; do
+  reset_case
+  actions_state=$(cat "${root}/config/actions-permissions.json")
+  sha_pinning_canary=${invalid}
+  if [[ ${invalid} == replaced ]]; then
+    sha_pinning_canary=atrinik/content-toolkit/99
+    repository_state=$(jq '.id = 999' <<<"${repository_state}")
+  fi
+  if converge_actions_permissions >"${temporary}/sha-enabled-probe-invalid.txt" 2>&1; then
+    echo 'expected invalid requested canary identity to fail with SHA already enabled' >&2
+    exit 1
+  fi
+  assert_no_writes
+  [[ ! -s ${readiness_log} ]]
+  [[ $(jq -r '.sha_pinning_required' <<<"${actions_state}") == true ]]
+done
 
 # Simultaneous mode, patterns and SHA drift repairs conservative policy first.
 for producer in ready failed unreadable; do
