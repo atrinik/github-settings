@@ -6,6 +6,12 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 temporary=$(mktemp -d)
 trap 'rm -rf "${temporary}"' EXIT
 mkdir "${temporary}/bin"
+fixture_root=${temporary}/pending-fixture
+mkdir -p "${fixture_root}/bin"
+cp "${root}/bin/validate" "${root}/bin/verify-manual-settings" "${fixture_root}/bin/"
+cp -R "${root}/config" "${root}/community-health" "${root}/.github" "${root}/lib" "${fixture_root}/"
+jq '.crates_io_trusted_publishing[] |= (.source_state="pending-reviewed-workflow" | .environment_state="pending")' \
+  "${root}/config/manual-settings.json" >"${fixture_root}/config/manual-settings.json"
 
 cat >"${temporary}/bin/gh" <<'EOF'
 #!/usr/bin/env bash
@@ -79,26 +85,110 @@ repos/atrinik/protocol)
   jq -n --argjson id "${repository_id}" \
     '{id: $id, full_name: "atrinik/protocol", archived: false, default_branch: "main"}'
   ;;
-users/zoeyrose)
-  reviewer_id=3865595
-  if [[ ${FAKE_GH_SCENARIO} == crate-reviewer-drift ]]; then
-    reviewer_id=1
-  fi
-  jq -n --argjson id "${reviewer_id}" '{id: $id, login: "zoeyrose"}'
-  ;;
-repos/atrinik/protocol/collaborators/zoeyrose/permission)
-  permission=admin
-  role_name=admin
-  case ${FAKE_GH_SCENARIO} in
-  crate-reviewer-maintain) permission=write; role_name=maintain ;;
-  crate-reviewer-permission) permission=read; role_name=read ;;
-  crate-reviewer-triage) permission=read; role_name=triage ;;
-  crate-reviewer-write) permission=write; role_name=write ;;
-  crate-reviewer-unknown-role) role_name=unknown ;;
-  crate-reviewer-missing-role) jq -n '{permission: "admin"}'; exit 0 ;;
+repos/atrinik/renderer | repos/atrinik/content-toolkit | repos/atrinik/client | repos/atrinik/editor)
+  name=${endpoint##*/}
+  case ${name} in
+  renderer) id=1327106998 ;;
+  content-toolkit) id=1327107043 ;;
+  client) id=1327106844 ;;
+  editor) id=1327106902 ;;
   esac
-  jq -n --arg permission "${permission}" --arg role_name "${role_name}" \
-    '{permission: $permission, role_name: $role_name}'
+  jq -n --arg name "${name}" --argjson id "${id}" \
+    '{id:$id, full_name:("atrinik/"+$name), archived:false, default_branch:"main"}'
+  ;;
+repos/atrinik/devcontainer)
+  jq -n '{id:1322185908,full_name:"atrinik/devcontainer",archived:false,default_branch:"main"}'
+  ;;
+orgs/atrinik/packages/container/linux-build)
+  id=14205615
+  visibility=private
+  source_id=1322185908
+  [[ ${FAKE_GH_SCENARIO} != crate-image-identity-drift ]] || id=1
+  [[ ${FAKE_GH_SCENARIO} != crate-image-visibility-drift ]] || visibility=public
+  [[ ${FAKE_GH_SCENARIO} != crate-image-source-drift ]] || source_id=1
+  jq -n --argjson id "${id}" --arg visibility "${visibility}" --argjson source_id "${source_id}" \
+    '{id:$id,name:"linux-build",package_type:"container",visibility:$visibility,
+      repository:{id:$source_id,full_name:"atrinik/devcontainer"}}'
+  ;;
+repos/atrinik/*/branches/main)
+  protected=true
+  [[ ${FAKE_GH_SCENARIO} != crate-unprotected ]] || protected=false
+  jq -n --argjson protected "${protected}" \
+    '{name:"main",protected:$protected,commit:{sha:"1111111111111111111111111111111111111111"}}'
+  ;;
+repos/atrinik/*/git/ref/heads/main)
+  sha=1111111111111111111111111111111111111111
+  [[ ${FAKE_GH_SCENARIO} != crate-ref-drift ]] || sha=2222222222222222222222222222222222222222
+  jq -n --arg sha "${sha}" '{ref:"refs/heads/main",object:{type:"commit",sha:$sha}}'
+  ;;
+repos/atrinik/protocol/contents/.github/workflows/publish-crate.yml\?ref=*)
+  source=$(cat "${FAKE_CRATE_FIXTURES}/crate-publication.yml")
+  case ${FAKE_GH_SCENARIO} in
+  crate-workflow-drift) source=${source//rust-lang\/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18/rust-lang\/crates-io-auth-action@v1} ;;
+  crate-workflow-future-pin) source=${source//c6f97d42243bad5fab37ca0427f495c86d5b1a18/2222222222222222222222222222222222222222} ;;
+  crate-workflow-plaintext) source='crates-io-release refs/heads/main automatic rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18' ;;
+  crate-workflow-comments) source="# crates-io-release refs/heads/main automatic rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18" ;;
+  crate-workflow-disabled) source=${source//inputs.operation == \'automatic\'/false} ;;
+  crate-workflow-no-oidc) source=${source//id-token: write/id-token: none} ;;
+  crate-workflow-shell) source=$(sed '/- run: python3 tools\/crate_release.py verify/a\        shell: echo {0}' <<<"${source}") ;;
+  crate-workflow-ignored-step-failure) source=$(sed '/- run: python3 tools\/crate_release.py verify/a\        continue-on-error: true' <<<"${source}") ;;
+  crate-workflow-ignored-job-failure) source=$(sed '/    runs-on: ubuntu-24.04/a\    continue-on-error: true' <<<"${source}") ;;
+  crate-workflow-default-shell) source=$(printf 'defaults:\n  run:\n    shell: echo {0}\n%s\n' "${source}") ;;
+  crate-workflow-job-default-shell) source=$(sed '/    runs-on: ubuntu-24.04/a\    defaults:\n      run:\n        shell: echo {0}' <<<"${source}") ;;
+  crate-workflow-comment-run) source=${source//run: python3/run: \"# python3}; source=${source//\"\$DIGEST\"/\"\$DIGEST\"\"} ;;
+  esac
+  jq -n --arg content "$(printf '%s' "${source}" | base64)" \
+    '{type:"file",encoding:"base64",content:$content}'
+  ;;
+repos/atrinik/protocol/contents/.github/workflows/release.yml\?ref=*)
+  source=$(cat "${FAKE_CRATE_FIXTURES}/crate-source-release.yml")
+  case ${FAKE_GH_SCENARIO} in
+  crate-source-workflow-comments) source="# id-token: write actions/attest-build-provenance@1111111111111111111111111111111111111111" ;;
+  crate-source-workflow-oidc-build) source=$(sed '/  package:/a\    permissions: {contents: read, id-token: write}' <<<"${source}") ;;
+  crate-source-workflow-build-signer) source=${source//python3 tools\/crate_release.py finalize/npm install} ;;
+  crate-source-workflow-bypass-signer) source=$(sed '/    - attest/d' <<<"${source}") ;;
+  esac
+  jq -n --arg content "$(printf '%s' "${source}" | base64)" \
+    '{type:"file",encoding:"base64",content:$content}'
+  ;;
+repos/atrinik/protocol/environments/crates-io-release)
+  rules='[{"type":"branch_policy"}]'
+  bypass=false
+  [[ ${FAKE_GH_SCENARIO} != crate-env-wait ]] || rules='[{"type":"branch_policy"},{"type":"wait_timer","wait_timer":1}]'
+  [[ ${FAKE_GH_SCENARIO} != crate-env-reviewer ]] || rules='[{"type":"branch_policy"},{"type":"required_reviewers","reviewers":[{"type":"User","reviewer":{"id":3865595}}]}]'
+  [[ ${FAKE_GH_SCENARIO} != crate-env-bypass ]] || bypass=true
+  jq -n --argjson rules "${rules}" --argjson bypass "${bypass}" \
+    '{name:"crates-io-release",can_admins_bypass:$bypass,protection_rules:$rules,
+      deployment_branch_policy:{protected_branches:false,custom_branch_policies:true}}'
+  ;;
+"repos/atrinik/protocol/environments/crates-io-release/deployment-branch-policies?per_page=100&page=1")
+  name=main
+  [[ ${FAKE_GH_SCENARIO} != crate-env-branch ]] || name='*'
+  jq -n --arg name "${name}" '{total_count:1,branch_policies:[{name:$name,type:"branch"}]}'
+  ;;
+"repos/atrinik/protocol/environments/crates-io-release/secrets?per_page=100&page=1")
+  if [[ ${FAKE_GH_SCENARIO} == crate-env-secret ]]; then
+    jq -n '{total_count:1,secrets:[{name:"CARGO_REGISTRY_TOKEN"}]}'
+  else
+    jq -n '{total_count:0,secrets:[]}'
+  fi
+  ;;
+"repos/atrinik/protocol/environments/crates-io-release/variables?per_page=100&page=1")
+  jq -n '{total_count:0,variables:[]}'
+  ;;
+"repos/atrinik/client/actions/secrets?per_page=100&page=1" | "repos/atrinik/editor/actions/secrets?per_page=100&page=1")
+  if [[ ${FAKE_GH_SCENARIO} == updater-missing-secret ]]; then
+    jq -n '{total_count:0,secrets:[]}'
+  else
+    jq -n '{total_count:1,secrets:[{name:"CRATE_DEPENDENCY_UPDATE_APP_PRIVATE_KEY",updated_at:"2026-08-31T00:00:00Z"}]}'
+  fi
+  ;;
+"repos/atrinik/client/actions/variables?per_page=100&page=1" | "repos/atrinik/editor/actions/variables?per_page=100&page=1")
+  if [[ ${FAKE_GH_SCENARIO} == updater-missing-variable ]]; then
+    jq -n '{total_count:0,variables:[]}'
+  else
+    jq -n '{total_count:1,variables:[{name:"CRATE_DEPENDENCY_UPDATE_APP_ID",created_at:"2026-08-31T00:00:00Z",updated_at:"2026-08-31T00:00:00Z"}]}'
+  fi
   ;;
 repos/atrinik/github-settings)
   if [[ ${FAKE_GH_SCENARIO} == identity-drift ]]; then
@@ -243,7 +333,7 @@ repos/atrinik/classic/pages)
   elif [[ ${FAKE_GH_SCENARIO} == app-installations-page2 || \
     ${FAKE_GH_SCENARIO} == app-installations-page2-failure ]]; then
     jq -n '{
-      total_count: 102,
+      total_count: 103,
       installations: [range(0; 100) | {
         id: (1000 + .),
         app_id: (2000 + .),
@@ -315,6 +405,12 @@ repos/atrinik/classic/pages)
     external-app-permission-drift) external_permissions='{"checks":"write","contents":"write","deployments":"write","metadata":"read","pull_requests":"write"}' ;;
     external-app-suspended) external_suspended_at='"2026-08-15T00:00:00Z"' ;;
     esac
+    updater_installed=true
+    [[ ${FAKE_GH_SCENARIO} != updater-missing ]] || updater_installed=false
+    updater_permissions='{"contents":"write","metadata":"read","pull_requests":"write"}'
+    [[ ${FAKE_GH_SCENARIO} != updater-permissions ]] || updater_permissions='{"contents":"write","metadata":"read","pull_requests":"write","administration":"write"}'
+    updater_selection=selected
+    [[ ${FAKE_GH_SCENARIO} != updater-selection ]] || updater_selection=all
     planned_control=false
     [[ ${FAKE_GH_SCENARIO} == planned-control-installed ]] && planned_control=true
     jq -n \
@@ -333,6 +429,9 @@ repos/atrinik/classic/pages)
       --argjson external_events "${external_events}" \
       --argjson external_permissions "${external_permissions}" \
       --argjson external_suspended_at "${external_suspended_at}" \
+      --argjson updater_installed "${updater_installed}" \
+      --argjson updater_permissions "${updater_permissions}" \
+      --arg updater_selection "${updater_selection}" \
       --argjson planned_control "${planned_control}" '(
         [{
           id: $installation_id,
@@ -365,6 +464,12 @@ repos/atrinik/classic/pages)
           events: ["workflow_run"],
           suspended_at: null
         }] else [] end)
+        + (if $updater_installed then [{
+          id:170332148, app_id:5276152, app_slug:"atrinik-crate-dependency-update",
+          target_type:"Organization",account:{login:"atrinik",type:"Organization"},
+          repository_selection:$updater_selection,permissions:$updater_permissions,
+          events:[],suspended_at:null
+        }] else [] end)
       ) as $installations |
       {total_count: ($installations | length), installations: $installations}'
   fi
@@ -376,7 +481,7 @@ repos/atrinik/classic/pages)
   fi
   [[ ${FAKE_GH_SCENARIO} == app-installations-page2 ]]
   jq -n '{
-    total_count: 102,
+    total_count: 103,
     installations: [{
       id: 153045686,
       app_id: 4564008,
@@ -408,6 +513,12 @@ repos/atrinik/classic/pages)
       },
       events: ["pull_request", "push"],
       suspended_at: null
+    }, {
+      id:170332148, app_id:5276152, app_slug:"atrinik-crate-dependency-update",
+      target_type:"Organization",account:{login:"atrinik",type:"Organization"},
+      repository_selection:"selected",
+      permissions:{contents:"write",metadata:"read",pull_requests:"write"},
+      events:[],suspended_at:null
     }]
   }'
   ;;
@@ -649,29 +760,90 @@ chmod +x "${temporary}/bin/gh"
 
 run_verify() {
   local scenario=$1
+  local verification_root=${2:-${fixture_root}}
 
   PATH="${temporary}/bin:${PATH}" \
     FAKE_GH_LOG="${temporary}/gh.log" \
     FAKE_GH_SCENARIO="${scenario}" \
+    FAKE_CRATE_FIXTURES="${root}/tests/fixtures" \
     GITHUB_ACTIONS=true GH_TOKEN=test-token \
-    ATRINIK_VALIDATION_TODAY=2026-08-31 \
-    "${root}/bin/verify-manual-settings"
+    ATRINIK_VALIDATION_TODAY=2026-10-11 \
+    "${verification_root}/bin/verify-manual-settings"
 }
 
 : >"${temporary}/gh.log"
 output=$(run_verify present)
+grep -Fq 'OWNER-OBSERVED atrinik/client read-only Actions access to private atrinik/linux-build' <<<"${output}"
+grep -Fq 'OWNER-OBSERVED atrinik/editor read-only Actions access to private atrinik/linux-build' <<<"${output}"
 grep -Fq 'PENDING atrinik/protocol crates.io atrinik-protocol via publish-crate.yml / crates-io-release' <<<"${output}"
 if grep -Eq 'protocol/environments|crates.io|/trusted-publishers' "${temporary}/gh.log"; then
   echo "error: planned crate contract inspected or mutated unprovisioned state" >&2
   exit 1
 fi
-maintain_output=$(run_verify crate-reviewer-maintain)
-grep -Fq 'PENDING atrinik/protocol crates.io atrinik-protocol via publish-crate.yml / crates-io-release' <<<"${maintain_output}"
-for scenario in crate-repository-drift crate-reviewer-drift crate-reviewer-permission \
-  crate-reviewer-triage crate-reviewer-write crate-reviewer-unknown-role \
-  crate-reviewer-missing-role; do
+for scenario in crate-repository-drift crate-unprotected crate-ref-drift \
+  crate-image-identity-drift crate-image-visibility-drift crate-image-source-drift; do
   if run_verify "${scenario}" >"${temporary}/${scenario}.out" 2>"${temporary}/${scenario}.err"; then
     echo "error: verifier accepted ${scenario}" >&2
+    exit 1
+  fi
+done
+observed_root=${temporary}/observed-crate
+mkdir -p "${observed_root}/bin"
+cp "${root}/bin/validate" "${fixture_root}/bin/verify-manual-settings" "${observed_root}/bin/"
+cp -R "${root}/config" "${root}/community-health" "${root}/.github" "${root}/lib" "${observed_root}/"
+jq '.crates_io_trusted_publishing[0] |= (
+  .source_state = "observed-reviewed-workflow" | .environment_state = "observed" |
+  .publisher_registration = {state:"owner-observed-registration",observed_on:"2026-08-31",
+    evidence_location:"atrinik/github-settings#owner-setup"})' "${fixture_root}/config/manual-settings.json" \
+  >"${observed_root}/config/manual-settings.json"
+observed_output=$(run_verify present "${observed_root}")
+future_output=$(run_verify crate-workflow-future-pin "${observed_root}")
+grep -Fq "immutable actions rust-lang/crates-io-auth-action@2222222222222222222222222222222222222222" <<<"${future_output}"
+grep -Fq 'KEEP atrinik/protocol environment crates-io-release metadata' <<<"${observed_output}"
+grep -Fq 'GitHub metadata does not verify external registration' <<<"${observed_output}"
+for scenario in crate-workflow-drift crate-env-wait crate-env-reviewer crate-env-bypass \
+  crate-env-branch crate-env-secret crate-workflow-comments crate-workflow-plaintext \
+  crate-workflow-disabled crate-workflow-no-oidc crate-workflow-shell \
+  crate-workflow-ignored-step-failure crate-workflow-ignored-job-failure \
+  crate-workflow-default-shell crate-workflow-job-default-shell \
+  crate-source-workflow-comments crate-source-workflow-oidc-build \
+  crate-source-workflow-build-signer crate-source-workflow-bypass-signer; do
+  if run_verify "${scenario}" "${observed_root}" >"${temporary}/${scenario}.out" \
+    2>"${temporary}/${scenario}.err"; then
+    echo "error: verifier accepted ${scenario}" >&2
+    exit 1
+  fi
+done
+
+planned_updater_root=${temporary}/planned-updater
+mkdir -p "${planned_updater_root}/bin"
+cp "${root}/bin/validate" "${fixture_root}/bin/verify-manual-settings" "${planned_updater_root}/bin/"
+cp -R "${root}/config" "${root}/community-health" "${root}/.github" "${planned_updater_root}/"
+jq '.crate_dependency_update_app |= (.status="planned" | .app_id=null | .installation_id=null |
+      .key_created_on=null | .last_verified_on=null | .rotate_by=null |
+  .repository_scope_verification="pending-owner-ui" | .observed_on=null | .evidence_location=null |
+  .credential_state="pending-name-metadata")' "${fixture_root}/config/manual-settings.json" \
+  >"${planned_updater_root}/config/manual-settings.json"
+if run_verify updater-present "${planned_updater_root}" >"${temporary}/updater-planned.out" 2>"${temporary}/updater-planned.err"; then
+  echo "error: pending App accepted an unrecorded live installation" >&2
+  exit 1
+fi
+updater_root=${temporary}/observed-updater
+mkdir -p "${updater_root}/bin"
+cp "${root}/bin/validate" "${fixture_root}/bin/verify-manual-settings" "${updater_root}/bin/"
+cp -R "${root}/config" "${root}/community-health" "${root}/.github" "${updater_root}/"
+jq '.crate_dependency_update_app |= (.status="owner-observed" | .app_id=5276152 |
+  .installation_id=170332148 | .repository_scope_verification="organization_owner_ui" |
+  .observed_on="2026-08-31" | .evidence_location="atrinik/github-settings#owner-app")' \
+  "${fixture_root}/config/manual-settings.json" >"${updater_root}/config/manual-settings.json"
+updater_output=$(run_verify updater-present "${updater_root}")
+grep -Fq 'KEEP atrinik/client crate dependency App credential name metadata' <<<"${updater_output}"
+grep -Fq 'KEEP atrinik/editor crate dependency App credential name metadata' <<<"${updater_output}"
+grep -Fq 'selected repositories require current owner UI or App-authenticated API proof: atrinik/client and atrinik/editor only' <<<"${updater_output}"
+for scenario in updater-missing updater-permissions updater-selection updater-missing-secret updater-missing-variable; do
+  if run_verify "${scenario}" "${updater_root}" >"${temporary}/updater-${scenario}.out" \
+    2>"${temporary}/updater-${scenario}.err"; then
+    echo "error: verifier accepted observed updater ${scenario}" >&2
     exit 1
   fi
 done
@@ -729,7 +901,7 @@ grep -Fq 'page=2' "${temporary}/gh.log"
 
 environment_page_root=${temporary}/environment-page
 mkdir -p "${environment_page_root}/bin"
-cp "${root}/bin/validate" "${root}/bin/verify-manual-settings" \
+cp "${root}/bin/validate" "${fixture_root}/bin/verify-manual-settings" \
   "${environment_page_root}/bin/"
 cp -R "${root}/config" "${environment_page_root}/config"
 cp -R "${root}/community-health" "${environment_page_root}/community-health"
@@ -740,21 +912,21 @@ jq '
       name: ("branch-" + tostring),
       type: "branch"
     }] + [{name: "main", type: "branch"}])
-' "${root}/config/manual-settings.json" \
+' "${fixture_root}/config/manual-settings.json" \
   >"${environment_page_root}/config/manual-settings.json"
 : >"${temporary}/gh.log"
 output=$(PATH="${temporary}/bin:${PATH}" \
   FAKE_GH_LOG="${temporary}/gh.log" \
   FAKE_GH_SCENARIO=environment-page2 \
   GITHUB_ACTIONS=true GH_TOKEN=test-token \
-  ATRINIK_VALIDATION_TODAY=2026-08-31 \
+  ATRINIK_VALIDATION_TODAY=2026-10-11 \
   "${environment_page_root}/bin/verify-manual-settings")
 grep -Fq 'KEEP atrinik/classic environment discord-release metadata' <<<"${output}"
 grep -Fq 'deployment-branch-policies?per_page=100&page=2' "${temporary}/gh.log"
 
 shared_root=${temporary}/shared-repository
 mkdir -p "${shared_root}/bin"
-cp "${root}/bin/validate" "${root}/bin/verify-manual-settings" \
+cp "${root}/bin/validate" "${fixture_root}/bin/verify-manual-settings" \
   "${shared_root}/bin/"
 cp -R "${root}/config" "${shared_root}/config"
 cp -R "${root}/community-health" "${shared_root}/community-health"
@@ -764,14 +936,14 @@ jq '
     .github_actions_credentials[0] |
     .secret_name = "SECOND_SETTINGS_TOKEN"
   ]
-' "${root}/config/manual-settings.json" \
+' "${fixture_root}/config/manual-settings.json" \
   >"${shared_root}/config/manual-settings.json"
 : >"${temporary}/gh.log"
 output=$(PATH="${temporary}/bin:${PATH}" \
   FAKE_GH_LOG="${temporary}/gh.log" \
   FAKE_GH_SCENARIO=shared-repository \
   GITHUB_ACTIONS=true GH_TOKEN=test-token \
-  ATRINIK_VALIDATION_TODAY=2026-08-31 \
+  ATRINIK_VALIDATION_TODAY=2026-10-11 \
   "${shared_root}/bin/verify-manual-settings")
 grep -Fq 'SECOND_SETTINGS_TOKEN' <<<"${output}"
 [[ $(grep -Fc 'repos/atrinik/github-settings' "${temporary}/gh.log") == 2 ]]
@@ -987,8 +1159,8 @@ fi
 : >"${temporary}/gh.log"
 if PATH="${temporary}/bin:${PATH}" \
   FAKE_GH_LOG="${temporary}/gh.log" FAKE_GH_SCENARIO=present \
-  GITHUB_ACTIONS=true GH_TOKEN='' ATRINIK_VALIDATION_TODAY=2026-08-31 \
-  "${root}/bin/verify-manual-settings" \
+  GITHUB_ACTIONS=true GH_TOKEN='' ATRINIK_VALIDATION_TODAY=2026-10-11 \
+  "${fixture_root}/bin/verify-manual-settings" \
   >"${temporary}/empty.out" 2>"${temporary}/empty.err"; then
   echo "error: manual-settings verifier accepted an empty workflow credential" >&2
   exit 1

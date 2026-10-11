@@ -111,18 +111,64 @@
   merge reviewed desired-state and consumer-permission changes first, preserve
   the source association, verify anonymous digest access, and remove obsolete
   repository grants without altering foreign entries.
+  The private linux-build package keeps its exact package/source identities;
+  record client/editor-only read grants separately from effective workflow pulls.
+  Metadata verifies identity/source/visibility, not grants or effective pulls.
+  Preserve all foreign grants and prove each owning authenticated workflow pulls
+  its pinned manifest before claiming effective access; never widen visibility.
 - Record manually provisioned GitHub Actions environments in
   `config/manual-settings.json` with stable repository IDs, exact deployment
   branch policies and reviewer sets, and variable and secret names only. Never
   record credential values. Provision them only after the owning workflow is
   merged and reviewed, and do not imply that `bin/publish` applies them.
-- Planned crates.io Trusted Publishing belongs in the value-free manual
-  inventory with exact repository, workflow, environment and immutable action
-  identities. Keep its desired maintainer review policy explicit; pending source
-  releases do not invent release pins or imply live environment/registration.
-  Verify repository/reviewer identities and maintainer permission read-only.
-  Activation, environment provisioning, external registration and dispatch each
-  require their owning authorization; publishers never perform these steps.
+- Crates.io Trusted Publishing is a value-free desired contract for protocol,
+  renderer, and content-toolkit. Bind exact stable repository IDs,
+  `publish-crate.yml`, protected `refs/heads/main`, `crates-io-release`, and the
+  official auth action with a full immutable workflow SHA; allow the reviewed
+  `rust-lang/crates-io-auth-action@*` pattern for Dependabot updates without a
+  redundant central action-version lock. Reviewed source/version merge approves
+  automatic future publication; environments have zero reviewers/wait and no
+  registry secrets. Keep pending source/environment/registration distinct from
+  observations; verify live repository/ref/protection and observed environments.
+  Parse both observed exact-main `publish-crate.yml` and `release.yml` structurally with the declared
+  `requirements-validation.txt` dependency; comments/plain text or disabled
+  jobs are not executable source proof. Reject matrix/reusable execution in the
+  two automatic and source package/sign/release jobs, and recursively confine
+  all step-context expressions to the exact returned upload-token input and
+  reviewed confirmation condition. External registration remains sanitized
+  owner evidence, not a GitHub API fact, and can precede a pending later
+  automatic source/environment transition.
+  Source signing alone may request attestation writes/OIDC in a separate inert
+  job; build and semantic-release jobs have no OIDC. Automatic verification
+  uses only contents/actions/checks/attestations read, while the isolated inert
+  publisher adds contents write for atomic upload intent and OIDC. Require
+  actual protected-main manifest provenance and immutable source-release proof
+  in the producer helper. Before registry PUT, atomically reserve the global
+  crate/version Git-reference coordinate; existing/ambiguous reservations block
+  absent-version retries and must never be automatically deleted or reset.
+  First owner-local API-token publication is limited to the fourteen declared
+  renderer/toolkit libraries; exclude CLIs, revoke bootstrap credentials, and
+  use OIDC only afterward. Protocol 0.2 retains its approved manual path. Before
+  any broad publisher apply mutation, qualify newly added live immutable
+  producer selections through fresh scoped source/environment verification;
+  pending/missing inventory or drift fails closed. Initial draft-first code
+  qualification is separate from later immutable-release/runtime proof, and
+  does not require a pre-existing immutable release.
+- Keep the crate dependency App separate from unrelated Apps. Select only
+  client/editor, exactly contents/PR write and metadata read, no events,
+  bypass or auto-merge; inventory names only for repository secret
+  `CRATE_DEPENDENCY_UPDATE_APP_PRIVATE_KEY` and variable
+  `CRATE_DEPENDENCY_UPDATE_APP_ID`. Record observed installation and name-only
+  provisioning separately from pending reviewed workflow activation and dated
+  successful-owned-PR proof. Current owner-authorized early provisioning does
+  not imply effective credentials or a deployed workflow. Retain exact owner UI
+  or supported App-authenticated repository-selection readback; empty events
+  do not independently prove a disabled webhook. Preparation must verify
+  registry readiness before the isolated job writes an owned PR. Keep exact
+  consumer paths, verified key creation date, verification date, rotation owner,
+  and a rotate-by deadline within the existing 90-day cadence. The deadline is
+  internal policy, not upstream expiry; verify replacement workflow use before
+  revoking the old key.
 - Record GitHub Pages sites with stable repository identity, exact provider URL,
   HTTPS enforcement, owning deployment environment, desired Actions source,
   workflow path, and immutable deployment-action marker. Before that marker is
@@ -153,9 +199,16 @@
 - Treat `config/immutable-releases.json` as the exhaustive owner-enforced
   organization inventory. Record stable repository IDs as well as names, fail
   closed on live identity drift, and preserve the exact previous mode and
-  selected-ID set for verified automatic rollback. Add a repository only after
-  its draft-first, complete-before-publication release workflow is merged and
-  proven. Never apply immutable-release policy from an unmerged branch.
+  selected-ID set for verified automatic rollback. Stage additions as pending
+  desired state; apply only after their reviewed draft-first workflows are
+  merged and qualified. Every registry upload must prove that its actual source
+  release is immutable; ordinary workflow tokens cannot read administrative
+  immutability settings, so do not add an unsupported pre-tag settings query. Never apply immutable-release policy from an unmerged branch.
+  This release delivery activates only the exact immutable-release API policy
+  after a complete snapshot, identity and freshness check, exact readback and
+  verified rollback. Preserve foreign live state; do not broad-apply the
+  publisher plan. Suspend only the three producer source-release workflows in
+  the reviewed reversible window, retaining and restoring their original states.
 - Never print or commit administrative tokens, live secrets, or API responses
   containing credentials.
 - Run `bin/validate`, `bash -n`, ShellCheck on governance scripts, the publisher
