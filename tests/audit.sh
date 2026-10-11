@@ -152,6 +152,19 @@ if grep -Fq 'foreign' "${temporary}/api.log"; then
   exit 1
 fi
 
+# GitHub's disabled-protection response requires independent exact-ref proof;
+# historical rules on another branch must neither create drift nor prove absence.
+for scenario in legacy-disabled-absent legacy-maintenance-disabled-absent; do
+  output=$(run_audit "${scenario}")
+  grep -Fq 'Governance audit passed:' <<<"${output}"
+done
+assert_drift legacy-disabled-present 'unexpected legacy branch protection requires manual review: atrinik/observatory/main'
+assert_drift legacy-maintenance-disabled-present 'unexpected legacy branch protection requires manual review: atrinik/observatory/release/next#candidate'
+for scenario in wrong-id wrong-owner wrong-name archived missing-field null-ref null-repository missing-data malformed-rule errors unreadable non-json inventory-id metadata-name; do
+  assert_drift "legacy-disabled-${scenario}" 'legacy branch protection could not be read: atrinik/observatory/main'
+done
+assert_drift legacy-maintenance-disabled-wrong-name 'legacy branch protection could not be read: atrinik/observatory/release/next#candidate'
+
 assert_drift unmanaged 'active repository is not in the desired-state inventory'
 assert_drift merge-drift 'repository merge policy drift'
 assert_drift properties-drift 'repository custom-property drift'

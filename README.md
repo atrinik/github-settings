@@ -300,7 +300,11 @@ Rulesets are the canonical branch protection contract. Audit also reads legacy
 protection on every active default branch and declared maintenance branch. Any
 legacy protection is drift requiring separate reviewed manual remediation;
 unreadable responses fail closed. Only a verified unprotected-branch response
-counts as absent. The audit never removes branch protections.
+counts as absent. For the exact repository-disabled REST response, a fixed
+read-only GraphQL query may instead prove that the identified active repository
+and exact existing branch have an explicitly null legacy-rule association.
+Missing, conflicting or unreadable evidence remains drift. Historical rules on
+other branches remain untouched. The audit never removes branch protections.
 
 Repository-scope retirement of an existing `03 - Required CI` rule also needs a
 reviewed `config/retired-required-ci.json` record with its exact repository and

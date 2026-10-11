@@ -268,4 +268,7 @@
   protection on active default and declared maintenance branches; any presence
   is drift under the canonical ruleset contract. Only verified unprotected
   responses count as absent; unreadable evidence fails closed and audit never
-  removes protections.
+  removes protections. Only the exact repository-disabled REST response may
+  fall back to a fixed read-only GraphQL query with matching repository/branch
+  identity, active state and explicit null legacy-rule association. Missing or
+  conflicting evidence fails closed; preserve historical rules on other refs.

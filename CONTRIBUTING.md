@@ -170,7 +170,11 @@ Security gate updates must re-read and validate ownership and the recognized
 payload immediately before PUT, preserving concurrent modifications. Audit
 legacy protection on active default and maintenance branches as drift under the
 canonical ruleset contract; distinguish verified unprotected responses from
-unreadable evidence, and never remove protection during audit.
+unreadable evidence, and never remove protection during audit. The exact
+repository-disabled REST response may use the fixed read-only GraphQL fallback;
+require matching repository identity and branch, active state and an explicit
+null legacy-rule association. Errors and missing or conflicting fields fail
+closed; preserve unrelated historical rules.
 
 Crates.io publication contracts bind exact repository/workflow/environment and
 official auth-action identities with full immutable workflow SHA references;

@@ -315,7 +315,7 @@ check_ruleset() {
 # Legacy protection layers additional requirements outside the rules endpoint;
 # retain it for manual review rather than silently treating rulesets as complete.
 audit_legacy_protection() {
-  local repository=$1 branch=$2 encoded response status=0 body
+  local repository=$1 branch=$2 metadata=$3 encoded response status=0 body
   encoded=$(jq -rn --arg branch "${branch}" '$branch | @uri')
   response=$(github_api --include \
     "repos/${organization}/${repository}/branches/${encoded}/protection" \
@@ -328,12 +328,62 @@ audit_legacy_protection() {
       <<<"${body}" >/dev/null 2>&1; then
     return
   fi
+  # Some repositories report disabled REST protection despite retaining legacy
+  # rules for other branches. Only an exact-ref GraphQL read can prove absence.
+  if [[ ${status} == 1 && ${response%%$'\n'*} =~ ^HTTP/[0-9.]+\ 404(\ |$) ]] &&
+    jq -se 'length == 1 and (.[0] | type == "object" and
+      .message == "Branch protection has been disabled on this repository." and
+      .status == "404")' <<<"${body}" >/dev/null 2>&1; then
+    audit_disabled_legacy_protection "${repository}" "${branch}" "${metadata}"
+    return
+  fi
   if [[ ${status} == 0 && ${response%%$'\n'*} =~ ^HTTP/[0-9.]+\ 200(\ |$) ]] &&
     jq -se 'length == 1 and (.[0] | type == "object")' \
       <<<"${body}" >/dev/null 2>&1; then
     record_finding "unexpected legacy branch protection requires manual review: ${organization}/${repository}/${branch}"
   else
     record_finding "legacy branch protection could not be read: ${organization}/${repository}/${branch}"
+  fi
+}
+
+audit_disabled_legacy_protection() {
+  local repository=$1 branch=$2 metadata=$3 repository_id response
+  # GraphQL variables are literal; gh supplies their values as separate fields.
+  # shellcheck disable=SC2016
+  local query='query LegacyBranchProtection($owner: String!, $name: String!, $qualifiedName: String!) { repository(owner: $owner, name: $name) { databaseId nameWithOwner isArchived ref(qualifiedName: $qualifiedName) { name branchProtectionRule { id } } } }'
+  # Fence rename/transfer/recreation against both the fresh REST metadata and
+  # the enumeration used to select this active repository.
+  if ! repository_id=$(jq -er --arg repository "${repository}" \
+    --arg coordinate "${organization}/${repository}" \
+    --slurpfile inventory "${temporary}/inventory.json" '
+      . as $metadata |
+      [$inventory[0][] | select(.name == $repository)] as $entries |
+      if ($entries | length) == 1 and $entries[0].id == .id and
+        $entries[0].archived == false and .archived == false and
+        .name == $repository and .full_name == $coordinate and
+        (.id | type == "number" and . > 0 and floor == .)
+      then .id else error("repository identity drift") end
+    ' "${metadata}" 2>/dev/null) ||
+    ! response=$(gh api --method POST -H "X-GitHub-Api-Version: ${api_version}" \
+      graphql -f "query=${query}" -f "owner=${organization}" \
+      -f "name=${repository}" -f "qualifiedName=refs/heads/${branch}" \
+      2>"${temporary}/legacy-protection.err") ||
+    ! jq -se --argjson repository_id "${repository_id}" \
+      --arg coordinate "${organization}/${repository}" --arg branch "${branch}" '
+      length == 1 and (.[0] | type == "object" and (has("errors") | not) and
+        (.data.repository | type == "object" and
+          .databaseId == $repository_id and .nameWithOwner == $coordinate and
+          .isArchived == false and
+          (.ref | type == "object" and .name == $branch and
+            has("branchProtectionRule") and
+            (.branchProtectionRule == null or
+              (.branchProtectionRule | type == "object" and
+                (.id | type == "string" and length > 0))))))
+    ' <<<"${response}" >/dev/null 2>&1; then
+    record_finding "legacy branch protection could not be read: ${organization}/${repository}/${branch}"
+  elif ! jq -e '.data.repository.ref.branchProtectionRule == null' \
+    <<<"${response}" >/dev/null; then
+    record_finding "unexpected legacy branch protection requires manual review: ${organization}/${repository}/${branch}"
   fi
 }
 
@@ -439,9 +489,9 @@ for repository in "${!expected_active[@]}"; do
     rulesets='[]'
   fi
   branch=$(jq -r '.default_branch' "${repository_defaults}")
-  audit_legacy_protection "${repository}" "${branch}"
+  audit_legacy_protection "${repository}" "${branch}" "${metadata_file}"
   while IFS= read -r maintenance_branch; do
-    audit_legacy_protection "${repository}" "${maintenance_branch}"
+    audit_legacy_protection "${repository}" "${maintenance_branch}" "${metadata_file}"
   done < <(jq -r --arg repository "${repository}" '
     .maintenance_branches[] | select(.repository == $repository) | .branch
   ' "${repositories_config}")

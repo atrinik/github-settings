@@ -26,11 +26,12 @@ if not args or args.pop(0) != 'api':
 slurp = False
 include = False
 endpoint = None
+method = None
+fields = {}
 while args:
     arg = args.pop(0)
     if arg == '--method':
-        if args.pop(0) != 'GET':
-            reject('audit attempted API mutation')
+        method = args.pop(0)
     elif arg == '-H':
         args.pop(0)
     elif arg == '--paginate':
@@ -39,12 +40,27 @@ while args:
         slurp = True
     elif arg == '--include':
         include = True
+    elif arg == '-f':
+        key, separator, value = args.pop(0).partition('=')
+        if not separator or key in fields:
+            reject('invalid or duplicated GraphQL variable')
+        fields[key] = value
     elif arg.startswith('-'):
         reject(f'unexpected or mutating API flag: {arg}')
     else:
         endpoint = arg
 if endpoint is None:
     reject('endpoint missing')
+query = 'query LegacyBranchProtection($owner: String!, $name: String!, $qualifiedName: String!) { repository(owner: $owner, name: $name) { databaseId nameWithOwner isArchived ref(qualifiedName: $qualifiedName) { name branchProtectionRule { id } } } }'
+if endpoint == 'graphql':
+    if (method != 'POST' or set(fields) != {'query', 'owner', 'name', 'qualifiedName'}
+            or fields['query'] != query or fields['owner'] != 'atrinik'
+            or fields['name'] != 'observatory'
+            or fields['qualifiedName'] not in ('refs/heads/main', 'refs/heads/release/next#candidate')
+            or not scenario.startswith(('legacy-disabled-', 'legacy-maintenance-disabled-'))):
+        reject('unexpected or mutating GraphQL request')
+elif method != 'GET' or fields:
+    reject('audit attempted API mutation')
 with open(os.environ['AUDIT_API_LOG'], 'a', encoding='utf-8') as log:
     log.write(endpoint + '\n')
 
@@ -182,13 +198,49 @@ def rulesets(repository):
 
 
 payload = None
-if endpoint.startswith('orgs/atrinik/repos?'):
+if endpoint == 'graphql':
+    variant = scenario.removeprefix('legacy-maintenance-').removeprefix('legacy-').removeprefix('disabled-')
+    repository = {'databaseId': active.index('observatory') + 1, 'nameWithOwner': 'atrinik/observatory',
+                  'isArchived': False, 'ref': {'name': fields['qualifiedName'].removeprefix('refs/heads/'),
+                                             'branchProtectionRule': None}}
+    payload = {'data': {'repository': repository}}
+    if variant == 'present':
+        repository['ref']['branchProtectionRule'] = {'id': 'BPR_fixture'}
+    elif variant == 'wrong-id':
+        repository['databaseId'] += 100
+    elif variant == 'wrong-owner':
+        repository['nameWithOwner'] = 'foreign/observatory'
+    elif variant == 'wrong-name':
+        repository['ref']['name'] = 'master'
+    elif variant == 'archived':
+        repository['isArchived'] = True
+    elif variant == 'missing-field':
+        del repository['ref']['branchProtectionRule']
+    elif variant == 'null-ref':
+        repository['ref'] = None
+    elif variant == 'null-repository':
+        payload['data']['repository'] = None
+    elif variant == 'missing-data':
+        del payload['data']
+    elif variant == 'malformed-rule':
+        repository['ref']['branchProtectionRule'] = False
+    elif variant == 'errors':
+        payload['errors'] = [{'message': 'read denied'}]
+    elif variant == 'unreadable':
+        reject('GraphQL request denied')
+    elif variant == 'non-json':
+        print('<html>unavailable</html>')
+        sys.exit(0)
+elif endpoint.startswith('orgs/atrinik/repos?'):
     if scenario == 'inventory-unreadable':
         reject('inventory read denied')
-    payload = [dict(name=name, archived=value['lifecycle'] == 'archived', private=False,
+    payload = [dict(name=name, id=active.index(name) + 1 if name in active else 1000,
+                    archived=value['lifecycle'] == 'archived', private=False,
                     visibility='public', disabled=False, fork=False, has_issues=True,
                     has_projects=True, has_wiki=True)
                for name, value in properties['repositories'].items()]
+    if scenario == 'legacy-disabled-inventory-id':
+        next(item for item in payload if item['name'] == 'observatory')['id'] += 100
     if scenario == 'unmanaged':
         payload.append(dict(name='unmanaged', archived=False, private=False, visibility='public',
                             disabled=False, fork=False, has_issues=True, has_projects=True, has_wiki=True))
@@ -263,7 +315,9 @@ elif endpoint.startswith('repos/atrinik/'):
                     for context in repositories['required_ci'][repository]]}},
                 'empty': {},
             }
-            if variant in policies:
+            if variant.startswith('disabled-'):
+                payload['message'] = 'Branch protection has been disabled on this repository.'
+            elif variant in policies:
                 code, payload, result = 200, policies[variant], 0
             elif variant == 'forbidden':
                 code, payload = 403, {'message': 'Resource not accessible by integration', 'status': '403'}
@@ -386,10 +440,12 @@ elif endpoint.startswith('repos/atrinik/'):
         payload = {'enabled': not (scenario == 'private-reporting' and target)}
     elif path == '':
         payload = dict(config('repository-defaults.json'), id=active.index(repository) + 1,
-                       name=repository, archived=False, security_and_analysis={
+                       name=repository, full_name='atrinik/' + repository, archived=False, security_and_analysis={
                            name: {'status': 'enabled'} for name in (
                                'secret_scanning', 'secret_scanning_push_protection',
                                'secret_scanning_validity_checks', 'dependabot_security_updates')})
+        if scenario == 'legacy-disabled-metadata-name' and target:
+            payload['full_name'] = 'foreign/observatory'
         if scenario == 'merge-drift' and target:
             payload['allow_merge_commit'] = True
         if scenario == 'secret-baseline' and target:
