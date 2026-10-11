@@ -23,10 +23,12 @@ trap 'rm -rf "${temporary}"' EXIT
 "${root}/bin/validate" >/dev/null
 
 github_api() {
-  gh api -H "X-GitHub-Api-Version: ${api_version}" "$@"
+  gh api --method GET -H "X-GitHub-Api-Version: ${api_version}" "$@"
 }
 
 declare -a findings=()
+declare -a pending=()
+declare -A ruleset_cache=()
 
 record_finding() {
   findings+=("$1")
@@ -61,6 +63,14 @@ is_temporary_security_advisory_repository() {
       "${repositories_config}" >/dev/null
 }
 
+# Capture before parsing: process substitutions otherwise hide API failures.
+if ! github_api --paginate --slurp "orgs/${organization}/repos?per_page=100&type=all" |
+  jq -e 'add | if type == "array" then . else error("invalid inventory") end' \
+    >"${temporary}/inventory.json"; then
+  echo "error: organization repository inventory could not be read" >&2
+  exit 1
+fi
+
 declare -A live_archived=()
 while IFS=$'\t' read -r \
   repository archived private visibility disabled fork has_issues has_projects has_wiki; do
@@ -71,24 +81,11 @@ while IFS=$'\t' read -r \
     continue
   fi
   live_archived["${repository}"]=${archived}
-done < <(
-  github_api --paginate "orgs/${organization}/repos?per_page=100&type=all" \
-    --jq '
-      .[] |
-      [
-        .name,
-        (.archived | tostring),
-        (.private | tostring),
-        .visibility,
-        (.disabled | tostring),
-        (.fork | tostring),
-        (.has_issues | tostring),
-        (.has_projects | tostring),
-        (.has_wiki | tostring)
-      ] |
-      @tsv
-    '
-)
+done < <(jq -r '
+  .[] | [.name, (.archived | tostring), (.private | tostring), .visibility,
+    (.disabled | tostring), (.fork | tostring), (.has_issues | tostring),
+    (.has_projects | tostring), (.has_wiki | tostring)] | @tsv
+' "${temporary}/inventory.json")
 
 declare -A expected_active=()
 declare -A expected_archived=()
@@ -140,19 +137,6 @@ for repository in "${!expected_archived[@]}"; do
   fi
 done
 
-expected_rule_name() {
-  local repository=$1
-  local base=$2
-
-  if jq -e --arg repository "${repository}" \
-    '.repositories | index($repository) != null' "${advisory_windows}" \
-    >/dev/null; then
-    printf '%s - classic\n' "${base}"
-  else
-    printf '%s\n' "${base}"
-  fi
-}
-
 has_configured_repository() {
   local property=$1
   local repository=$2
@@ -175,6 +159,159 @@ has_release_tags() {
     >/dev/null
 }
 
+audit_actions() {
+  local current
+  for policy in permissions selected-actions workflow; do
+    local endpoint="orgs/${organization}/actions/permissions"
+    local config="${root}/config/actions-permissions.json"
+    case ${policy} in
+      selected-actions) endpoint+=/selected-actions; config="${root}/config/actions-selected.json" ;;
+      workflow) endpoint+=/workflow; config="${root}/config/actions-workflow.json" ;;
+    esac
+    if ! current=$(github_api "${endpoint}"); then
+      record_finding "organization Actions ${policy} could not be read: ${organization}"
+      continue
+    fi
+    if ! jq -e --slurpfile desired "${config}" '
+      . as $current | $desired[0] | to_entries | all(.[];
+        if .key == "sha_pinning_required" then true
+        elif .key == "patterns_allowed" then
+          (.value | sort) == ($current.patterns_allowed | sort)
+        else $current[.key] == .value end)
+    ' <<<"${current}" >/dev/null; then
+      record_finding "organization Actions ${policy} drift: ${organization}"
+    fi
+    if [[ ${policy} == permissions ]] &&
+      jq -e '.sha_pinning_required == true' "${config}" >/dev/null; then
+      case $(jq -r '.sha_pinning_required | tostring' <<<"${current}") in
+        true) ;;
+        false) pending+=("Actions SHA pinning deferred pending canary proof: ${organization}") ;;
+        *) record_finding "Actions SHA pinning state could not be read: ${organization}" ;;
+      esac
+    fi
+  done
+}
+
+audit_actions
+
+# The branch endpoint proves effective applicability; inherited names alone do not.
+# Details additionally prove bypass and ref/repository scope, including tag policy.
+ruleset_targets_repository() {
+  local detail=$1 repository=$2 id=$3 pattern matched=false
+  if jq -e '.conditions.repository_id != null' <<<"${detail}" >/dev/null; then
+    jq -e --argjson id "${id}" '.conditions.repository_id.repository_ids | index($id) != null' \
+      <<<"${detail}" >/dev/null || return 1
+  fi
+  if jq -e '.conditions.repository_name != null' <<<"${detail}" >/dev/null; then
+    while IFS= read -r pattern; do
+      # Intentional GitHub repository-name wildcard matching.
+      # shellcheck disable=SC2053
+      if [[ ${pattern} == '~ALL' || ${repository} == ${pattern} ]]; then matched=true; fi
+    done < <(jq -r '.conditions.repository_name.include[]' <<<"${detail}")
+    ${matched} || return 1
+    while IFS= read -r pattern; do
+      # Intentional GitHub repository-name wildcard matching.
+      # shellcheck disable=SC2053
+      if [[ ${pattern} == '~ALL' || ${repository} == ${pattern} ]]; then return 1; fi
+    done < <(jq -r '.conditions.repository_name.exclude[]' <<<"${detail}")
+  fi
+}
+
+check_ruleset() {
+  local repository=$1 name=$2 template=$3 list=$4 metadata=$5
+  local entry id source endpoint detail wanted
+  entry=$(jq -c --arg name "${name}" '[.[] | select(.name == $name)]' <<<"${list}")
+  if [[ $(jq length <<<"${entry}") != 1 ]]; then
+    record_finding "missing or duplicate inherited ruleset '${name}': ${organization}/${repository}"
+    return
+  fi
+  id=$(jq -r '.[0].id' <<<"${entry}")
+  source=$(jq -r '.[0].source_type' <<<"${entry}")
+  case ${source} in
+    Organization) endpoint="orgs/${organization}/rulesets/${id}" ;;
+    Repository) endpoint="repos/${organization}/${repository}/rulesets/${id}" ;;
+    *) record_finding "ruleset source could not be read '${name}': ${organization}/${repository}"; return ;;
+  esac
+  if [[ ! -v ruleset_cache["${endpoint}"] ]]; then
+    if ! detail=$(github_api "${endpoint}"); then
+      record_finding "ruleset contents could not be read '${name}': ${organization}/${repository}"
+      return
+    fi
+    ruleset_cache["${endpoint}"]=${detail}
+  fi
+  detail=${ruleset_cache["${endpoint}"]}
+  wanted=$(cat "${template}")
+  if [[ ${name} == '03 - Required CI - '* ]]; then
+    wanted=$(jq --argjson checks "${expected_checks}" \
+      '.rules[0].parameters.required_status_checks = $checks' <<<"${wanted}")
+    # Dependency review is governed by its separate rollout ruleset.
+    wanted=$(jq '.rules[0].parameters.required_status_checks |= map(select(.context != "Dependency review"))' <<<"${wanted}")
+  fi
+  if jq -e --arg repository "${repository}" '.repositories | index($repository) != null' \
+    "${advisory_windows}" >/dev/null && [[ ${name} == '03 - Required CI - '* ]]; then
+    wanted=$(jq '.bypass_actors[].bypass_mode = "always"' <<<"${wanted}")
+  fi
+  if ! ruleset_targets_repository "${detail}" "${repository}" "$(jq -r .id "${metadata}")" ||
+    ! jq -e --argjson wanted "${wanted}" '
+      # GitHub returns null for OrganizationAdmin, whose desired actor ID is 1.
+      def normalize_bypass:
+        map(if .actor_type == "OrganizationAdmin" and .actor_id == null then
+          .actor_id = 1 else . end) | sort_by(.actor_type, .actor_id, .bypass_mode);
+      .enforcement == $wanted.enforcement and .target == $wanted.target and
+      (.bypass_actors | normalize_bypass) == ($wanted.bypass_actors | normalize_bypass) and
+      .conditions.ref_name == $wanted.conditions.ref_name and
+      (.rules | map(if .type == "required_status_checks" then
+        .parameters.required_status_checks |= sort_by(.context, .integration_id) else . end) | sort_by(.type)) ==
+        ($wanted.rules | map(if .type == "required_status_checks" then
+        .parameters.required_status_checks |= sort_by(.context, .integration_id) else . end) | sort_by(.type))
+    ' <<<"${detail}" >/dev/null; then
+    record_finding "ruleset scope or policy drift '${name}': ${organization}/${repository}"
+  fi
+}
+
+audit_security() {
+  local repository=$1 desired="${root}/config/code-security.json" setup="${root}/config/codeql-default-setup.json"
+  local current languages
+  if jq -e --arg repository "${repository}" '.repositories | index($repository) != null' \
+    "${root}/config/codeql-advanced-setup.json" >/dev/null; then
+    desired="${root}/config/code-security-advanced.json"
+    setup="${root}/config/codeql-default-setup-advanced.json"
+  fi
+  if current=$(github_api "repos/${organization}/${repository}/code-security-configuration"); then
+    if ! jq -e --slurpfile desired "${desired}" '
+      .status == "enforced" and (.configuration | . as $config |
+        . + {code_security: (.code_security //
+          (if .advanced_security == "enabled" or .advanced_security == "code_security" then "enabled" else "disabled" end)),
+          secret_protection: (.secret_protection //
+          (if .advanced_security == "enabled" or .advanced_security == "secret_protection" then "enabled" else "disabled" end))} |
+        . as $normalized | $desired[0] | to_entries | all(.[]; $normalized[.key] == .value))
+    ' <<<"${current}" >/dev/null; then
+      record_finding "security configuration attachment or baseline drift: ${organization}/${repository}"
+    fi
+  else
+    record_finding "security configuration could not be read: ${organization}/${repository}"
+  fi
+  if current=$(github_api "repos/${organization}/${repository}/code-scanning/default-setup"); then
+    languages=$(jq -c --arg repository "${repository}" '.codeql_required_languages[$repository] // []' \
+      "${root}/config/security-merge-protection.json")
+    if ! jq -e --slurpfile desired "${setup}" --argjson languages "${languages}" '
+      . as $current | ($desired[0] | to_entries | all(.[]; $current[.key] == .value)) and
+      (($languages - ($current.languages // [])) | length == 0)
+    ' <<<"${current}" >/dev/null; then
+      record_finding "CodeQL setup or required language drift: ${organization}/${repository}"
+    fi
+  else
+    record_finding "CodeQL setup could not be read: ${organization}/${repository}"
+  fi
+  if ! github_api "repos/${organization}/${repository}/vulnerability-alerts" >/dev/null; then
+    record_finding "Dependabot alerts disabled or unreadable: ${organization}/${repository}"
+  fi
+  if ! current=$(github_api "repos/${organization}/${repository}/private-vulnerability-reporting") ||
+    ! jq -e '.enabled == true' <<<"${current}" >/dev/null; then
+    record_finding "private vulnerability reporting disabled or unreadable: ${organization}/${repository}"
+  fi
+}
+
 for repository in "${!expected_active[@]}"; do
   [[ -v live_archived["${repository}"] ]] || continue
   [[ ${live_archived["${repository}"]} == false ]] || continue
@@ -183,6 +320,16 @@ for repository in "${!expected_active[@]}"; do
   if ! github_api "repos/${organization}/${repository}" >"${metadata_file}"; then
     record_finding "repository metadata could not be read: ${organization}/${repository}"
     continue
+  fi
+
+  if current=$(github_api "repos/${organization}/${repository}/actions/permissions/workflow"); then
+    if ! jq -e --slurpfile desired "${root}/config/actions-workflow.json" '
+      . as $current | $desired[0] | to_entries | all(.[]; $current[.key] == .value)
+    ' <<<"${current}" >/dev/null; then
+      record_finding "repository Actions workflow permissions drift: ${organization}/${repository}"
+    fi
+  else
+    record_finding "repository Actions workflow permissions could not be read: ${organization}/${repository}"
   fi
 
   if ! jq -e --slurpfile desired "${repository_defaults}" '
@@ -214,32 +361,118 @@ for repository in "${!expected_active[@]}"; do
     record_finding "repository custom properties could not be read: ${organization}/${repository}"
   fi
 
-  if rulesets=$(github_api \
-    "repos/${organization}/${repository}/rulesets?includes_parents=true" | \
-    jq -r '.[].name' | sort); then
-    required_rulesets=(
-      "$(expected_rule_name "${repository}" "01 - Default branch integrity")"
-      "$(expected_rule_name "${repository}" "01 - Default branch linear history")"
-    )
-    if has_configured_repository '.pull_request_gate' "${repository}"; then
-      required_rulesets+=(
-        "$(expected_rule_name "${repository}" "02 - Changes through pull requests")"
-      )
-    fi
-    if has_required_ci "${repository}"; then
-      required_rulesets+=("03 - Required CI - ${repository}")
-    fi
-    if has_release_tags "${repository}"; then
-      required_rulesets+=("04 - Immutable release tags")
-    fi
-    for ruleset in "${required_rulesets[@]}"; do
-      if ! grep -Fxq -- "${ruleset}" <<<"${rulesets}"; then
-        record_finding "missing inherited ruleset '${ruleset}': ${organization}/${repository}"
-      fi
-    done
-  else
+  rulesets='[]'
+  if ! rulesets=$(github_api --paginate --slurp \
+    "repos/${organization}/${repository}/rulesets?includes_parents=true&per_page=100" | jq -e 'add'); then
     record_finding "inherited rulesets could not be read: ${organization}/${repository}"
+    rulesets='[]'
   fi
+  branch=$(jq -r '.default_branch' "${repository_defaults}")
+  effective='[]'
+  if ! effective=$(github_api --paginate --slurp \
+    "repos/${organization}/${repository}/rules/branches/${branch}?per_page=100" | jq -e 'add'); then
+    record_finding "effective default-branch rules could not be read: ${organization}/${repository}"
+    effective='[]'
+  fi
+  expected_checks=$(jq -c --arg repository "${repository}" \
+    '(.required_ci[$repository] // []) | map({context: ., integration_id: 15368})' "${repositories_config}")
+  dependency_required=false
+  if jq -e --arg repository "${repository}" '.dependency_review | index($repository) != null' \
+    "${root}/config/security-merge-protection.json" >/dev/null; then
+    if jq -e 'any(.[]; .type == "required_status_checks" and
+      any(.parameters.required_status_checks[]; .context == "Dependency review"))' \
+        <<<"${effective}" >/dev/null ||
+      jq -e 'any(.[]; .name == "07 - Dependency review")' <<<"${rulesets}" >/dev/null; then
+      dependency_required=true
+    elif "${root}/bin/security-readiness" dependency "${organization}/${repository}" \
+      >"${temporary}/${repository}.readiness" 2>&1; then
+      dependency_required=true
+    else
+      readiness_status=$?
+      if ((readiness_status == 1)); then
+        pending+=("Dependency review merge protection awaits landed successful producer: ${organization}/${repository}")
+      else
+        record_finding "Dependency review readiness could not be read: ${organization}/${repository}"
+      fi
+    fi
+    if ${dependency_required}; then
+      expected_checks=$(jq '. + [{context: "Dependency review", integration_id: 15368}]' <<<"${expected_checks}")
+      check_ruleset "${repository}" '07 - Dependency review' \
+        "${root}/config/rulesets/dependency-review.json" "${rulesets}" "${metadata_file}"
+    fi
+  fi
+  if ! jq -e --argjson checks "${expected_checks}" '
+    ([.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[]] |
+      unique_by(.context, .integration_id) | sort_by(.context, .integration_id)) ==
+      ($checks | sort_by(.context, .integration_id)) and
+    all(.[] | select(.type == "required_status_checks"); .parameters.strict_required_status_checks_policy == true)
+  ' <<<"${effective}" >/dev/null; then
+    record_finding "effective required CI contexts or app drift: ${organization}/${repository}"
+  fi
+  for policy in default-branch-integrity default-branch-linear-history; do
+    template="${root}/config/rulesets/${policy}.json"
+    if jq -e --arg repository "${repository}" '.repositories | index($repository) != null' \
+      "${advisory_windows}" >/dev/null; then
+      template="${root}/config/rulesets/${policy}-classic.json"
+    fi
+    check_ruleset "${repository}" "$(jq -r .name "${template}")" "${template}" "${rulesets}" "${metadata_file}"
+    if ! jq -e --slurpfile desired "${template}" \
+      '. as $effective | all($desired[0].rules[]; . as $rule | any($effective[]; .type == $rule.type))' \
+      <<<"${effective}" >/dev/null; then
+      record_finding "effective default-branch integrity drift: ${organization}/${repository}"
+    fi
+  done
+  if has_configured_repository '.pull_request_gate' "${repository}"; then
+    template="${root}/config/rulesets/pull-request-gate.json"
+    if jq -e --arg repository "${repository}" '.repositories | index($repository) != null' \
+      "${advisory_windows}" >/dev/null; then template="${root}/config/rulesets/pull-request-gate-classic.json"; fi
+    check_ruleset "${repository}" "$(jq -r .name "${template}")" "${template}" "${rulesets}" "${metadata_file}"
+    if ! jq -e --slurpfile desired "${template}" \
+      '[.[] | select(.type == "pull_request") | .parameters] == [$desired[0].rules[0].parameters]' \
+      <<<"${effective}" >/dev/null; then
+      record_finding "effective pull-request policy drift: ${organization}/${repository}"
+    fi
+  elif jq -e 'any(.[]; .type == "pull_request")' <<<"${effective}" >/dev/null; then
+    record_finding "unexpected effective pull-request gate: ${organization}/${repository}"
+  fi
+  if has_required_ci "${repository}"; then
+    check_ruleset "${repository}" "03 - Required CI - ${repository}" \
+      "${root}/config/rulesets/required-ci.json" "${rulesets}" "${metadata_file}"
+  fi
+  if has_release_tags "${repository}"; then
+    check_ruleset "${repository}" '04 - Immutable release tags' \
+      "${root}/config/rulesets/immutable-release-tags.json" "${rulesets}" "${metadata_file}"
+  fi
+  if jq -e --arg repository "${repository}" '.code_scanning | index($repository) != null' \
+    "${root}/config/security-merge-protection.json" >/dev/null; then
+    codeql_required=false
+    if jq -e 'any(.[]; .type == "code_scanning")' <<<"${effective}" >/dev/null ||
+      jq -e 'any(.[]; .name == "06 - CodeQL security")' <<<"${rulesets}" >/dev/null; then
+      codeql_required=true
+    elif "${root}/bin/security-readiness" codeql "${organization}/${repository}" \
+      >"${temporary}/${repository}.codeql-readiness" 2>&1; then
+      codeql_required=true
+    else
+      readiness_status=$?
+      if ((readiness_status == 1)); then
+        pending+=("CodeQL merge protection awaits successful analysis: ${organization}/${repository}")
+      else
+        record_finding "CodeQL readiness could not be read: ${organization}/${repository}"
+      fi
+    fi
+    if ${codeql_required}; then
+      check_ruleset "${repository}" '06 - CodeQL security' \
+        "${root}/config/rulesets/code-scanning.json" "${rulesets}" "${metadata_file}"
+      if ! jq -e --slurpfile desired "${root}/config/rulesets/code-scanning.json" \
+        '[.[] | select(.type == "code_scanning") | {type, parameters}] == $desired[0].rules' \
+        <<<"${effective}" >/dev/null; then
+        record_finding "effective CodeQL merge protection drift: ${organization}/${repository}"
+      fi
+    fi
+  elif jq -e 'any(.[]; .type == "code_scanning")' <<<"${effective}" >/dev/null; then
+    record_finding "unexpected effective CodeQL merge protection: ${organization}/${repository}"
+  fi
+  audit_security "${repository}"
 
   if ! jq -e '
     .security_and_analysis.secret_scanning.status == "enabled" and
@@ -251,10 +484,18 @@ for repository in "${!expected_active[@]}"; do
   fi
 done
 
+if ((${#pending[@]})); then
+  printf 'PENDING %s\n' "${pending[@]}" | sort -u
+fi
+
 if ((${#findings[@]})); then
   printf 'DRIFT %s\n' "${findings[@]}" | sort -u
   echo "Governance audit failed: ${#findings[@]} finding(s)." >&2
   exit 1
 fi
 
-echo "Governance audit passed: ${#expected_active[@]} active repositories checked."
+if ((${#pending[@]})); then
+  echo "Governance audit baseline passed with ${#pending[@]} pending rollout(s): ${#expected_active[@]} active repositories checked."
+else
+  echo "Governance audit passed: ${#expected_active[@]} active repositories checked."
+fi

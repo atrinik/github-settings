@@ -226,6 +226,9 @@ if [[ ${method} != GET ]]; then
 fi
 
 case "${endpoint}|${jq_filter}" in
+"orgs/atrinik/actions/permissions|")
+  printf '{"enabled_repositories":"all","allowed_actions":"selected","sha_pinning_required":false}\n'
+  ;;
 "orgs/atrinik|")
   if [[ ${GH_ORGANIZATION_SCENARIO:-converged} == drifted ]]; then
     jq -n '{
@@ -1085,8 +1088,9 @@ assert_idempotent_organization_security() {
 
 advisory_active_root=${temporary}/advisory-window-active
 mkdir -p "${advisory_active_root}/bin"
-cp "${root}/bin/publish" "${root}/bin/validate" \
+cp "${root}/bin/publish" "${root}/bin/validate" "${root}/bin/security-readiness" \
   "${advisory_active_root}/bin/"
+cp -R "${root}/lib" "${advisory_active_root}/lib"
 cp -R "${root}/config" "${advisory_active_root}/config"
 cp -R "${root}/community-health" \
   "${advisory_active_root}/community-health"
@@ -1239,7 +1243,8 @@ assert_codeql_default_setup "${creation_log}"
 
 rollback_root=${temporary}/empty-inventory
 mkdir -p "${rollback_root}/bin"
-cp "${root}/bin/publish" "${root}/bin/validate" "${rollback_root}/bin/"
+cp "${root}/bin/publish" "${root}/bin/validate" "${root}/bin/security-readiness" "${rollback_root}/bin/"
+cp -R "${root}/lib" "${rollback_root}/lib"
 cp -R "${root}/config" "${rollback_root}/config"
 cp -R "${root}/community-health" "${rollback_root}/community-health"
 mkdir -p "${rollback_root}/.github"
@@ -1328,8 +1333,9 @@ jq -s -e '
 
 advisory_rollback_root=${temporary}/advisory-window-rollback
 mkdir -p "${advisory_rollback_root}/bin"
-cp "${root}/bin/publish" "${root}/bin/validate" \
+cp "${root}/bin/publish" "${root}/bin/validate" "${root}/bin/security-readiness" \
   "${advisory_rollback_root}/bin/"
+cp -R "${root}/lib" "${advisory_rollback_root}/lib"
 cp -R "${root}/config" "${advisory_rollback_root}/config"
 cp -R "${root}/community-health" \
   "${advisory_rollback_root}/community-health"

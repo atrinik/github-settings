@@ -103,7 +103,8 @@ read-only and are skipped on later runs.
   remain outside GitHub and this repository.
 - GitHub Actions defaults to read-only, cannot approve pull requests, and may
   use only Atrinik, GitHub, Codecov coverage, explicitly allowed Docker
-  actions, and the exact reviewed crates.io authentication action commit.
+  actions, and `rust-lang/crates-io-auth-action@*`. Workflow references remain
+  full commit SHAs; the action allowlist permits routine pin updates.
 - Historical repositories listed in `config/repositories.json` are archived.
   The five former standalone classic component repositories are already
   archived read-only after their history, active work, issues, and release
@@ -147,9 +148,82 @@ separate checked procedure below. Codecov must be installed for the listed
 repositories so their OIDC-authenticated coverage uploads and badges remain
 available.
 
+## Staged security merge protection
+
+`config/security-merge-protection.json` targets the 21 repositories in
+`required_ci`, including `service-updater`; `.github` and `web-platform` are
+excluded. Existing aggregate checks and zero required approvals remain intact.
+The existing publisher restores `service-updater`'s already inventoried PR,
+`Updater validation`/title CI, and release-tag protections.
+
+Both policy scopes install repository-owned `06 - CodeQL security` rules:
+GitHub Team does not support organization code-scanning rules. CodeQL blocks
+high and critical security findings (`high_or_higher`), with ordinary quality
+alerts disabled (`none`). A separate repository-owned `07 - Dependency review`
+requires the GitHub Actions `Dependency review` job. Both permit only
+organization owners to bypass through a pull request; bypass can merge findings
+and must be a deliberate owner decision. Direct pushes gain no exception.
+
+The dependency workflow runs on every pull request to `main`, with read-only
+contents permission and no checkout. It rejects new high/critical vulnerable
+runtime, development, or unknown-scope dependencies and fails on review errors.
+It relies on GitHub's dependency graph and submitted snapshots; unsupported or
+missing manifests cannot provide comprehensive dependency coverage. This is
+separate from Dependabot's scheduled update and alert capabilities. Default
+CodeQL setup similarly analyzes supported languages and its detected build
+coverage; enabling it alone does not prove a successful analysis. Rust in
+`content-toolkit` is an explicit minimum, unioned with its existing languages.
+Legacy `javascript`/`typescript` aliases use `javascript-typescript` in the
+PATCH payload, preserving that coverage and other live language entries.
+Read failures never replace that live language set with an incomplete set.
+
+GitHub's [code-scanning merge-protection limitations](https://docs.github.com/en/code-security/concepts/code-scanning/merge-protection)
+exclude Dependabot pull requests analyzed by default setup and merge queue
+groups. Dependency review remains a required check for those Dependabot PRs;
+it does not inherit that CodeQL exception. CodeQL merge protection also depends
+on the alert's affected lines appearing in the PR diff. Ordinary quality alerts
+remain excluded by `alerts_threshold: none`.
+
+Rollout is owned by an organization administrator:
+
+1. Merge the dependency workflow PRs and let ordinary pull requests prove their
+   `Dependency review` jobs. Merge this policy and review `bin/publish`'s plan.
+2. Apply only with separate live-settings authorization. Existing governance,
+   the wildcard action allowance, and the Rust language correction can converge
+   while security gates remain `PENDING`. The publisher creates each gate only
+   after `bin/security-readiness` verifies its producer. Dependency readiness
+   requires the reviewed workflow contract on the default branch, a successful
+   latest PR run/job, and the same workflow at the check suite's executed
+   revision. Synthetic merge revisions must bind the associated PR's base and
+   head. CodeQL requires current-head coverage for every configured default-setup
+   language plus policy minima. Classic instead requires its successful full
+   advanced producer and all current source-derived analysis partitions;
+   changed-path PR subsets cannot establish readiness. The bounded newest-first
+   query stops once current coverage is proven; retired categories and old
+   analysis history do not require manual cleanup.
+3. Rerun the plan after the pending analyses complete. Existing active gates
+   remain enforced even when a later PR fails a security check. Scope migrations
+   preserve these repository-owned gates. A converged security gate or language
+   configuration causes no mutation or security-configuration reattachment.
+4. Desired organization `sha_pinning_required` is true, but the publisher omits
+   this field until an ordinary action-pin update PR passes CI without allowlist
+   edits. Verify it using `bin/security-readiness sha OWNER/REPOSITORY/PR`, then
+   pass `--sha-pinning-canary OWNER/REPOSITORY/PR` to the reviewed plan/apply.
+   The verifier checks live allowance, exact PR changes, and successful current
+   PR-head CI. Missing or failed evidence defers SHA enforcement while the other
+   controls converge; a live true setting is always preserved. Full SHA pinning
+   is not a claim that an allowed action itself is trustworthy.
+
+Read-only preflight failures and unfinished producers are explicit pending
+controls, never successful rollout evidence. The audit reports pending controls
+separately and rejects unreadable evidence. No paid subscription is introduced.
+Rollback requires reviewed desired-state changes and separately authorized
+apply; reverting a producer while its required gate remains active can prevent
+merges. Do not remove a gate merely because a vulnerable PR fails it.
+
 ## Usage
 
-Requirements: `git`, `gh`, `jq`, and an authenticated organization-owner
+Requirements: `git`, `gh`, `jq`, `python3`, and an authenticated organization-owner
 account.
 
 ```sh
@@ -1093,8 +1167,8 @@ The existing `crates-io-bootstrap` environment and published 0.1 crate are
 separate historical state and are not changed by this contract.
 
 The Actions allowlist adds only
-`rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18`,
-verified against upstream `v1.0.5`. The
+`rust-lang/crates-io-auth-action@*`,
+allowing full-SHA updates of that action. The currently inventoried
 [pinned official action](https://github.com/rust-lang/crates-io-auth-action/blob/c6f97d42243bad5fab37ca0427f495c86d5b1a18/README.md)
 exchanges GitHub OIDC for a temporary crates.io token and revokes it in its
 post step. Only the owning workflow's upload job may request `id-token: write`,
@@ -1117,7 +1191,8 @@ Activation is a later, separately authorized operation:
    No future release SHA or crate digest belongs in this planning record.
 3. Review `bin/publish` and apply only the merged, authorized desired-state
    policy. The organization allowlist applies to all governed repositories, but
-   the one added authentication-action pattern matches only that exact commit.
+   the authentication-action pattern matches only that action name and permits
+   routine full-SHA updates.
    Check the complete plan for unrelated drift before requesting apply.
 4. With separate owner authorization, provision `crates-io-release` with the
    exact desired reviewer/branch/bypass settings and register a crates.io

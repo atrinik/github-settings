@@ -1,0 +1,53 @@
+{
+  "dependency_review": [
+    "agent-integrations",
+    "atrinik",
+    "classic",
+    "client",
+    "content",
+    "content-toolkit",
+    "deploy-control",
+    "devcontainer",
+    "editor",
+    "github-settings",
+    "metaserver-worker",
+    "observatory",
+    "playtester",
+    "protocol",
+    "renderer",
+    "resources",
+    "server",
+    "service-updater",
+    "sound",
+    "tools",
+    "website"
+  ],
+  "code_scanning": [
+    "agent-integrations",
+    "atrinik",
+    "classic",
+    "client",
+    "content",
+    "content-toolkit",
+    "deploy-control",
+    "devcontainer",
+    "editor",
+    "github-settings",
+    "metaserver-worker",
+    "observatory",
+    "playtester",
+    "protocol",
+    "renderer",
+    "resources",
+    "server",
+    "service-updater",
+    "sound",
+    "tools",
+    "website"
+  ],
+  "codeql_required_languages": {
+    "content-toolkit": [
+      "rust"
+    ]
+  }
+}

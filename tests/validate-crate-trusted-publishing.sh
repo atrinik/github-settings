@@ -57,23 +57,28 @@ done
 jq '.patterns_allowed |= map(select(startswith("rust-lang/crates-io-auth-action@") | not))' \
   "${root}/config/actions-selected.json" >"${temporary}/config/actions-selected.json"
 if "${temporary}/bin/validate" >/dev/null 2>&1; then
-  echo "error: accepted planned publisher without exact action allowance" >&2
+  echo "error: accepted planned publisher without action allowance" >&2
   exit 1
 fi
 reset_policy
 jq '.patterns_allowed |= map(if startswith("rust-lang/crates-io-auth-action@") then "rust-lang/*" else . end)' \
   "${root}/config/actions-selected.json" >"${temporary}/config/actions-selected.json"
 if "${temporary}/bin/validate" >/dev/null 2>&1; then
-  echo "error: accepted wildcard action allowance instead of exact pin" >&2
+  echo "error: accepted organization-wide Rust allowance" >&2
   exit 1
 fi
 reset_policy
 jq '.patterns_allowed += ["rust-lang/*"]' "${root}/config/actions-selected.json" \
   >"${temporary}/config/actions-selected.json"
 if "${temporary}/bin/validate" >/dev/null 2>&1; then
-  echo "error: accepted broader Rust action access beside the exact pin" >&2
+  echo "error: accepted broader Rust action access beside the exact action" >&2
   exit 1
 fi
+reset_policy
+# A new reviewed immutable release must not require an allowlist edit.
+jq '.crates_io_trusted_publishing[0].authentication_action = "rust-lang/crates-io-auth-action@1111111111111111111111111111111111111111"' \
+  "${root}/config/manual-settings.json" >"${temporary}/config/manual-settings.json"
+"${temporary}/bin/validate" >/dev/null
 reset_policy
 # Removing unactivated manual intent is a valid reviewed rollback.
 jq '.crates_io_trusted_publishing = []' "${root}/config/manual-settings.json" \

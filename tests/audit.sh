@@ -5,228 +5,160 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 temporary=$(mktemp -d)
 trap 'rm -rf "${temporary}"' EXIT
-mkdir "${temporary}/bin"
-
-cat >"${temporary}/bin/gh" <<'EOF'
+mkdir -p "${temporary}/mock" "${temporary}/full/bin"
+cp -R "${root}/config" "${temporary}/full/config"
+cp "${root}/bin/audit" "${temporary}/full/bin/audit"
+# Schema validation has its own policy tests; these isolate live API evidence.
+printf '#!/usr/bin/env bash\nexit 0\n' >"${temporary}/full/bin/validate"
+cat >"${temporary}/full/bin/security-readiness" <<'EOF'
 #!/usr/bin/env bash
-
-set -euo pipefail
-
-[[ ${1:-} == api ]] || exit 1
-shift
-jq_filter=
-endpoint=
-while (($#)); do
-  case $1 in
-  -H)
-    shift 2
-    ;;
-  --paginate)
-    shift
-    ;;
-  --jq)
-    jq_filter=$2
-    shift 2
-    ;;
-  *)
-    endpoint=$1
-    shift
-    ;;
-  esac
-done
-
-emit() {
-  local payload=$1
-  if [[ -n ${jq_filter} ]]; then
-    jq -r "${jq_filter}" <<<"${payload}"
-  else
-    printf '%s\n' "${payload}"
-  fi
-}
-
-config_root=${AUDIT_CONFIG_ROOT:?}
-scenario=${GH_TEST_SCENARIO:-pass}
-
-case ${endpoint} in
-orgs/atrinik/properties/schema)
-  if [[ ${scenario} == schema-drift ]]; then
-    jq -n --slurpfile config \
-      "${config_root}/config/repository-properties.json" \
-      '$config[0].definitions | map(. + {description: "drift"})'
-  else
-    jq -n --slurpfile config \
-      "${config_root}/config/repository-properties.json" \
-      '$config[0].definitions'
-  fi
-  ;;
-orgs/atrinik/repos\?*)
-  payload=$(jq -n --slurpfile config "${config_root}/config/repository-properties.json" '
-    [
-      $config[0].repositories |
-      to_entries[] |
-      {
-        name: .key,
-        archived: (.value.lifecycle == "archived"),
-        private: false,
-        visibility: "public",
-        disabled: false,
-        fork: false,
-        has_issues: true,
-        has_projects: true,
-        has_wiki: true
-      }
-    ] |
-    if $ENV.GH_TEST_SCENARIO == "unmanaged" then
-      . + [{
-        name: "unmanaged",
-        archived: false,
-        private: false,
-        visibility: "public",
-        disabled: false,
-        fork: false,
-        has_issues: true,
-        has_projects: true,
-        has_wiki: true
-      }]
-    elif $ENV.GH_TEST_SCENARIO == "temporary" then
-      . + [{
-        name: "classic-ghsa-8533-3vg8-r287",
-        archived: false,
-        private: true,
-        visibility: "private",
-        disabled: false,
-        fork: false,
-        has_issues: false,
-        has_projects: false,
-        has_wiki: false
-      }]
-    else
-      .
-    end
-  ')
-  emit "${payload}"
-  ;;
-repos/atrinik/*)
-  path=${endpoint#repos/atrinik/}
-  case ${path} in
-  */properties/values)
-    repository=${path%/properties/values}
-    if [[ ${scenario} == properties-drift && ${repository} == observatory ]]; then
-      jq -n '
-        [
-          {property_name: "component_role", value: ["unclassified"]},
-          {property_name: "lifecycle", value: "seed"},
-          {property_name: "provider_set", value: ["unclassified"]},
-          {property_name: "release_policy", value: "none"}
-        ]
-      '
-    else
-      jq -n --slurpfile config "${config_root}/config/repository-properties.json" \
-        --arg repository "${repository}" '
-        $config[0].repositories[$repository] |
-        to_entries |
-        map({property_name: .key, value: .value})
-      '
-    fi
-    ;;
-  */rulesets\?includes_parents=true)
-    repository=${path%/rulesets?includes_parents=true}
-    jq -n --slurpfile repositories "${config_root}/config/repositories.json" \
-      --arg repository "${repository}" '
-      [
-        "01 - Default branch integrity",
-        "01 - Default branch linear history"
-      ] +
-      (if ($repositories[0].pull_request_gate | index($repository)) != null then
-        ["02 - Changes through pull requests"]
-       else [] end) +
-      (if ($repositories[0].required_ci | has($repository)) then
-        ["03 - Required CI - " + $repository]
-       else [] end) +
-      (if ($repositories[0].release_tags | index($repository)) != null then
-        ["04 - Immutable release tags"]
-       else [] end) |
-      map({name: .})
-    '
-    ;;
-  *)
-    repository=${path}
-    allow_merge_commit=false
-    if [[ ${scenario} == merge-drift && ${repository} == observatory ]]; then
-      allow_merge_commit=true
-    fi
-    jq -n --slurpfile defaults "${config_root}/config/repository-defaults.json" \
-      --arg repository "${repository}" --argjson allow_merge_commit ${allow_merge_commit} '
-      {
-        id: 1,
-        name: $repository,
-        archived: false,
-        default_branch: $defaults[0].default_branch,
-        allow_merge_commit: $allow_merge_commit,
-        allow_rebase_merge: $defaults[0].allow_rebase_merge,
-        allow_squash_merge: $defaults[0].allow_squash_merge,
-        delete_branch_on_merge: $defaults[0].delete_branch_on_merge,
-        squash_merge_commit_title: $defaults[0].squash_merge_commit_title,
-        squash_merge_commit_message: $defaults[0].squash_merge_commit_message,
-        security_and_analysis: {
-          secret_scanning: {status: "enabled"},
-          secret_scanning_push_protection: {status: "enabled"},
-          secret_scanning_validity_checks: {status: "enabled"},
-          dependabot_security_updates: {status: "enabled"}
-        }
-      }
-    '
-    ;;
-  esac
-  ;;
-*)
-  echo "unexpected endpoint: ${endpoint}" >&2
-  exit 1
-  ;;
+case ${GH_TEST_SCENARIO:-pass} in
+  pending|pending-codeql|pending-wrong-dependency-scope) exit 1 ;;
+  readiness-unreadable|dependency-readiness-unreadable|codeql-readiness-unreadable) exit 2 ;;
+  *) exit 0 ;;
 esac
 EOF
-chmod +x "${temporary}/bin/gh"
+chmod +x "${temporary}/full/bin/validate" "${temporary}/full/bin/security-readiness"
+cp "${root}/tests/audit-fixtures.py" "${temporary}/mock/gh"
+chmod +x "${temporary}/mock/gh"
+# Keep standalone tests runnable while publisher-owned schema is being delivered.
+# Once integrated these files are copied directly from authoritative policy.
+if [[ ! -f ${temporary}/full/config/security-merge-protection.json ]]; then
+  jq '{dependency_review: (.required_ci | keys), code_scanning: (.required_ci | keys),
+    codeql_required_languages: {"content-toolkit": ["rust"]}}' \
+    "${temporary}/full/config/repositories.json" >"${temporary}/full/config/security-merge-protection.json"
+  jq '.name = "06 - CodeQL security" | .rules = [{type: "code_scanning", parameters: {
+    code_scanning_tools: [{tool: "CodeQL", security_alerts_threshold: "high_or_higher", alerts_threshold: "none"}]}}]' \
+    "${temporary}/full/config/rulesets/required-ci.json" >"${temporary}/full/config/rulesets/code-scanning.json"
+  jq '.name = "07 - Dependency review" | .rules[0].parameters.required_status_checks =
+    [{context: "Dependency review", integration_id: 15368}]' \
+    "${temporary}/full/config/rulesets/required-ci.json" >"${temporary}/full/config/rulesets/dependency-review.json"
+fi
+jq '.sha_pinning_required = true' "${temporary}/full/config/actions-permissions.json" \
+  >"${temporary}/actions.json"
+mv "${temporary}/actions.json" "${temporary}/full/config/actions-permissions.json"
+jq '.pull_request_gate |= ((. + [".github"]) | unique)' "${temporary}/full/config/repositories.json" \
+  >"${temporary}/repositories.json"
+mv "${temporary}/repositories.json" "${temporary}/full/config/repositories.json"
+for repository in .github classic observatory content-toolkit service-updater web-platform; do
+  fixture="${temporary}/fixture-${repository}"
+  cp -R "${temporary}/full" "${fixture}"
+  jq --arg repository "${repository}" \
+    '.repositories |= with_entries(select(.key == $repository))' \
+    "${temporary}/full/config/repository-properties.json" >"${fixture}/config/repository-properties.json"
+done
 
 run_audit() {
-  local scenario=$1
+  local scenario=$1 fixture=${2:-focused} repository=observatory
+  if [[ ${fixture} == focused ]]; then
+    case ${scenario} in
+      wrong-pr-scope|unexpected-codeql) repository=.github ;;
+      advanced-config|advanced-setup) repository=classic ;;
+      missing-rust) repository=content-toolkit ;;
+      missing-tag-scope|tag-ref-drift) repository=service-updater ;;
+      unexpected-pr) repository=web-platform ;;
+    esac
+    fixture="fixture-${repository}"
+  fi
   GH_TEST_SCENARIO=${scenario} \
-    PATH="${temporary}/bin:${PATH}" \
-    AUDIT_CONFIG_ROOT="${root}" \
-    "${root}/bin/audit"
+    PATH="${temporary}/mock:${PATH}" \
+    AUDIT_CONFIG_ROOT="${temporary}/${fixture}" \
+    AUDIT_API_LOG="${temporary}/api.log" \
+    "${temporary}/${fixture}/bin/audit"
 }
 
-output=$(run_audit pass)
+output=$(run_audit pass full)
 grep -Fxq 'Governance audit passed: 23 active repositories checked.' <<<"${output}"
-
-temporary_output=$(run_audit temporary)
-grep -Fxq 'Governance audit passed: 23 active repositories checked.' <<<"${temporary_output}"
-
-if run_audit unmanaged >"${temporary}/unmanaged.out" 2>"${temporary}/unmanaged.err"; then
-  echo "expected unmanaged repository audit to fail" >&2
+output=$(run_audit temporary full)
+grep -Fxq 'Governance audit passed: 23 active repositories checked.' <<<"${output}"
+output=$(run_audit legacy-security)
+grep -Fq 'Governance audit passed:' <<<"${output}"
+output=$(run_audit repository-rulesets)
+grep -Fq 'Governance audit passed:' <<<"${output}"
+output=$(run_audit pending)
+grep -Fq 'PENDING Actions SHA pinning deferred pending canary proof' <<<"${output}"
+grep -Fq 'PENDING Dependency review merge protection awaits landed successful producer' <<<"${output}"
+grep -Fq 'Governance audit baseline passed with' <<<"${output}"
+if grep -Fq 'Governance audit passed:' <<<"${output}"; then
+  echo 'pending policy must not report full governance enforcement' >&2
   exit 1
 fi
-grep -Fq 'active repository is not in the desired-state inventory: atrinik/unmanaged' \
-  "${temporary}/unmanaged.out"
 
-if run_audit merge-drift >"${temporary}/merge.out" 2>"${temporary}/merge.err"; then
-  echo "expected merge drift audit to fail" >&2
+assert_drift() {
+  local scenario=$1 message=$2
+  if run_audit "${scenario}" >"${temporary}/${scenario}.out" 2>"${temporary}/${scenario}.err"; then
+    echo "expected ${scenario} audit to fail" >&2
+    exit 1
+  fi
+  if ! grep -Fq "${message}" "${temporary}/${scenario}.out" "${temporary}/${scenario}.err"; then
+    cat "${temporary}/${scenario}.out" "${temporary}/${scenario}.err" >&2
+    echo "missing expected ${scenario} diagnostic: ${message}" >&2
+    exit 1
+  fi
+}
+
+assert_drift unmanaged 'active repository is not in the desired-state inventory'
+assert_drift merge-drift 'repository merge policy drift'
+assert_drift properties-drift 'repository custom-property drift'
+assert_drift schema-drift 'organization custom-property schema drift'
+assert_drift inventory-unreadable 'organization repository inventory could not be read'
+assert_drift wrong-pr-scope 'effective pull-request policy drift: atrinik/.github'
+assert_drift missing-tag-scope "ruleset scope or policy drift '04 - Immutable release tags': atrinik/service-updater"
+assert_drift tag-ref-drift "ruleset scope or policy drift '04 - Immutable release tags'"
+assert_drift integrity-bypass "ruleset scope or policy drift '01 - Default branch integrity'"
+assert_drift pr-bypass "ruleset scope or policy drift '02 - Changes through pull requests'"
+assert_drift owner-id-drift "ruleset scope or policy drift '02 - Changes through pull requests'"
+assert_drift pending-wrong-dependency-scope "ruleset scope or policy drift '07 - Dependency review'"
+for scenario in wrong-app wrong-context strict-ci; do
+  assert_drift "${scenario}" 'effective required CI contexts or app drift'
+done
+for scenario in approval-count thread-resolution; do
+  assert_drift "${scenario}" 'effective pull-request policy drift'
+done
+assert_drift effective-integrity 'effective default-branch integrity drift'
+assert_drift unexpected-pr 'effective pull-request policy drift: atrinik/web-platform'
+assert_drift unexpected-codeql 'unexpected effective CodeQL merge protection: atrinik/.github'
+for scenario in codeql-threshold codeql-tool codeql-quality; do
+  assert_drift "${scenario}" 'effective CodeQL merge protection drift'
+done
+for scenario in actions-write-token actions-approval; do
+  assert_drift "${scenario}" 'organization Actions workflow drift'
+done
+for scenario in repository-write-token repository-approval; do
+  assert_drift "${scenario}" 'repository Actions workflow permissions drift'
+done
+assert_drift repository-actions-unreadable 'repository Actions workflow permissions could not be read'
+assert_drift actions-allowlist 'organization Actions selected-actions drift'
+assert_drift actions-unreadable 'organization Actions permissions could not be read'
+assert_drift sha-unreadable 'Actions SHA pinning state could not be read'
+assert_drift missing-rust 'CodeQL setup or required language drift: atrinik/content-toolkit'
+for scenario in advanced-setup default-setup; do
+  assert_drift "${scenario}" 'CodeQL setup or required language drift'
+done
+for scenario in configuration-detached dependency-graph advanced-config; do
+  assert_drift "${scenario}" 'security configuration attachment or baseline drift'
+done
+assert_drift configuration-unreadable 'security configuration could not be read'
+assert_drift setup-unreadable 'CodeQL setup could not be read'
+assert_drift dependabot-alerts 'Dependabot alerts disabled or unreadable'
+assert_drift private-reporting 'private vulnerability reporting disabled or unreadable'
+assert_drift secret-baseline 'exposed security baseline drift'
+assert_drift effective-unreadable 'effective default-branch rules could not be read'
+assert_drift ruleset-unreadable 'ruleset contents could not be read'
+assert_drift ready-missing 'effective required CI contexts or app drift'
+assert_drift ready-missing-codeql 'effective CodeQL merge protection drift'
+assert_drift dependency-readiness-unreadable 'Dependency review readiness could not be read'
+assert_drift codeql-readiness-unreadable 'CodeQL readiness could not be read'
+output=$(run_audit pending-codeql)
+grep -Fq 'PENDING CodeQL merge protection awaits successful analysis' <<<"${output}"
+grep -Fq 'Governance audit baseline passed with' <<<"${output}"
+# An existing dependency gate survives a temporarily unreadable producer readiness
+# API; read readiness is required only when first installing the context.
+output=$(run_audit readiness-unreadable)
+grep -Fq 'Governance audit passed:' <<<"${output}"
+
+if grep -Eq '^repos/atrinik/(legacy-|nawerhals)' "${temporary}/api.log"; then
+  echo 'audit must not inspect archived repositories' >&2
   exit 1
 fi
-grep -Fq 'repository merge policy drift: atrinik/observatory' \
-  "${temporary}/merge.out"
-
-if run_audit properties-drift >"${temporary}/properties.out" 2>"${temporary}/properties.err"; then
-  echo "expected property drift audit to fail" >&2
-  exit 1
-fi
-grep -Fq 'repository custom-property drift: atrinik/observatory' \
-  "${temporary}/properties.out"
-
-if run_audit schema-drift >"${temporary}/schema.out" 2>"${temporary}/schema.err"; then
-  echo "expected property schema drift audit to fail" >&2
-  exit 1
-fi
-grep -Fq 'organization custom-property schema drift: atrinik' \
-  "${temporary}/schema.out"
-
-echo "Governance drift audit tests passed."
+echo 'Governance effective-policy audit tests passed.'

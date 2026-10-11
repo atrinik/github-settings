@@ -125,3 +125,15 @@ organization-owner authorization for `--apply`. Re-run the complete preflight
 after apply and again before separately authorized exact branch deletion;
 never combine either operation with tag, release, asset, default-branch, or
 unrelated policy changes.
+
+Security merge controls use repository-level rules in both publisher scopes.
+Keep `config/security-merge-protection.json` aligned with `required_ci` and
+preserve ordinary aggregates. New dependency gates require the reviewed
+workflow on the default branch and a successful corresponding PR run; CodeQL
+gates require successful current-head analyses, including required languages.
+Keep existing gates active on later failures. Tests must cover missing/failed
+producers, unreadable evidence, archived targets, language unions, both scopes,
+and zero security mutations on a converged rerun. SHA enforcement must remain
+pending until the ordinary action-update canary proves successful current-head
+CI without an allowlist edit. Action allowances use owner/action wildcards;
+full commit pins belong in workflows, not redundant version assertions.

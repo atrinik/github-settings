@@ -167,3 +167,18 @@
   `release_policy: none` and are omitted from `release_tags`.
 - Update this `AGENTS.md` in the same change when major rework alters governance
   ownership, policy scope, publisher behavior, required checks, or validation.
+
+- `config/security-merge-protection.json` owns the dependency-review and CodeQL
+  target sets and default-setup required language minima. Keep both sets equal
+  to the required-CI inventory. Union required languages with live default-setup
+  languages, fail on unreadable language state, and patch only real drift.
+- Keep `06 - CodeQL security` and `07 - Dependency review` repository-owned in
+  both policy scopes; Team has no organization code-scanning rule support.
+  New gates require read-only `bin/security-readiness` evidence for landed and
+  successful producers; existing active gates survive later PR failures. Keep
+  aggregate checks, zero approvals, and owner pull-request-only bypass intact.
+- Desired Actions SHA enforcement is staged behind `--sha-pinning-canary` proof
+  of an ordinary action-update PR passing current-head CI without an allowlist
+  edit. Missing evidence defers only that field; never disable an existing true
+  setting. Allow reviewed action names with `@*` so pin updates do not require
+  central allowlist edits. Keep full SHAs in producer workflows.

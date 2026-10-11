@@ -7,12 +7,21 @@ policy_scope=${ATRINIK_POLICY_SCOPE:-auto}
 api_version=2026-03-10
 apply=false
 retire_maintenance=
+sha_pinning_canary=
 
 while (($#)); do
   case $1 in
   --apply)
     apply=true
     shift
+    ;;
+  --sha-pinning-canary)
+    if (($# < 2)) || [[ -z $2 ]]; then
+      echo "error: --sha-pinning-canary requires OWNER/REPOSITORY/PR" >&2
+      exit 2
+    fi
+    sha_pinning_canary=$2
+    shift 2
     ;;
   --retire-maintenance)
     if (($# < 2)) || [[ -z $2 ]]; then
@@ -23,7 +32,7 @@ while (($#)); do
     shift 2
     ;;
   *)
-    echo "usage: $0 [--apply] [--retire-maintenance REPOSITORY/BRANCH]" >&2
+    echo "usage: $0 [--apply] [--retire-maintenance REPOSITORY/BRANCH] [--sha-pinning-canary OWNER/REPOSITORY/PR]" >&2
     exit 2
     ;;
   esac
@@ -37,7 +46,7 @@ auto | organization | repository) ;;
   ;;
 esac
 
-for command in gh git jq sort; do
+for command in gh git jq sort python3; do
   if ! command -v "${command}" >/dev/null 2>&1; then
     echo "error: ${command} is required" >&2
     exit 1
@@ -51,6 +60,11 @@ advisory_merge_windows_config=${root}/config/advisory-merge-windows.json
 codeql_advanced_config=${root}/config/codeql-advanced-setup.json
 immutable_releases_config=${root}/config/immutable-releases.json
 retired_maintenance_config=${root}/config/retired-maintenance-branches.json
+security_merge_config=${root}/config/security-merge-protection.json
+if [[ -n ${sha_pinning_canary} && ${sha_pinning_canary} != "${organization}/"* ]]; then
+  echo "error: SHA canary must belong to ${organization}" >&2
+  exit 2
+fi
 temporary_files=()
 trap 'rm -f "${temporary_files[@]}"' EXIT
 
@@ -1000,33 +1014,165 @@ wait_for_code_security_configuration() {
 }
 
 converge_codeql_default_setup() {
-  local repository input desired_state desired_query current
-  local current_state current_query
+  local repository input desired_state desired_query current required_languages
+  local current_state current_query language_match
 
   for repository in "${active_repositories[@]}"; do
     input=${root}/config/codeql-default-setup.json
     if repository_uses_advanced_codeql "${repository}"; then
       input=${root}/config/codeql-default-setup-advanced.json
     fi
-
+    required_languages=$(jq -c --arg repository "${repository}" \
+      '.codeql_required_languages[$repository] // []' "${security_merge_config}")
     desired_state=$(jq -r '.state' "${input}")
     desired_query=$(jq -r '.query_suite // empty' "${input}")
+    current='{}'
     if current=$(github_api \
       "repos/${organization}/${repository}/code-scanning/default-setup" \
       2>/dev/null); then
       current_state=$(jq -r '.state // empty' <<<"${current}")
+      if [[ ${required_languages} != '[]' ]] && ! jq -e '
+        (.state == "not-configured" and .languages == null) or
+        (.languages | type == "array" and all(.[]; type == "string"))
+      ' <<<"${current}" >/dev/null; then
+        echo "error: invalid existing CodeQL languages for ${repository}" >&2
+        return 1
+      fi
       current_query=$(jq -r '.query_suite // empty' <<<"${current}")
-      if [[ ${current_state} == "${desired_state}" ]] &&
+      language_match=$(jq --argjson required "${required_languages}" \
+        '($required - (.languages // [])) == []' <<<"${current}")
+      if [[ ${current_state} == "${desired_state}" && ${language_match} == true ]] &&
         { [[ -z ${desired_query} ]] || [[ ${current_query} == "${desired_query}" ]]; }; then
         echo "KEEP /repos/${organization}/${repository}/code-scanning/default-setup is ${desired_state}"
         continue
       fi
+    elif [[ ${required_languages} != '[]' ]]; then
+      # Never replace an unreadable live language set with an incomplete list.
+      echo "error: cannot read existing CodeQL languages for ${repository}" >&2
+      return 1
     fi
-
+    if [[ ${required_languages} != '[]' ]]; then
+      local language_payload
+      language_payload=$(mktemp)
+      temporary_files+=("${language_payload}")
+      jq --argjson current "${current}" --argjson required "${required_languages}" \
+        '.languages = (($current.languages // []) + $required |
+          map(if . == "javascript" or . == "typescript" then
+            "javascript-typescript" else . end) | unique)' \
+        "${input}" >"${language_payload}"
+      input=${language_payload}
+    fi
     run_api PATCH \
       "repos/${organization}/${repository}/code-scanning/default-setup" \
       "${input}"
   done
+}
+
+# These repository rules remain repository-owned even in organization scope:
+# GitHub Team does not support organization-level code-scanning rules.
+publish_security_merge_rulesets() {
+  local repository kind template name existing id current reason status readiness_mode
+  for kind in code_scanning dependency_review; do
+    if [[ ${kind} == code_scanning ]]; then
+      template=${root}/config/rulesets/code-scanning.json
+      readiness_mode=codeql
+    else
+      template=${root}/config/rulesets/dependency-review.json
+      readiness_mode=dependency
+    fi
+    name=$(jq -r '.name' "${template}")
+    while IFS= read -r repository; do
+      if [[ ! -v active_repository_ids["${repository}"] ]]; then
+        echo "SKIP ${organization}/${repository} is not active; ${name}"
+        continue
+      fi
+      existing=$(github_api \
+        "repos/${organization}/${repository}/rulesets?includes_parents=false")
+      if ! jq -e --arg name "${name}" \
+        '[.[] | select(.name == $name)] | length <= 1' <<<"${existing}" >/dev/null; then
+        echo "error: ambiguous managed ruleset ${name} on ${repository}" >&2
+        return 1
+      fi
+      id=$(jq -r --arg name "${name}" \
+        '.[] | select(.name == $name) | .id' <<<"${existing}")
+      current='{}'
+      if [[ -n ${id} ]]; then
+        current=$(github_api "repos/${organization}/${repository}/rulesets/${id}")
+        if jq -e --slurpfile desired "${template}" '
+          # GitHub returns the organization-owner sentinel with a null ID.
+          def normalize:
+            .bypass_actors |= (map(
+              if .actor_type == "OrganizationAdmin" and .actor_id == null then
+                .actor_id = 1
+              else . end) | sort_by(.actor_type, .actor_id, .bypass_mode));
+          normalize as $current |
+          all($desired[0] | normalize | to_entries[]; $current[.key] == .value)
+        ' <<<"${current}" >/dev/null; then
+          echo "KEEP /repos/${organization}/${repository}/rulesets/${id} ${name}"
+          continue
+        fi
+      fi
+      # Preserve an already active gate when a later pull request fails it.
+      if ! jq -e --arg kind "${kind}" '
+        .enforcement == "active" and
+        if $kind == "code_scanning" then
+          any(.rules[]?; .type == "code_scanning" and
+            any(.parameters.code_scanning_tools[]?; .tool == "CodeQL"))
+        else
+          any(.rules[]?; .type == "required_status_checks" and
+            any(.parameters.required_status_checks[]?;
+              .context == "Dependency review" and .integration_id == 15368))
+        end
+      ' <<<"${current}" >/dev/null; then
+        status=0
+        reason=$("${root}/bin/security-readiness" "${readiness_mode}" \
+          "${organization}/${repository}") || status=$?
+        if ((status != 0)); then
+          echo "PENDING ${organization}/${repository} ${name}: ${reason}"
+          continue
+        fi
+      fi
+      if [[ -n ${id} ]]; then
+        run_api PUT "repos/${organization}/${repository}/rulesets/${id}" "${template}"
+      else
+        run_api POST "repos/${organization}/${repository}/rulesets" "${template}"
+      fi
+    done < <(jq -r --arg kind "${kind}" '.[$kind][]' "${security_merge_config}")
+  done
+}
+
+converge_actions_permissions() {
+  local current input reason
+  current=$(github_api "orgs/${organization}/actions/permissions")
+  if ! jq -e 'type == "object" and
+    (.enabled_repositories | type == "string") and
+    (.allowed_actions | type == "string") and
+    (.sha_pinning_required == null or (.sha_pinning_required | type == "boolean"))
+  ' <<<"${current}" >/dev/null; then
+    echo "error: cannot read current organization Actions permissions" >&2
+    return 1
+  fi
+  input=$(mktemp)
+  temporary_files+=("${input}")
+  cp "${root}/config/actions-permissions.json" "${input}"
+  if ! jq -e '.sha_pinning_required == true' <<<"${current}" >/dev/null; then
+    if [[ -n ${sha_pinning_canary} ]] &&
+      reason=$("${root}/bin/security-readiness" sha "${sha_pinning_canary}"); then
+      echo "READY SHA pinning: ${reason}"
+    else
+      echo "PENDING SHA pinning: ${reason:-supply --sha-pinning-canary OWNER/REPOSITORY/PR after an ordinary action update passes CI}"
+      # Omit the field: pending evidence never enables or disables this setting.
+      jq 'del(.sha_pinning_required)' "${input}" >"${input}.pending"
+      mv "${input}.pending" "${input}"
+    fi
+  fi
+  if jq -e --slurpfile desired "${input}" '
+    . as $current | all($desired[0] | to_entries[]; $current[.key] == .value)
+  ' <<<"${current}" >/dev/null; then
+    echo "KEEP /orgs/${organization}/actions/permissions"
+  else
+    run_api PUT "orgs/${organization}/actions/permissions" "${input}"
+  fi
 }
 
 publish_organization_security() {
@@ -1331,8 +1477,7 @@ done < <(
 converge_immutable_release_policy
 
 converge_organization_settings "${organization_metadata}"
-run_api PUT "orgs/${organization}/actions/permissions" \
-  "${root}/config/actions-permissions.json"
+converge_actions_permissions
 run_api PUT "orgs/${organization}/actions/permissions/selected-actions" \
   "${root}/config/actions-selected.json"
 run_api PUT "orgs/${organization}/actions/permissions/workflow" \
@@ -1350,6 +1495,8 @@ else
   publish_repository_rulesets
   publish_repository_security
 fi
+
+publish_security_merge_rulesets
 
 while IFS= read -r repository; do
   if ! repository_archived=$(

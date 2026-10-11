@@ -1,0 +1,604 @@
+#!/usr/bin/env python3
+"""Read-only preflight for security controls; 0 ready, 1 deferred, 2 unreadable."""
+
+import argparse
+import ast
+import base64
+import binascii
+import difflib
+import fnmatch
+import json
+from pathlib import Path
+import re
+import subprocess
+import sys
+from urllib.parse import quote, urlencode
+
+
+ROOT = Path(__file__).resolve().parent.parent
+VERSION = "2026-03-10"
+ACTION_APP = 15368
+SHA = re.compile(r"[0-9a-fA-F]{40}\Z")
+COORDINATE = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
+SIMPLE_NAME = r"(?:[A-Za-z][A-Za-z0-9 ._/-]*|'[A-Za-z][A-Za-z0-9 ._/-]*'|\"[A-Za-z][A-Za-z0-9 ._/-]*\")"
+USES = re.compile(
+    r"(?P<prefix>[ \t]*(?:-[ \t]+)?uses:[ \t]+)"
+    r"(?P<action>[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+)@"
+    r"(?P<sha>[0-9a-fA-F]{40})(?P<space>[ \t]*)"
+    r"(?P<comment>#[ \t]*v?[0-9]+(?:\.[0-9A-Za-z_-]+)*(?:[ \t]*)?)?"
+    r"(?P<newline>\r?\n)?\Z"
+)
+
+
+class Deferred(Exception):
+    pass
+
+
+class EvidenceError(Exception):
+    pass
+
+
+class APIError(EvidenceError):
+    def __init__(self, endpoint, status=None):
+        self.status = status
+        super().__init__(f"API unreadable: {endpoint.split('?')[0]}"
+                         + (f" (HTTP {status})" if status else ""))
+
+
+def api(endpoint):
+    """Use GET explicitly: query parameters must never select gh's POST default."""
+    try:
+        result = subprocess.run(
+            ["gh", "api", "--method", "GET", "-H", f"X-GitHub-Api-Version: {VERSION}",
+             "-H", "Accept: application/vnd.github+json", endpoint],
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise APIError(endpoint) from exc
+    if result.returncode:
+        status = re.search(r"HTTP (\d{3})", result.stderr)
+        raise APIError(endpoint, int(status[1]) if status else None)
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise EvidenceError("API returned invalid JSON") from exc
+
+
+def config(name):
+    return json.loads((ROOT / "config" / name).read_text())
+
+
+def require(condition, reason):
+    if not condition:
+        raise Deferred(reason)
+
+
+def repository(coordinate):
+    metadata = api(f"repos/{coordinate}")
+    if metadata["full_name"].lower() != coordinate.lower():
+        raise EvidenceError("repository identity changed")
+    require(metadata["archived"] is False, "repository archived")
+    if not isinstance(metadata["default_branch"], str) or not metadata["default_branch"]:
+        raise EvidenceError("default branch missing")
+    return metadata
+
+
+def contents(coordinate, path, ref):
+    endpoint = f"repos/{coordinate}/contents/{path}?{urlencode({'ref': ref})}"
+    try:
+        value = api(endpoint)
+    except APIError as exc:
+        if exc.status == 404:
+            raise Deferred(f"{path} missing at required revision") from exc
+        raise
+    if value.get("type") != "file" or value.get("encoding") != "base64":
+        raise EvidenceError("workflow content is not an encoded file")
+    try:
+        # GitHub wraps content with newlines; reject other non-base64 bytes.
+        return base64.b64decode(value["content"].replace("\n", ""), validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise EvidenceError("workflow content encoding invalid") from exc
+
+
+def pages(endpoint, key=None):
+    """Bound enumeration; missing or oversized evidence cannot imply readiness."""
+    results = []
+    for page in range(1, 11):
+        value = api(endpoint + ("&" if "?" in endpoint else "?")
+                    + urlencode({"per_page": 100, "page": page}))
+        entries = value[key] if key else value
+        if not isinstance(entries, list):
+            raise EvidenceError("API collection malformed")
+        results.extend(entries)
+        if len(entries) < 100:
+            if key and "total_count" in value and len(results) != value["total_count"]:
+                raise EvidenceError("API collection changed during enumeration")
+            return results
+    raise Deferred("evidence exceeds bounded enumeration")
+
+
+def latest_dependency_run(coordinate):
+    try:
+        value = api(f"repos/{coordinate}/actions/workflows/dependency-review.yml/runs"
+                    "?event=pull_request&per_page=1")
+    except APIError as exc:
+        if exc.status == 404:
+            raise Deferred("dependency-review workflow not landed") from exc
+        raise
+    require(bool(value["workflow_runs"]), "dependency-review PR run missing")
+    return value["workflow_runs"][0]
+
+
+def dependency_contract(data):
+    """Allow producer-owned immutable pin bumps without weakening the contract.
+
+    Keep indentation and every policy value intact. Ignore blank lines, standalone
+    comments and trailing whitespace; normalize only this official action's SHA
+    and its optional same-line version annotation.
+    """
+    lines = []
+    pins = 0
+    for line in data.decode("utf-8").splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        match = USES.fullmatch(line)
+        if match and match["action"] == "actions/dependency-review-action":
+            pins += 1
+            line = match["prefix"] + "actions/dependency-review-action@<immutable-sha>"
+        if re.fullmatch("name: " + SIMPLE_NAME, line.rstrip()):
+            line = "name: Dependency review"
+        lines.append(line.rstrip())
+    require(pins == 1, "dependency-review workflow requires one official full-SHA action")
+    normalized = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        step_name = re.fullmatch(r"( *)- name: " + SIMPLE_NAME, line)
+        if step_name and index + 1 < len(lines):
+            following = lines[index + 1]
+            if following == step_name[1] + "  uses: actions/dependency-review-action@<immutable-sha>":
+                line = step_name[1] + "- uses: actions/dependency-review-action@<immutable-sha>"
+                index += 1
+        # Producers may spell the same one-element branch filter as a block
+        # list or a flow list. Preserve key indentation and reject extra items.
+        flow = re.fullmatch(r"( *)branches: *\[ *(?:main|'main'|\"main\") *\]", line)
+        block = re.fullmatch(r"( *)branches:", line)
+        if flow:
+            line = flow[1] + "branches: [main]"
+        elif block and index + 1 < len(lines):
+            item = re.fullmatch(r"( *)- +(?:main|'main'|\"main\")", lines[index + 1])
+            if item and len(item[1]) > len(block[1]):
+                line = block[1] + "branches: [main]"
+                index += 1
+        normalized.append(line)
+        index += 1
+    return normalized
+
+
+def dependency(coordinate):
+    metadata = repository(coordinate)
+    path = ".github/workflows/dependency-review.yml"
+    desired = dependency_contract((ROOT / path).read_bytes())
+    landed = contents(coordinate, path, metadata["default_branch"])
+    require(dependency_contract(landed) == desired,
+            "dependency-review workflow not landed with desired enforcement contract")
+    run = latest_dependency_run(coordinate)
+    require(run["event"] == "pull_request" and run["status"] == "completed"
+            and run["conclusion"] == "success", "latest dependency-review PR run not successful")
+    require(bool(run["pull_requests"]), "dependency-review PR association missing")
+    suite_endpoint = f"repos/{coordinate}/check-suites/{run['check_suite_id']}"
+    suite = api(suite_endpoint)
+    require(suite["id"] == run["check_suite_id"] and suite["app"]["id"] == ACTION_APP
+            and suite["status"] == "completed" and suite["conclusion"] == "success",
+            "dependency-review execution check suite not successful")
+    executed = suite["head_sha"]
+    require(bool(SHA.fullmatch(executed)), "dependency-review executed SHA missing")
+    merge_parents = None
+    if executed != run["head_sha"]:
+        merge_commit = api(f"repos/{coordinate}/commits/{executed}")
+        merge_parents = [parent["sha"] for parent in merge_commit["parents"]]
+    pulls = []
+    for reference in run["pull_requests"]:
+        pr = api(f"repos/{coordinate}/pulls/{reference['number']}")
+        require(pr["base"]["repo"]["full_name"].lower() == coordinate.lower()
+                and pr["base"]["ref"] == metadata["default_branch"],
+                "dependency-review PR does not target default branch")
+        require(pr["head"]["sha"] == run["head_sha"], "dependency-review PR head changed")
+        require(reference["head"]["sha"] == pr["head"]["sha"]
+                and reference["base"]["sha"] == pr["base"]["sha"]
+                and reference["base"]["ref"] == pr["base"]["ref"],
+                "dependency-review run PR association is stale")
+        require(any(item["number"] == pr["number"]
+                    and item["head"]["sha"] == pr["head"]["sha"]
+                    and item["base"]["sha"] == pr["base"]["sha"]
+                    and item["base"]["ref"] == pr["base"]["ref"]
+                    for item in suite["pull_requests"]),
+                "dependency-review execution PR association missing or stale")
+        if merge_parents is not None:
+            require(len(merge_parents) == 2 and set(merge_parents)
+                    == {pr["head"]["sha"], pr["base"]["sha"]},
+                    "dependency-review executed merge does not match current PR head/base")
+        pulls.append(pr)
+    require(contents(coordinate, path, executed) == landed,
+            "dependency-review run used different workflow bytes")
+    jobs = pages(f"repos/{coordinate}/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs", "jobs")
+    matches = [job for job in jobs if job["name"] == "Dependency review"]
+    require(len(matches) == 1 and matches[0]["status"] == "completed"
+            and matches[0]["conclusion"] == "success", "Dependency review job not successful")
+    fresh = latest_dependency_run(coordinate)
+    run_keys = ("id", "run_attempt", "status", "conclusion", "event", "head_sha",
+                "check_suite_id", "pull_requests")
+    require(all(fresh[key] == run[key] for key in run_keys),
+            "dependency-review run changed during preflight")
+    fresh_suite = api(suite_endpoint)
+    suite_keys = ("id", "head_sha", "app", "status", "conclusion", "pull_requests")
+    require(all(fresh_suite[key] == suite[key] for key in suite_keys),
+            "dependency-review execution check suite changed during preflight")
+    for pr in pulls:
+        fresh_pr = api(f"repos/{coordinate}/pulls/{pr['number']}")
+        require(fresh_pr["head"]["sha"] == pr["head"]["sha"]
+                and fresh_pr["base"]["sha"] == pr["base"]["sha"]
+                and fresh_pr["base"]["ref"] == pr["base"]["ref"]
+                and fresh_pr["base"]["repo"]["full_name"] == pr["base"]["repo"]["full_name"]
+                and all(fresh_pr[key] == pr[key] for key in ("state", "draft", "merged")),
+                "dependency-review PR changed during preflight")
+    require(contents(coordinate, path, metadata["default_branch"]) == landed,
+            "default-branch dependency-review workflow changed during preflight")
+    require(repository(coordinate)["default_branch"] == metadata["default_branch"],
+            "repository default branch changed during preflight")
+    return "workflow enforcement contract landed; latest PR job successful with same workflow bytes"
+
+
+def pin_changes(before, after, selected):
+    """Compare complete files, so API's potentially truncated patches grant nothing."""
+    old = before.decode("utf-8").splitlines(keepends=True)
+    new = after.decode("utf-8").splitlines(keepends=True)
+    changed = 0
+    for tag, old_start, old_end, new_start, new_end in difflib.SequenceMatcher(
+            None, old, new, autojunk=False).get_opcodes():
+        if tag == "equal":
+            continue
+        require(tag == "replace" and old_end - old_start == new_end - new_start,
+                "canary changes more than action pins")
+        for left, right in zip(old[old_start:old_end], new[new_start:new_end]):
+            left_match, right_match = USES.fullmatch(left), USES.fullmatch(right)
+            require(bool(left_match and right_match), "canary changes more than action pins")
+            for key in ("prefix", "action", "space", "newline"):
+                require(left_match[key] == right_match[key], "canary changes action structure")
+            require(left_match["sha"] != right_match["sha"], "canary contains unrelated comment changes")
+            action = right_match["action"]
+            identity = f"{action}@{right_match['sha']}"
+            require((selected["github_owned_allowed"] and action.split("/")[0].lower()
+                     in {"actions", "github"})
+                    or any(fnmatch.fnmatchcase(identity, pattern)
+                           for pattern in selected["patterns_allowed"]),
+                    "new action pin is outside desired selected-actions patterns")
+            changed += 1
+    require(changed > 0, "canary has no full-SHA action update")
+    return changed
+
+
+def merge_check_run(coordinate, check, pr, merges):
+    if check["head_sha"] == pr["head"]["sha"]:
+        return True
+    if check["head_sha"] not in merges:
+        return False
+    value = api(f"repos/{coordinate}/actions/runs?check_suite_id={check['check_suite']['id']}&per_page=1")
+    runs = value["workflow_runs"]
+    return bool(len(runs) == 1 and runs[0]["event"] == "pull_request"
+                and runs[0]["head_sha"] == pr["head"]["sha"]
+                and any(item["number"] == pr["number"] for item in runs[0]["pull_requests"]))
+
+
+def sha(coordinate, number):
+    metadata = repository(coordinate)
+    pr = api(f"repos/{coordinate}/pulls/{number}")
+    require(pr["merged"] is True or (pr["state"] == "open" and not pr["draft"]),
+            "action-update canary must be merged or open and review-ready")
+    require(pr["base"]["repo"]["full_name"].lower() == coordinate.lower()
+            and pr["base"]["ref"] == metadata["default_branch"],
+            "canary does not target default branch")
+    require(bool(SHA.fullmatch(pr["head"]["sha"])), "canary head SHA missing")
+    selected = config("actions-selected.json")
+    live = api(f"orgs/{coordinate.split('/')[0]}/actions/permissions/selected-actions")
+    require(selected["github_owned_allowed"] is True and selected["verified_allowed"] is False,
+            "desired selected-actions policy is not conservative")
+    require(live["github_owned_allowed"] is True and live["verified_allowed"] is False
+            and sorted(live["patterns_allowed"]) == sorted(selected["patterns_allowed"]),
+            "live selected-actions policy differs from desired policy")
+    required = config("repositories.json")["required_ci"].get(coordinate.split('/')[1])
+    require(bool(required), "canary has no configured required contexts")
+    files = pages(f"repos/{coordinate}/pulls/{number}/files")
+    require(bool(files) and len(files) == pr["changed_files"], "canary file evidence incomplete")
+    updates = 0
+    for item in files:
+        path = item["filename"]
+        require(item["status"] == "modified" and
+                re.fullmatch(r"\.github/workflows/[^/]+\.ya?ml", path) is not None,
+                "canary contains changes outside existing workflows")
+        updates += pin_changes(contents(coordinate, path, pr["base"]["sha"]),
+                               contents(pr["head"]["repo"]["full_name"], path, pr["head"]["sha"]), selected)
+    merge = pr.get("merge_commit_sha") if not pr["merged"] else None
+    merges = set()
+    if merge:
+        require(bool(SHA.fullmatch(merge)), "canary merge SHA malformed")
+        commit = api(f"repos/{coordinate}/commits/{merge}")
+        require({parent["sha"] for parent in commit["parents"]}
+                == {pr["base"]["sha"], pr["head"]["sha"]}, "canary merge SHA is stale")
+        merges.add(merge)
+    if pr["merged"]:
+        # After squash/rebase merge, merge_commit_sha identifies publication,
+        # not the temporary merge commit that PR Actions checks evaluated.
+        runs = pages(f"repos/{coordinate}/actions/runs?event=pull_request&head_sha={pr['head']['sha']}",
+                     "workflow_runs")
+        for run in runs:
+            references = [item for item in run["pull_requests"] if item["number"] == number]
+            if run["event"] != "pull_request" or run["head_sha"] != pr["head"]["sha"] or not references:
+                continue
+            suite = api(f"repos/{coordinate}/check-suites/{run['check_suite_id']}")
+            candidate = suite["head_sha"]
+            if candidate == pr["head"]["sha"]:
+                continue
+            require(bool(SHA.fullmatch(candidate)), "historical canary merge SHA malformed")
+            commit = api(f"repos/{coordinate}/commits/{candidate}")
+            require(any(item["head"]["sha"] == pr["head"]["sha"]
+                        and item["base"]["ref"] == metadata["default_branch"]
+                        and {parent["sha"] for parent in commit["parents"]}
+                        == {item["base"]["sha"], pr["head"]["sha"]} for item in references),
+                    "historical canary merge does not match PR head/base")
+            merges.add(candidate)
+    checks = []
+    for ref in [pr["head"]["sha"], *sorted(merges)]:
+        checks.extend(pages(f"repos/{coordinate}/commits/{ref}/check-runs?filter=all&app_id={ACTION_APP}",
+                            "check_runs"))
+    for context in required:
+        candidates = [check for check in checks if check["name"] == context
+                      and check["app"]["id"] == ACTION_APP
+                      and check["app"]["slug"] == "github-actions"
+                      and merge_check_run(coordinate, check, pr, merges)]
+        require(bool(candidates), f"required check missing for canary head: {context}")
+        latest = max(candidates, key=lambda check: (check.get("started_at") or "", check["id"]))
+        require(latest["status"] == "completed" and latest["conclusion"] == "success",
+                f"required check not successful for canary head: {context}")
+    fresh = api(f"repos/{coordinate}/pulls/{number}")
+    require(fresh["head"]["sha"] == pr["head"]["sha"]
+            and fresh["base"]["sha"] == pr["base"]["sha"]
+            and fresh.get("merge_commit_sha") == pr.get("merge_commit_sha")
+            and fresh["state"] == pr["state"] and fresh["merged"] == pr["merged"]
+            and (fresh["merged"] or not fresh["draft"]), "canary changed during preflight")
+    fresh_live = api(f"orgs/{coordinate.split('/')[0]}/actions/permissions/selected-actions")
+    require(fresh_live["github_owned_allowed"] is True and fresh_live["verified_allowed"] is False
+            and sorted(fresh_live["patterns_allowed"]) == sorted(selected["patterns_allowed"]),
+            "live selected-actions policy changed during preflight")
+    require(repository(coordinate)["default_branch"] == metadata["default_branch"],
+            "repository default branch changed during preflight")
+    return f"ordinary action-update PR #{number}: {updates} allowed full-SHA updates; required checks passed"
+
+
+def canonical_language(value):
+    return {"javascript/typescript": "javascript-typescript", "javascript": "javascript-typescript",
+            "typescript": "javascript-typescript"}.get(value, value)
+
+
+def analysis_language(analysis):
+    environment = json.loads(analysis.get("environment") or "{}")
+    language = environment.get("language")
+    if not language:
+        match = re.search(r"(?:^|/)language:([a-z0-9+-]+)(?:/|$)", analysis["category"])
+        language = match[1] if match else None
+    return canonical_language(language), environment
+
+
+def successful_analysis(analysis, head):
+    require(analysis["commit_sha"] == head, "latest CodeQL analysis does not cover current default head")
+    require(analysis["error"] in ("", None) and analysis["rules_count"] > 0,
+            "latest CodeQL analysis failed or contains no executed rules")
+
+
+def newest_analysis_pages(coordinate, branch):
+    endpoint = f"repos/{coordinate}/code-scanning/analyses?" + urlencode(
+        {"ref": f"refs/heads/{branch}", "tool_name": "CodeQL"})
+    for page in range(1, 11):
+        entries = api(endpoint + f"&per_page=100&page={page}")
+        if not isinstance(entries, list):
+            raise EvidenceError("CodeQL analysis collection malformed")
+        yield entries
+        if len(entries) < 100:
+            return
+
+
+def default_codeql(coordinate, branch, head, minima):
+    endpoint = f"repos/{coordinate}/code-scanning/default-setup"
+    setup = api(endpoint)
+    require(setup["state"] == "configured", "CodeQL default setup not configured")
+    languages = {canonical_language(value) for value in setup["languages"]}
+    require(bool(languages), "CodeQL default setup has no configured languages")
+    require(set(minima) <= languages, "required CodeQL languages not configured")
+    found = set()
+    for entries in newest_analysis_pages(coordinate, branch):
+        for analysis in entries:
+            if analysis["tool"]["name"] != "CodeQL" or analysis["ref"] != f"refs/heads/{branch}":
+                continue
+            language, _ = analysis_language(analysis)
+            # Default setup owns one canonical category per configured language.
+            # Retired advanced partitions, even in that language, are historical.
+            category_language = analysis["category"].removeprefix("/language:")
+            if (not analysis["category"].startswith("/language:")
+                    or canonical_language(category_language) != language
+                    or language not in languages or language in found):
+                continue
+            successful_analysis(analysis, head)
+            found.add(language)
+        if found == languages:
+            fresh = api(endpoint)
+            require(fresh["state"] == setup["state"]
+                    and {canonical_language(value) for value in fresh["languages"]} == languages,
+                    "CodeQL default setup changed during preflight")
+            return "latest canonical default-setup analyses cover every configured language on current head"
+    raise Deferred("required configured CodeQL language analysis missing within bounded evidence")
+
+
+def classifier_full_events(source):
+    """Read the owner's full-event contract without executing fetched Python."""
+    tree = ast.parse(source)
+    assignments = [node for node in tree.body if isinstance(node, ast.Assign)
+                   and any(isinstance(target, ast.Name) and target.id == "FULL_EVENTS" for target in node.targets)]
+    require(len(assignments) == 1, "advanced CodeQL classifier full-event contract missing")
+    events = ast.literal_eval(assignments[0].value)
+    mains = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "main"]
+    require(len(mains) == 1, "advanced CodeQL classifier main contract missing")
+    full = False
+    for node in ast.walk(mains[0]):
+        if (isinstance(node, ast.If) and isinstance(node.test, ast.Compare)
+                and ast.unparse(node.test) == "arguments.event in FULL_EVENTS"):
+            full = any(isinstance(item, ast.Assign) and isinstance(item.value, ast.Constant)
+                       and item.value.value is True and any(isinstance(target, ast.Name)
+                           and target.id == "full" for target in item.targets) for item in node.body)
+    require(full and {"push", "schedule", "workflow_dispatch"} <= set(events),
+            "advanced CodeQL classifier does not select full analysis for full events")
+    return set(events) & {"push", "schedule", "workflow_dispatch"}
+
+
+def latest_full_codeql_run(coordinate, branch, head, events):
+    value = api(f"repos/{coordinate}/actions/workflows/codeql.yml/runs?head_sha={head}&per_page=100")
+    candidates = [run for run in value["workflow_runs"] if run["event"] in events
+                  and run["head_sha"] == head and run["head_branch"] == branch]
+    require(bool(candidates), "current-head full-event CodeQL workflow run missing")
+    run = candidates[0]
+    require(run["path"] == ".github/workflows/codeql.yml" and run["status"] == "completed"
+            and run["conclusion"] == "success", "latest full-event CodeQL workflow run not successful")
+    return run
+
+
+def advanced_codeql(coordinate, branch, head, minima):
+    sources = {}
+    for path in (".github/workflows/codeql.yml", "tools/ci/classify_changes.py", "tools/ci/require_checks.py"):
+        sources[path] = contents(coordinate, path, branch)
+        require(contents(coordinate, path, head) == sources[path], "advanced CodeQL producer source is stale")
+    workflow = sources[".github/workflows/codeql.yml"].decode()
+    for marker in ("name: CodeQL analysis (${{ matrix.display }})", "languages: ${{ matrix.language }}",
+                   "category: ${{ matrix.category }}", "python3 tools/ci/classify_changes.py",
+                   "python3 tools/ci/require_checks.py optional", "${{ needs.classify.outputs.run }}",
+                   "${{ needs.analyze.result }}"):
+        require(marker in workflow, "advanced CodeQL workflow producer contract unsupported")
+    events = classifier_full_events(sources["tools/ci/classify_changes.py"])
+    run = latest_full_codeql_run(coordinate, branch, head, events)
+    jobs_endpoint = f"repos/{coordinate}/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs"
+    jobs = pages(jobs_endpoint, "jobs")
+    require(bool(jobs) and all(job["head_sha"] == head and job["status"] == "completed"
+                             and job["conclusion"] == "success" for job in jobs),
+            "advanced CodeQL full-run jobs not all successful on current head")
+    require(len([job for job in jobs if job["name"] == "CodeQL classification"]) == 1,
+            "advanced CodeQL classification job missing")
+    validation = [job for job in jobs if job["name"] == "CodeQL validation"]
+    require(len(validation) == 1, "advanced CodeQL validation job missing")
+    expected_url = f"https://api.github.com/repos/{coordinate}/check-runs/"
+    check_url = validation[0]["check_run_url"]
+    require(check_url.startswith(expected_url) and check_url[len(expected_url):].isdigit(),
+            "advanced CodeQL validation check identity missing")
+    check_endpoint = f"repos/{coordinate}/check-runs/{check_url[len(expected_url):]}"
+    check = api(check_endpoint)
+    require(check["name"] == "CodeQL validation" and check["head_sha"] == head
+            and check["app"]["id"] == ACTION_APP and check["app"]["slug"] == "github-actions"
+            and check["check_suite"]["id"] == run["check_suite_id"]
+            and check["status"] == "completed" and check["conclusion"] == "success",
+            "advanced CodeQL validation check is not the trusted current-head producer")
+    selected = {}
+    for job in jobs:
+        match = re.fullmatch(r"CodeQL analysis \((.+)\)", job["name"])
+        if match:
+            require(match[1] not in selected, "advanced CodeQL analysis jobs duplicated")
+            selected[match[1]] = job
+    require(bool(selected), "advanced CodeQL full run selected no analysis jobs")
+    found, categories, languages = set(), set(), set()
+    for entries in newest_analysis_pages(coordinate, branch):
+        for analysis in entries:
+            if (analysis["tool"]["name"] != "CodeQL" or analysis["ref"] != f"refs/heads/{branch}"
+                    or analysis.get("analysis_key") != ".github/workflows/codeql.yml:analyze"):
+                continue
+            category = analysis["category"]
+            if category in categories:
+                continue
+            categories.add(category)
+            language, environment = analysis_language(analysis)
+            display = environment.get("display")
+            if display not in selected:
+                continue
+            job = selected[display]
+            if analysis["created_at"] < job["started_at"]:
+                continue
+            require(display not in found, "advanced CodeQL selected display has ambiguous upload categories")
+            successful_analysis(analysis, head)
+            category_language = re.search(r"(?:^|/)language:([a-z0-9+-]+)$", category)
+            require(environment.get("category") == category and category_language is not None
+                    and canonical_language(category_language[1]) == language
+                    and job["started_at"] <= analysis["created_at"] <= job["completed_at"],
+                    "advanced CodeQL analysis upload does not belong to selected full-run job")
+            found.add(display)
+            languages.add(language)
+            if found == set(selected):
+                break
+        if found == set(selected):
+            require({canonical_language(value) for value in minima} <= languages,
+                    "required CodeQL language analysis missing")
+            fresh = latest_full_codeql_run(coordinate, branch, head, events)
+            require(all(fresh[key] == run[key] for key in
+                        ("id", "run_attempt", "head_sha", "head_branch", "event", "path", "check_suite_id")),
+                    "advanced CodeQL full run changed during preflight")
+            require(api(check_endpoint) == check, "advanced CodeQL validation check changed during preflight")
+            require(pages(jobs_endpoint, "jobs") == jobs, "advanced CodeQL full-run jobs changed during preflight")
+            for path, source in sources.items():
+                require(contents(coordinate, path, branch) == source,
+                        "advanced CodeQL producer source changed during preflight")
+            return "current full-event CodeQL producer and every selected partition upload successful"
+    raise Deferred("required advanced CodeQL partition upload missing within bounded evidence")
+
+
+def codeql(coordinate):
+    metadata = repository(coordinate)
+    branch = metadata["default_branch"]
+    branch_endpoint = f"repos/{coordinate}/branches/{quote(branch, safe='')}"
+    head = api(branch_endpoint)["commit"]["sha"]
+    require(bool(SHA.fullmatch(head)), "default-branch head missing")
+    required = config("security-merge-protection.json")["codeql_required_languages"].get(
+        coordinate.split('/')[1], [])
+    advanced = config("codeql-advanced-setup.json")["repositories"]
+    if coordinate.split('/')[1] in advanced:
+        reason = advanced_codeql(coordinate, branch, head, required)
+    else:
+        reason = default_codeql(coordinate, branch, head, [canonical_language(value) for value in required])
+    require(api(branch_endpoint)["commit"]["sha"] == head, "default branch changed during CodeQL preflight")
+    require(repository(coordinate)["default_branch"] == branch,
+            "repository default branch changed during preflight")
+    return reason
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("mode", choices=("dependency", "sha", "codeql"))
+    parser.add_argument("target", help="OWNER/REPO, or OWNER/REPO/PR for sha")
+    args = parser.parse_args(argv)
+    try:
+        parts = args.target.split("/")
+        coordinate = "/".join(parts[:2])
+        if not COORDINATE.fullmatch(coordinate) or len(parts) != (3 if args.mode == "sha" else 2):
+            raise EvidenceError("invalid repository or PR coordinate")
+        if args.mode == "sha":
+            if not parts[2].isdigit() or int(parts[2]) < 1:
+                raise EvidenceError("invalid PR number")
+            reason = sha(coordinate, int(parts[2]))
+        else:
+            reason = {"dependency": dependency, "codeql": codeql}[args.mode](coordinate)
+        print(f"ready: {reason}")
+        return 0
+    except Deferred as exc:
+        print(f"deferred: {exc}")
+        return 1
+    except (EvidenceError, OSError, ValueError, KeyError, TypeError, AttributeError, SyntaxError) as exc:
+        reason = str(exc) if isinstance(exc, EvidenceError) else "local or API evidence malformed/unreadable"
+        print(f"error: {reason}")
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
