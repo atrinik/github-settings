@@ -1699,7 +1699,9 @@ assert_setup_failed_before_mutation() {
 pending_setup_root=${temporary}/crate-pending-setup
 crate_setup_root "${pending_setup_root}"
 jq '(.crates_io_trusted_publishing[] | select(.repository == "atrinik/protocol") |
-  .source_state) = "pending-reviewed-workflow"' \
+  .source_state) = "pending-reviewed-workflow" |
+  (.crates_io_trusted_publishing[] | select(.repository == "atrinik/protocol") |
+    .environment_state) = "pending"' \
   "${pending_setup_root}/config/manual-settings.json" >"${temporary}/pending-manual.json"
 mv "${temporary}/pending-manual.json" "${pending_setup_root}/config/manual-settings.json"
 pending_setup_log=${temporary}/crate-pending-setup.jsonl
