@@ -827,7 +827,7 @@ fi
 while IFS= read -r selected_repository; do
   repository=$(jq -r '.repository' <<<"${selected_repository}")
   verify_repository_identity "${repository}" "$(jq -r '.repository_id' <<<"${selected_repository}")"
-  if [[ $(jq -r '.status' <<<"${app_record}") == owner-observed ]]; then
+  if [[ $(jq -r '.credential_state' <<<"${app_record}") == observed-name-metadata ]]; then
     load_repository_secrets "${repository}"
     load_repository_variables "${repository}"
     for kind in secret variable; do
@@ -849,7 +849,12 @@ done < <(jq -c '.repositories[]' <<<"${app_record}")
 if [[ $(jq -r '.status' <<<"${app_record}") == planned ]]; then
   echo "PENDING ${app_slug} selected client/editor App installation and repository credential slots; no provisioning applied"
 else
-  echo "MANUAL ${app_slug} selected repositories require current owner UI proof: atrinik/client and atrinik/editor only"
+  echo "MANUAL ${app_slug} selected repositories require current owner UI or App-authenticated API proof: atrinik/client and atrinik/editor only"
+  activation_status=PENDING
+  if [[ $(jq -r '.workflow_activation.state' <<<"${app_record}") == observed-successful-owned-pr ]]; then
+    activation_status=OWNER-OBSERVED
+  fi
+  echo "${activation_status} ${app_slug} owning workflow activation evidence: $(jq -r '.workflow_activation.state' <<<"${app_record}"); name metadata alone does not prove effective values or a successful PR"
 fi
 
 # GraphQL variables must remain literal for GitHub to substitute.

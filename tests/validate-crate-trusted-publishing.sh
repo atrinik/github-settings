@@ -119,8 +119,11 @@ for filter in \
   '.crate_dependency_update_app.private_key = "forbidden"' \
   '.crate_dependency_update_app.pull_request_policy = "auto-merge"' \
   '.crate_dependency_update_app.status = "active"' \
-  '.crate_dependency_update_app.app_id = 1' \
-  '.crate_dependency_update_app.observed_on = "2026-10-11"'; do
+  '.crate_dependency_update_app.workflow_activation.state = "active"' \
+  '.crate_dependency_update_app.workflow_activation.state = "observed-successful-owned-pr"' \
+  '.crate_dependency_update_app.workflow_activation.evidence_location = "invented"' \
+  '.crate_dependency_update_app.app_id = null' \
+  '.crate_dependency_update_app.observed_on = null'; do
   assert_rejected "${filter}"
 done
 # Removing unactivated manual intent is a valid reviewed rollback.

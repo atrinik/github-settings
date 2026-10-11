@@ -854,10 +854,10 @@ jq -e --arg today "${validation_today}" '
   .github_actions_apps as $apps |
   .external_provider_apps as $external_apps |
   .crate_dependency_update_app as $app |
-  ($app | keys == ["app_id", "app_slug", "events", "evidence_location", "homepage_url", "installation_id",
+  ($app | keys == ["app_id", "app_slug", "credential_state", "events", "evidence_location", "homepage_url", "installation_id",
     "observed_on", "owner", "permissions", "pull_request_policy", "readiness", "repositories",
     "repository_scope_verification", "repository_selection", "runbook", "secret_name",
-    "secret_scope", "status", "variable_name", "variable_scope", "webhook_active", "workflow_filename", "workflow_triggers"]) and
+    "secret_scope", "status", "variable_name", "variable_scope", "webhook_active", "workflow_activation", "workflow_filename", "workflow_triggers"]) and
   $app.app_slug == "atrinik-crate-dependency-update" and
   $app.homepage_url == "https://www.atrinik.org" and $app.webhook_active == false and
   $app.repository_selection == "selected" and
@@ -872,14 +872,25 @@ jq -e --arg today "${validation_today}" '
   $app.readiness == "exact-released-crates-and-checksums-before-pr" and
   $app.pull_request_policy == "owned-branch-and-pr-only-no-auto-merge" and
   $app.runbook == "README.md#crate-dependency-update-app" and
+  ($app.credential_state | IN("pending-name-metadata", "observed-name-metadata")) and
+  ($app.workflow_activation | keys == ["evidence_location", "observed_on", "state"]) and
+  (if $app.workflow_activation.state == "pending-reviewed-workflows" then
+    $app.workflow_activation.observed_on == null and $app.workflow_activation.evidence_location == null
+  elif $app.workflow_activation.state == "observed-successful-owned-pr" then
+    $app.status == "owner-observed" and $app.credential_state == "observed-name-metadata" and
+    ($app.workflow_activation.observed_on | observed_day) and
+    ($app.workflow_activation.evidence_location | type == "string" and test("^[A-Za-z0-9_./#-]+$"))
+  else false end) and
   (if $app.status == "planned" then
+    $app.credential_state == "pending-name-metadata" and
+    $app.workflow_activation.state == "pending-reviewed-workflows" and
     $app.app_id == null and $app.installation_id == null and
     $app.repository_scope_verification == "pending-owner-ui" and
     $app.observed_on == null and $app.evidence_location == null
   elif $app.status == "owner-observed" then
     ($app.app_id | type == "number" and floor == . and . > 0) and
     ($app.installation_id | type == "number" and floor == . and . > 0) and
-    $app.repository_scope_verification == "organization_owner_ui" and
+    ($app.repository_scope_verification | IN("organization_owner_ui", "app_authenticated_repository_api")) and
     ($app.observed_on | observed_day) and
     all(($apps + $external_apps)[]; .app_id != $app.app_id and .installation_id != $app.installation_id) and
     ($app.evidence_location | type == "string" and test("^[A-Za-z0-9_./#-]+$"))

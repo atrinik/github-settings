@@ -350,7 +350,7 @@ repos/atrinik/classic/pages)
   elif [[ ${FAKE_GH_SCENARIO} == app-installations-page2 || \
     ${FAKE_GH_SCENARIO} == app-installations-page2-failure ]]; then
     jq -n '{
-      total_count: 102,
+      total_count: 103,
       installations: [range(0; 100) | {
         id: (1000 + .),
         app_id: (2000 + .),
@@ -422,8 +422,8 @@ repos/atrinik/classic/pages)
     external-app-permission-drift) external_permissions='{"checks":"write","contents":"write","deployments":"write","metadata":"read","pull_requests":"write"}' ;;
     external-app-suspended) external_suspended_at='"2026-08-15T00:00:00Z"' ;;
     esac
-    updater_installed=false
-    [[ ${FAKE_GH_SCENARIO} != updater-* ]] || updater_installed=true
+    updater_installed=true
+    [[ ${FAKE_GH_SCENARIO} != updater-missing ]] || updater_installed=false
     updater_permissions='{"contents":"write","metadata":"read","pull_requests":"write"}'
     [[ ${FAKE_GH_SCENARIO} != updater-permissions ]] || updater_permissions='{"contents":"write","metadata":"read","pull_requests":"write","administration":"write"}'
     updater_selection=selected
@@ -482,7 +482,7 @@ repos/atrinik/classic/pages)
           suspended_at: null
         }] else [] end)
         + (if $updater_installed then [{
-          id:154000002, app_id:85500002, app_slug:"atrinik-crate-dependency-update",
+          id:170332148, app_id:5276152, app_slug:"atrinik-crate-dependency-update",
           target_type:"Organization",account:{login:"atrinik",type:"Organization"},
           repository_selection:$updater_selection,permissions:$updater_permissions,
           events:[],suspended_at:null
@@ -498,7 +498,7 @@ repos/atrinik/classic/pages)
   fi
   [[ ${FAKE_GH_SCENARIO} == app-installations-page2 ]]
   jq -n '{
-    total_count: 102,
+    total_count: 103,
     installations: [{
       id: 153045686,
       app_id: 4564008,
@@ -530,6 +530,12 @@ repos/atrinik/classic/pages)
       },
       events: ["pull_request", "push"],
       suspended_at: null
+    }, {
+      id:170332148, app_id:5276152, app_slug:"atrinik-crate-dependency-update",
+      target_type:"Organization",account:{login:"atrinik",type:"Organization"},
+      repository_selection:"selected",
+      permissions:{contents:"write",metadata:"read",pull_requests:"write"},
+      events:[],suspended_at:null
     }]
   }'
   ;;
@@ -820,7 +826,15 @@ for scenario in crate-workflow-drift crate-env-wait crate-env-reviewer crate-env
   fi
 done
 
-if run_verify updater-present >"${temporary}/updater-planned.out" 2>"${temporary}/updater-planned.err"; then
+planned_updater_root=${temporary}/planned-updater
+mkdir -p "${planned_updater_root}/bin"
+cp "${root}/bin/validate" "${root}/bin/verify-manual-settings" "${planned_updater_root}/bin/"
+cp -R "${root}/config" "${root}/community-health" "${root}/.github" "${planned_updater_root}/"
+jq '.crate_dependency_update_app |= (.status="planned" | .app_id=null | .installation_id=null |
+  .repository_scope_verification="pending-owner-ui" | .observed_on=null | .evidence_location=null |
+  .credential_state="pending-name-metadata")' "${root}/config/manual-settings.json" \
+  >"${planned_updater_root}/config/manual-settings.json"
+if run_verify updater-present "${planned_updater_root}" >"${temporary}/updater-planned.out" 2>"${temporary}/updater-planned.err"; then
   echo "error: pending App accepted an unrecorded live installation" >&2
   exit 1
 fi
@@ -828,15 +842,15 @@ updater_root=${temporary}/observed-updater
 mkdir -p "${updater_root}/bin"
 cp "${root}/bin/validate" "${root}/bin/verify-manual-settings" "${updater_root}/bin/"
 cp -R "${root}/config" "${root}/community-health" "${root}/.github" "${updater_root}/"
-jq '.crate_dependency_update_app |= (.status="owner-observed" | .app_id=85500002 |
-  .installation_id=154000002 | .repository_scope_verification="organization_owner_ui" |
+jq '.crate_dependency_update_app |= (.status="owner-observed" | .app_id=5276152 |
+  .installation_id=170332148 | .repository_scope_verification="organization_owner_ui" |
   .observed_on="2026-08-31" | .evidence_location="atrinik/github-settings#owner-app")' \
   "${root}/config/manual-settings.json" >"${updater_root}/config/manual-settings.json"
 updater_output=$(run_verify updater-present "${updater_root}")
 grep -Fq 'KEEP atrinik/client crate dependency App credential name metadata' <<<"${updater_output}"
 grep -Fq 'KEEP atrinik/editor crate dependency App credential name metadata' <<<"${updater_output}"
-grep -Fq 'selected repositories require current owner UI proof: atrinik/client and atrinik/editor only' <<<"${updater_output}"
-for scenario in present updater-permissions updater-selection updater-missing-secret updater-missing-variable; do
+grep -Fq 'selected repositories require current owner UI or App-authenticated API proof: atrinik/client and atrinik/editor only' <<<"${updater_output}"
+for scenario in updater-missing updater-permissions updater-selection updater-missing-secret updater-missing-variable; do
   if run_verify "${scenario}" "${updater_root}" >"${temporary}/updater-${scenario}.out" \
     2>"${temporary}/updater-${scenario}.err"; then
     echo "error: verifier accepted observed updater ${scenario}" >&2

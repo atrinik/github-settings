@@ -141,6 +141,10 @@ listed renderer/toolkit libraries and ends with revocation; subsequent releases
 use OIDC only. Protocol 0.2 retains its approved manual path. Dependency-update
 App setup is client/editor only, exact contents/PR write and metadata read,
 repository credential names only, registry readiness before owned PR creation,
-and ordinary review/checks without auto-merge. Changes require negative schema
+and ordinary review/checks without auto-merge. Distinguish observed installation
+and credential-name provisioning from pending reviewed workflow activation and
+real successful-owned-PR proof; owner-authorized early setup does not prove
+effective secret values. Keep App-authenticated selected-set readback or owner
+UI evidence, and do not infer the webhook switch from an empty event set. Changes require negative schema
 and live-metadata fixture tests plus a complete publisher plan; publishers do
 not provision these integrations.

@@ -1216,34 +1216,43 @@ The automatic contract above replaces the former planned per-release
 maintainer-review policy. Protocol 0.2 keeps its approved manual release path;
 future reviewed source/version merges use the automatic path after observed
 onboarding. Protocol registration is owner-observed with the successful manual 0.2 run;
-its automatic source/environment transition remains pending. Renderer/toolkit
-registration and the dependency App remain unprovisioned pending owner actions.
+its automatic source/environment transition remains pending. Renderer/toolkit registration remains pending owner actions; the dependency
+App is provisioned with workflow activation still pending.
 
 ## Crate dependency update App
 
-`crate_dependency_update_app` plans a dedicated
-`atrinik-crate-dependency-update` GitHub App. Its IDs and owner evidence remain
-null while setup is pending. Install it with **selected repositories** only:
-`atrinik/client` (ID `1327106844`) and `atrinik/editor` (ID `1327106902`). Its
-permissions are exactly contents write, pull requests write, and metadata read.
-Set its homepage to `https://www.atrinik.org` and disable its webhook; it has no
-subscribed events, administration privilege, bypass entry, or
-self-approval/self-merge authority. Preserve every other App and installation,
-including the existing Classic updater and provider Apps.
+`crate_dependency_update_app` records owner-observed App setup on 2026-10-11,
+while owning workflow activation remains `pending-reviewed-workflows`.
+The live App is `atrinik-crate-dependency-update`, App ID `5276152`, installation
+ID `170332148`, with **selected repositories** exactly `atrinik/client` (ID
+`1327106844`) and `atrinik/editor` (ID `1327106902`). App-authenticated supported
+API readback confirmed that complete selected set, exact contents write/pull
+requests write/metadata read permissions, no subscribed events, and the external
+homepage `https://www.atrinik.org`. Preserve every other App and installation,
+including the existing Classic updater and provider Apps. The desired disabled
+webhook is a separate owner UI setting; `events: []` proves no subscriptions and
+does not independently prove the webhook switch is disabled.
 
-After both reviewed `released-dependencies.yml` workflows have merged, the
-organization owner creates/installs the App and confirms the exact two selected
-repositories in GitHub's supported owner UI. Store the private key separately
-as repository secret `CRATE_DEPENDENCY_UPDATE_APP_PRIVATE_KEY` in each selected
-repository, and its App ID as repository variable
-`CRATE_DEPENDENCY_UPDATE_APP_ID`. Never display or copy private-key/token values
-into logs or evidence. Update the inventory to `status: owner-observed` only
-with stable App/installation IDs, date, and sanitized owner evidence. The
-read-only verifier then checks live installation identity, exact permissions,
-empty events, active state, repository identities, and credential **names**.
-An administrative-token API cannot establish the exact selected repository set
-or verify credential values/effective scope; owner UI and owning workflow proof
-remain separate evidence.
+The owner expressly authorized provisioning before the consumer workflows
+merge. Each selected repository now has secret name
+`CRATE_DEPENDENCY_UPDATE_APP_PRIVATE_KEY` and variable name
+`CRATE_DEPENDENCY_UPDATE_APP_ID`; the observed App ID is `5276152`. Name metadata
+was verified after creation on 2026-10-11. Never display or copy private-key/token
+values or local credential paths into inventory, logs, or public evidence. The
+secret value is not readable through GitHub's metadata API, and name presence
+cannot prove that a key is valid or effective. These observations do not grant
+workflow activation, bypass, self-approval, or self-merge authority.
+
+The read-only verifier checks live installation identity, exact permissions,
+empty events, active state, selected repository identities, and credential
+**names**. An administrative-token API cannot enumerate the complete selected
+repository set; retain current supported App-authenticated readback or owner UI
+proof. It reports `credential_state: observed-name-metadata` separately from
+workflow activation. Merge both reviewed `released-dependencies.yml` workflows,
+then prove effective App credentials with an owned PR and its ordinary required
+checks before recording `observed-successful-owned-pr` with dated evidence.
+Current activation evidence remains null; an observed setup status alone cannot
+prove a successful owning workflow.
 
 The updaters run hourly (`17 * * * *`) and through `workflow_dispatch`. Their
 credential-free preparation verifies exact released versions and registry

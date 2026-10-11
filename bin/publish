@@ -1385,6 +1385,6 @@ while IFS= read -r crate_record; do
   state=$(jq -r '"source=\(.source_state), environment=\(.environment_state), registration=\(.publisher_registration.state)"' <<<"${crate_record}")
   echo "MANUAL ${repository} crates.io ${crate}: ${state}; reviewed source/version merge, automatic crates-io-release environment (zero reviewers/wait), and Trusted Publisher owner setup; publisher does not apply"
 done < <(jq -c '.crates_io_trusted_publishing[]' "${root}/config/manual-settings.json")
-app_state=$(jq -r '.crate_dependency_update_app.status' "${root}/config/manual-settings.json")
+app_state=$(jq -r '.crate_dependency_update_app | "identity=\(.status), credential_names=\(.credential_state), workflow=\(.workflow_activation.state)"' "${root}/config/manual-settings.json")
 echo "MANUAL atrinik-crate-dependency-update ${app_state} selected client/editor App and credential slots; publisher does not apply"
 echo "Manual confirmation required for config/manual-settings.json."

@@ -133,13 +133,17 @@
   First owner-local API-token publication is limited to the fourteen declared
   renderer/toolkit libraries; exclude CLIs, revoke bootstrap credentials, and
   use OIDC only afterward. Protocol 0.2 retains its approved manual path.
-- Keep the planned crate dependency App separate from unrelated Apps. Select
-  only client/editor, exactly contents/PR write and metadata read, no events,
+- Keep the crate dependency App separate from unrelated Apps. Select only
+  client/editor, exactly contents/PR write and metadata read, no events,
   bypass or auto-merge; inventory names only for repository secret
   `CRATE_DEPENDENCY_UPDATE_APP_PRIVATE_KEY` and variable
-  `CRATE_DEPENDENCY_UPDATE_APP_ID`. Provision after the hourly/manual reviewed
-  workflows merge and retain exact owner UI selection proof; preparation must
-  verify registry readiness before the isolated job writes an owned PR.
+  `CRATE_DEPENDENCY_UPDATE_APP_ID`. Record observed installation and name-only
+  provisioning separately from pending reviewed workflow activation and dated
+  successful-owned-PR proof. Current owner-authorized early provisioning does
+  not imply effective credentials or a deployed workflow. Retain exact owner UI
+  or supported App-authenticated repository-selection readback; empty events
+  do not independently prove a disabled webhook. Preparation must verify
+  registry readiness before the isolated job writes an owned PR.
 - Record GitHub Pages sites with stable repository identity, exact provider URL,
   HTTPS enforcement, owning deployment environment, desired Actions source,
   workflow path, and immutable deployment-action marker. Before that marker is

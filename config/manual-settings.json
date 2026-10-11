@@ -425,12 +425,12 @@
   "require_secure_two_factor_methods": true,
   "reason": "The public GitHub API does not expose supported update parameters for every setting in this file, including organization pins and the exact selected-repository set for an organization GitHub App installation to an administrative token, and external credential values must never be stored here. Confirm these settings, the exact ordered pin set, credential lifecycle metadata and live secret-name presence, GitHub App repository selection, Codecov GitHub App repository access, any listed GitHub Pages sites and GitHub Actions environments, and GitHub Packages Actions access in the corresponding organization, repository, and package settings UI.",
   "crate_dependency_update_app": {
-    "app_id": null,
+    "app_id": 5276152,
     "app_slug": "atrinik-crate-dependency-update",
-    "installation_id": null,
-    "status": "planned",
+    "installation_id": 170332148,
+    "status": "owner-observed",
     "repository_selection": "selected",
-    "repository_scope_verification": "pending-owner-ui",
+    "repository_scope_verification": "app_authenticated_repository_api",
     "owner": "Atrinik organization owners",
     "permissions": {
       "contents": "write",
@@ -459,10 +459,16 @@
     ],
     "readiness": "exact-released-crates-and-checksums-before-pr",
     "pull_request_policy": "owned-branch-and-pr-only-no-auto-merge",
-    "observed_on": null,
-    "evidence_location": null,
+    "observed_on": "2026-10-11",
+    "evidence_location": "README.md#crate-dependency-update-app",
     "runbook": "README.md#crate-dependency-update-app",
     "homepage_url": "https://www.atrinik.org",
-    "webhook_active": false
+    "webhook_active": false,
+    "credential_state": "observed-name-metadata",
+    "workflow_activation": {
+      "state": "pending-reviewed-workflows",
+      "observed_on": null,
+      "evidence_location": null
+    }
   }
 }
