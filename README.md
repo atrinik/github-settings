@@ -811,6 +811,31 @@ administrative immutable-settings endpoint, so source workflows do not add an
 unsupported pre-tag query or administrative credentials. This inventory is
 activated only after reviewed draft-first source qualification.
 
+Initial qualification establishes producer code and setup; it does not require
+an already published immutable release. The independently accepted producer
+candidates and merged main revisions had identical complete Git trees:
+
+| Repository | Reviewed candidate | Merged main |
+| --- | --- | --- |
+| protocol | `5f843a69ec52233a5ff66bebe7d04a025ff7295c` | `f9e72b9ebc4f8516f3a1e1f6383ab4484c3c1444` |
+| renderer | `9a7e1afcc378cd14d28e56468f6a7cdd16de630c` | `ef70471c87579f3cef0027bf8e126fbaae515f6f` |
+| content-toolkit | `c04755ba3936c30171a85ec7ce003413eb75d174` | `0caed7763c1c8d2d83bb3f2636a33d94f3962a71` |
+
+Local draft-first complete-asset validation, independent source review, and
+exact-candidate CI establish this initial code qualification. These historical
+revisions do not lock future source or action updates. Workflow parsing alone
+does not prove draft assembly; real signing, immutable release assets, and
+registry uploads remain runtime proof obligations.
+
+Before any broad `bin/publish --apply` mutation, its preflight computes producer
+IDs newly entering the live immutable selection. Each new producer requires an
+observed source/environment inventory record and a fresh scoped
+`bin/verify-manual-settings --crate-publication-setup atrinik/REPOSITORY` check.
+Pending or missing records, workflow/environment drift, or concurrent immutable
+policy changes stop apply before mutation. Existing selected producers and an
+already enforced `all` policy need no initial-addition qualification. This guard
+does not authorize broad apply for the narrow rollout below.
+
 For protocol, separately verify that the actual immutable pinned
 semantic-release GitHub plugin supports the configured draft-first publication
 and the complete asset payload. A configured flag alone is not release proof.
@@ -1168,11 +1193,12 @@ and unrelated App credentials.
 ## Automatic crate Trusted Publishing
 
 `config/manual-settings.json` records the desired, value-free contracts below.
-Formal source/environment onboarding states remain **pending** in this inventory.
-The three reviewed owning workflows have merged and their source-release workflows
-are temporarily paused for the narrow immutable-policy activation window. The
-owner configured all three main-only, zero-review environments; final observed
-inventory transitions remain coordinator-owned acceptance after live qualification.
+All three source contracts are `observed-reviewed-workflow`, and their
+environments are `observed`: supported live readback qualified both workflow
+files at the same protected-main revision, exact repository identities, and
+main-only environments with no reviewers, wait, administrator bypass, secrets,
+or variables. Their source-release workflows remain temporarily paused for the
+narrow immutable-policy activation window.
 Protocol registration was owner-observed on 2026-10-11 and its manual 0.2 upload
 succeeded in [run 38156755961](https://github.com/atrinik/protocol/actions/runs/38156755961).
 That registration does not imply the future automatic source workflow or
@@ -1270,7 +1296,10 @@ the policy and publication workflows install it before verification. The
 parser rejects duplicate YAML keys, comment-only/plain text, disabled automatic
 jobs, missing OIDC, mutable action refs, extra OIDC jobs, widened guards,
 inexact checkout/input bindings, shell/workspace overrides, ignored critical
-failures, and skipped verification/auth/upload steps.
+failures, matrix/reusable execution, credential references outside the exact
+upload input, and skipped verification/auth/upload steps. Recursive expression
+checks include job outputs, names, concurrency, checkout inputs, and nested
+step fields, including indexed, case-varied, or aggregate step references.
 It verifies executable dispatch, repository/ID/protected-main conditions,
 credential-free dependency, environment, scoped permissions, an unconditional
 full-SHA official auth action, and only the returned temporary upload token.
@@ -1320,7 +1349,9 @@ The automatic contract above replaces the former planned per-release
 maintainer-review policy. Protocol 0.2 keeps its approved manual release path;
 future reviewed source/version merges use the automatic path after observed
 onboarding. Protocol registration is owner-observed with the successful manual 0.2 run;
-its automatic source/environment transition remains pending. Renderer/toolkit registration remains pending owner actions; the dependency
+its automatic source/environment setup is observed, while automatic release
+activation remains pending. Renderer/toolkit registration remains pending owner
+actions; the dependency
 App is provisioned with workflow activation still pending.
 
 ## Crate dependency update App
@@ -1346,6 +1377,18 @@ values or local credential paths into inventory, logs, or public evidence. The
 secret value is not readable through GitHub's metadata API, and name presence
 cannot prove that a key is valid or effective. These observations do not grant
 workflow activation, bypass, self-approval, or self-merge authority.
+
+The value-free key lifecycle records creation and verification on 2026-10-11,
+consumer paths for both `released-dependencies.yml` workflows, and rotation
+owner `Atrinik organization owners`. Its 90-day internal rotation deadline is
+2027-01-09; this is not an upstream key expiry. Validation rejects missing,
+future, overdue, or over-cadence lifecycle dates. Rotate by issuing a replacement
+App key, verifying the App identity with it, securely updating only the two
+existing repository secret slots, and proving the owning PR-writing workflow.
+Revoke the old key after successful replacement proof; retain name-only evidence
+and update creation/verification/deadline metadata through reviewed source. If
+replacement proof fails, stop the writing workflows and preserve the old working
+key until the owner restores service or explicitly revokes it.
 
 The read-only verifier checks live installation identity, exact permissions,
 empty events, active state, selected repository identities, and credential

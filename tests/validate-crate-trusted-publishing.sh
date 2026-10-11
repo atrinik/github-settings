@@ -106,7 +106,7 @@ jq '.crates_io_trusted_publishing[0] |= (
 "${temporary}/bin/validate" >/dev/null
 reset_policy
 for filter in \
-  '.crates_io_trusted_publishing[0].environment_state = "observed"' \
+  '.crates_io_trusted_publishing[0] |= (.source_state="pending-reviewed-workflow" | .environment_state="observed")' \
   '.crates_io_trusted_publishing[0].publisher_registration = {state:"owner-observed-registration", observed_on:"2026-02-31", evidence_location:"atrinik/github-settings#owner-setup"}' \
   '.crates_io_trusted_publishing[0] |= (.source_state="observed-reviewed-workflow" | .environment_state="observed" | .publisher_registration={state:"owner-observed-registration",observed_on:"2099-01-01",evidence_location:"atrinik/github-settings#owner-setup"})'; do
   assert_rejected "${filter}"
@@ -119,6 +119,13 @@ jq '.crate_dependency_update_app |= (.status="owner-observed" | .app_id=85500002
 reset_policy
 for filter in \
   '.crate_dependency_update_app.permissions.administration = "write"' \
+  '.crate_dependency_update_app.consumers += ["atrinik/classic/.github/workflows/update-content.yml"]' \
+  '.crate_dependency_update_app.key_created_on = "2099-01-01"' \
+  '.crate_dependency_update_app.last_verified_on = null' \
+  '.crate_dependency_update_app.rotate_by = "2026-10-10"' \
+  '.crate_dependency_update_app.rotate_by = "2027-01-10"' \
+  '.crate_dependency_update_app.rotation_cadence_days = 365' \
+  '.crate_dependency_update_app.rotation_owner = "unknown"' \
   '.crate_dependency_update_app.events = ["push"]' \
   '.crate_dependency_update_app.webhook_active = true' \
   '.crate_dependency_update_app.homepage_url = "https://example.test"' \

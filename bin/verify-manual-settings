@@ -5,8 +5,11 @@ set -euo pipefail
 organization=${ATRINIK_ORGANIZATION:-atrinik}
 api_version=2026-03-10
 
-if (($#)); then
-  echo "usage: $0" >&2
+crate_setup_repository=
+if (($# == 2)) && [[ $1 == --crate-publication-setup ]]; then
+  crate_setup_repository=$2
+elif (($#)); then
+  echo "usage: $0 [--crate-publication-setup OWNER/REPOSITORY]" >&2
   exit 2
 fi
 
@@ -28,6 +31,13 @@ temporary=$(mktemp -d)
 trap 'rm -rf "${temporary}"' EXIT
 
 "${root}/bin/validate" >/dev/null
+if [[ -n ${crate_setup_repository} ]] && ! jq -e --arg repository "${crate_setup_repository}" '
+  [.crates_io_trusted_publishing[] | select(.repository == $repository and
+    .source_state == "observed-reviewed-workflow" and .environment_state == "observed")] | length == 1
+' "${manual_settings}" >/dev/null; then
+  echo "error: initial immutable selection requires observed qualified source/environment for ${crate_setup_repository}" >&2
+  exit 1
+fi
 
 github_api() {
   local operation=$1
@@ -281,6 +291,7 @@ verify_repository_identity() {
 }
 
 missing=0
+if [[ -z ${crate_setup_repository} ]]; then
 while IFS= read -r credential; do
   repository=$(jq -r '.repository' <<<"${credential}")
   repository_owner=${repository%%/*}
@@ -440,6 +451,7 @@ while IFS= read -r package_record; do
     echo "MANUAL ${repository} ${package_owner}/${package_name} read-only Actions access requires owner UI and owning workflow proof"
   fi
 done < <(jq -c '.github_packages_actions_access[]' "${manual_settings}")
+fi
 
 # Pending setup is not live activation. Every publisher still requires the
 # exact live repository, main ref, and protected-main identity.
@@ -487,7 +499,9 @@ while IFS= read -r crate_record; do
   if [[ $(jq -r '.publisher_registration.state' <<<"${crate_record}") == owner-observed-registration ]]; then
     echo "MANUAL ${repository} crates.io registration is owner-observed evidence only; GitHub metadata does not verify external registration"
   fi
-done < <(jq -c '.crates_io_trusted_publishing[]' "${manual_settings}")
+done < <(jq -c --arg repository "${crate_setup_repository}" '
+  .crates_io_trusted_publishing[] | select($repository == "" or .repository == $repository)
+' "${manual_settings}")
 
 while IFS= read -r environment_record; do
   repository=$(jq -r '.repository' <<<"${environment_record}")
@@ -632,14 +646,31 @@ while IFS= read -r environment_record; do
   fi
 
   echo "KEEP ${repository} environment ${environment} metadata"
-done < <(jq -c '
-  .github_actions_environments[],
+done < <(jq -c --arg repository "${crate_setup_repository}" '
+  (.github_actions_environments[] | select($repository == "")),
   (.crates_io_trusted_publishing[] | select(.environment_state == "observed") |
+    select($repository == "" or .repository == $repository) |
     . as $publisher | .environment |
     {repository: $publisher.repository, repository_id: $publisher.repository_id,
       environment: .name, deployment_branch_policy, required_reviewers,
       secret_names, variable_names, can_admins_bypass, wait_timer_minutes})
 ' "${manual_settings}")
+
+if [[ -n ${crate_setup_repository} ]]; then
+  final_branch=$(github_api "recheck ${crate_setup_repository} protected main" \
+    "repos/${crate_setup_repository}/branches/main")
+  final_ref=$(github_api "recheck ${crate_setup_repository} main revision" \
+    "repos/${crate_setup_repository}/git/ref/heads/main")
+  if ! jq -en --arg sha "${branch_sha}" --argjson branch "${final_branch}" --argjson ref "${final_ref}" '
+    $branch.name == "main" and $branch.protected == true and $branch.commit.sha == $sha and
+    $ref.ref == "refs/heads/main" and $ref.object.type == "commit" and $ref.object.sha == $sha
+  ' >/dev/null; then
+    echo "error: protected-main setup changed during ${crate_setup_repository} qualification" >&2
+    exit 1
+  fi
+  echo "KEEP ${crate_setup_repository} initial immutable selection setup qualified at ${branch_sha}; runtime release/registry operations remain separate"
+  exit 0
+fi
 
 installations_file=${temporary}/${organization}-installations.jsonl
 if load_paginated_metadata \

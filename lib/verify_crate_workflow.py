@@ -63,6 +63,33 @@ def critical_step(step, context):
             f"{context} must fail on execution errors")
 
 
+def job_execution_shape(job, context):
+    require(not any(key in job for key in ("strategy", "uses", "with", "secrets")),
+            f"{context} must be one ordinary job without matrix or reusable execution")
+
+
+def confined_step_references(job, upload_index=None):
+    """Whitelist the two reviewed step references, including expression casing/index variants."""
+    def visit(value, path=()):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                visit(key, path + ("mapping-key",))
+                visit(item, path + (key,))
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                visit(item, path + (index,))
+        elif isinstance(value, str):
+            if "${{" not in value or not re.search(r"\bsteps\b", value, flags=re.IGNORECASE):
+                return
+            token = (upload_index is not None and
+                     path == ("steps", upload_index, "env", "CARGO_REGISTRY_TOKEN") and
+                     value == "${{ steps.auth.outputs.token }}")
+            confirmation = (len(path) == 3 and path[0] == "steps" and path[2] == "if" and
+                            value == "${{ !cancelled() && (steps.upload.outcome == 'success' || steps.upload.outcome == 'failure') }}")
+            require(token or confirmation, "step references must not expose the authentication token outside validated upload")
+    visit(job)
+
+
 def helper_run(step, operation):
     if "if" in step or not isinstance(step.get("run"), str):
         return False
@@ -119,6 +146,8 @@ def verify(source, repository, repository_id):
     for name in (verify_name, publish_name):
         job = jobs.get(name)
         require(isinstance(job, dict), f"missing job {name}")
+        job_execution_shape(job, name)
+        require("outputs" not in job, f"{name} must not export credentials through job outputs")
         run_configuration(job, name)
         require(job.get("continue-on-error", "false") == "false",
                 f"{name} must fail on execution errors")
@@ -196,6 +225,7 @@ def verify(source, repository, repository_id):
             and helper_run(upload, "upload"),
             "upload must execute after auth with only the returned temporary token")
     for name in (verify_name, publish_name):
+        confined_step_references(jobs[name], upload_index if name == publish_name else None)
         require(jobs[name].get("env", {}).get("GH_READ_TOKEN") == "${{ github.token }}"
                 and "GH_INTENT_TOKEN" not in jobs[name].get("env", {})
                 and "GH_INTENT_TOKEN" not in workflow.get("env", {}),
@@ -265,6 +295,7 @@ def verify_source_release(source, repository):
     signers = []
     for name, job in jobs.items():
         require(isinstance(job, dict), "invalid source release job")
+        job_execution_shape(job, f"source {name}")
         permissions = job.get("permissions", workflow["permissions"])
         require(isinstance(permissions, dict), "invalid source permissions")
         if permissions.get("id-token", "none") != "none" or permissions.get("attestations", "none") != "none":

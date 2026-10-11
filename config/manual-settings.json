@@ -71,7 +71,7 @@
         "variable_names": [],
         "wait_timer_minutes": 0
       },
-      "environment_state": "pending",
+      "environment_state": "observed",
       "publisher_registration": {
         "state": "owner-observed-registration",
         "observed_on": "2026-10-11",
@@ -82,7 +82,7 @@
       "repository_id": 1327106950,
       "runbook": "README.md#automatic-crate-trusted-publishing",
       "source_evidence_policy": "github-attested-protected-main-manifest",
-      "source_state": "pending-reviewed-workflow",
+      "source_state": "observed-reviewed-workflow",
       "source_workflow_filename": "release.yml",
       "upload_intent_policy": "create-only-global-git-ref-before-upload",
       "workflow_filename": "publish-crate.yml",
@@ -130,7 +130,7 @@
         "variable_names": [],
         "wait_timer_minutes": 0
       },
-      "environment_state": "pending",
+      "environment_state": "observed",
       "publisher_registration": {
         "state": "pending-owner-registration",
         "observed_on": null,
@@ -141,7 +141,7 @@
       "repository_id": 1327106998,
       "runbook": "README.md#automatic-crate-trusted-publishing",
       "source_evidence_policy": "github-attested-protected-main-manifest",
-      "source_state": "pending-reviewed-workflow",
+      "source_state": "observed-reviewed-workflow",
       "source_workflow_filename": "release.yml",
       "upload_intent_policy": "create-only-global-git-ref-before-upload",
       "workflow_filename": "publish-crate.yml",
@@ -189,7 +189,7 @@
         "variable_names": [],
         "wait_timer_minutes": 0
       },
-      "environment_state": "pending",
+      "environment_state": "observed",
       "publisher_registration": {
         "state": "pending-owner-registration",
         "observed_on": null,
@@ -200,7 +200,7 @@
       "repository_id": 1327107043,
       "runbook": "README.md#automatic-crate-trusted-publishing",
       "source_evidence_policy": "github-attested-protected-main-manifest",
-      "source_state": "pending-reviewed-workflow",
+      "source_state": "observed-reviewed-workflow",
       "source_workflow_filename": "release.yml",
       "upload_intent_policy": "create-only-global-git-ref-before-upload",
       "workflow_filename": "publish-crate.yml",
@@ -467,6 +467,15 @@
   "crate_dependency_update_app": {
     "app_id": 5276152,
     "app_slug": "atrinik-crate-dependency-update",
+    "consumers": [
+      "atrinik/client/.github/workflows/released-dependencies.yml",
+      "atrinik/editor/.github/workflows/released-dependencies.yml"
+    ],
+    "key_created_on": "2026-10-11",
+    "last_verified_on": "2026-10-11",
+    "rotate_by": "2027-01-09",
+    "rotation_cadence_days": 90,
+    "rotation_owner": "Atrinik organization owners",
     "installation_id": 170332148,
     "status": "owner-observed",
     "repository_selection": "selected",

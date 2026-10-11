@@ -1236,6 +1236,31 @@ converge_immutable_release_policy() {
   return 1
 }
 
+preflight_new_crate_immutable_selection() {
+  local snapshot additions repository
+  ${apply} || return 0
+  snapshot=$(current_immutable_release_payload)
+  additions=$(jq -cn --argjson current "${snapshot}" \
+    --slurpfile desired "${immutable_releases_config}" '
+    if $current.enforced_repositories == "all" then []
+    elif $current.enforced_repositories == "none" then [$desired[0].repositories[].id]
+    else [$desired[0].repositories[].id] - $current.selected_repository_ids end
+  ')
+  while IFS= read -r repository; do
+    # These are the newly introduced library producers; Classic retains its
+    # existing separately qualified release policy. Missing manual records fail
+    # the scoped verifier rather than silently skipping qualification.
+    "${root}/bin/verify-manual-settings" --crate-publication-setup "${organization}/${repository}"
+  done < <(jq -r --argjson additions "${additions}" '
+    .repositories[] | select(.name | IN("protocol", "renderer", "content-toolkit")) |
+    select(.id as $id | $additions | index($id) != null) | .name
+  ' "${immutable_releases_config}")
+  if [[ $(current_immutable_release_payload) != "${snapshot}" ]]; then
+    echo "error: immutable-release policy changed during initial qualification; no broad apply performed" >&2
+    exit 1
+  fi
+}
+
 organization_metadata=$(github_api "orgs/${organization}")
 if ! jq -e 'type == "object" and (.plan.name | type == "string")' \
   <<<"${organization_metadata}" >/dev/null; then
@@ -1328,6 +1353,7 @@ done < <(
     "${immutable_releases_config}"
 )
 
+preflight_new_crate_immutable_selection
 converge_immutable_release_policy
 
 converge_organization_settings "${organization_metadata}"

@@ -144,16 +144,27 @@ signing from build/semantic-release OIDC, and keep automatic verify permissions
 read-only. The inert publisher alone adds contents write for the global
 crate/version upload intent and receives its intent token only in the upload
 step. Runtime certificate/source-run verification and create-only reservation
-readback precede upload; an existing/ambiguous intent blocks absent-version
+readback precede upload. Reject matrix/reusable execution in the automatic
+verify/publish and source package/sign/release jobs; recursively reject step
+references outside the exact upload-token input and confirmation condition. An
+existing/ambiguous intent blocks absent-version
 retries and is never automatically reset. Activate immutable-release policy
 only through the documented narrow snapshot/readback/verified-rollback window;
-do not broad-apply unrelated publisher-plan mutations. Dependency-update
+do not broad-apply unrelated publisher-plan mutations. Broad apply must qualify
+newly added live producer selections before its first mutation, with observed
+inventory and fresh scoped source/environment checks. Initial independently
+qualified draft-first code is sufficient for setup; actual immutable public
+release and registry proof remain later runtime obligations. Dependency-update
 App setup is client/editor only, exact contents/PR write and metadata read,
 repository credential names only, registry readiness before owned PR creation,
 and ordinary review/checks without auto-merge. Distinguish observed installation
 and credential-name provisioning from pending reviewed workflow activation and
 real successful-owned-PR proof; owner-authorized early setup does not prove
-effective secret values. Keep App-authenticated selected-set readback or owner
+effective secret values. Inventory exact workflow consumer paths, observed key
+creation/verification dates, rotation owner, and a deadline within 90 days of key
+creation; that internal deadline does not assert upstream expiry. Verify a
+replacement key in the owning writing workflow before revoking the old key.
+Keep App-authenticated selected-set readback or owner
 UI evidence, and do not infer the webhook switch from an empty event set.
 Private linux-build consumption needs separate client/editor-only read grants
 through owner UI. Keep exact private package/source identities and pending grant

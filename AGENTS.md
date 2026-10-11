@@ -132,7 +132,10 @@
   observations; verify live repository/ref/protection and observed environments.
   Parse both observed exact-main `publish-crate.yml` and `release.yml` structurally with the declared
   `requirements-validation.txt` dependency; comments/plain text or disabled
-  jobs are not executable source proof. External registration remains sanitized
+  jobs are not executable source proof. Reject matrix/reusable execution in the
+  two automatic and source package/sign/release jobs, and recursively confine
+  all step-context expressions to the exact returned upload-token input and
+  reviewed confirmation condition. External registration remains sanitized
   owner evidence, not a GitHub API fact, and can precede a pending later
   automatic source/environment transition.
   Source signing alone may request attestation writes/OIDC in a separate inert
@@ -145,7 +148,12 @@
   absent-version retries and must never be automatically deleted or reset.
   First owner-local API-token publication is limited to the fourteen declared
   renderer/toolkit libraries; exclude CLIs, revoke bootstrap credentials, and
-  use OIDC only afterward. Protocol 0.2 retains its approved manual path.
+  use OIDC only afterward. Protocol 0.2 retains its approved manual path. Before
+  any broad publisher apply mutation, qualify newly added live immutable
+  producer selections through fresh scoped source/environment verification;
+  pending/missing inventory or drift fails closed. Initial draft-first code
+  qualification is separate from later immutable-release/runtime proof, and
+  does not require a pre-existing immutable release.
 - Keep the crate dependency App separate from unrelated Apps. Select only
   client/editor, exactly contents/PR write and metadata read, no events,
   bypass or auto-merge; inventory names only for repository secret
@@ -156,7 +164,11 @@
   not imply effective credentials or a deployed workflow. Retain exact owner UI
   or supported App-authenticated repository-selection readback; empty events
   do not independently prove a disabled webhook. Preparation must verify
-  registry readiness before the isolated job writes an owned PR.
+  registry readiness before the isolated job writes an owned PR. Keep exact
+  consumer paths, verified key creation date, verification date, rotation owner,
+  and a rotate-by deadline within the existing 90-day cadence. The deadline is
+  internal policy, not upstream expiry; verify replacement workflow use before
+  revoking the old key.
 - Record GitHub Pages sites with stable repository identity, exact provider URL,
   HTTPS enforcement, owning deployment environment, desired Actions source,
   workflow path, and immutable deployment-action marker. Before that marker is

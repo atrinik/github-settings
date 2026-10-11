@@ -98,6 +98,9 @@ class WorkflowBoundaryTests(unittest.TestCase):
         token_references = (
             "${{ steps.auth.outputs.token }}",
             "${{ Steps.AUTH.outputs.token }}",
+            "${{ steps['auth'].outputs['token'] }}",
+            "${{ steps [ 'auth' ] . outputs [ 'token' ] }}",
+            "${{ format('}}{0}', steps.auth.outputs.token) }}",
             "${{ toJSON(steps) }}",
             "${{ steps[inputs.x].outputs.token }}",
             "${{ steps.auth.outputs.token }} ",
@@ -141,6 +144,9 @@ class WorkflowBoundaryTests(unittest.TestCase):
     def test_only_the_exact_upload_token_expression_is_allowed(self):
         variants = (
             "${{ Steps.AUTH.outputs.token }}",
+            "${{ steps['auth'].outputs['token'] }}",
+            "${{ steps [ 'auth' ] . outputs [ 'token' ] }}",
+            "${{ format('}}{0}', steps.auth.outputs.token) }}",
             "${{ toJSON(steps) }}",
             "${{ steps[inputs.x].outputs.token }}",
             "${{ steps.auth.outputs.token }} ",

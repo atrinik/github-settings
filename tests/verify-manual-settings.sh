@@ -6,6 +6,12 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 temporary=$(mktemp -d)
 trap 'rm -rf "${temporary}"' EXIT
 mkdir "${temporary}/bin"
+fixture_root=${temporary}/pending-fixture
+mkdir -p "${fixture_root}/bin"
+cp "${root}/bin/validate" "${root}/bin/verify-manual-settings" "${fixture_root}/bin/"
+cp -R "${root}/config" "${root}/community-health" "${root}/.github" "${root}/lib" "${fixture_root}/"
+jq '.crates_io_trusted_publishing[] |= (.source_state="pending-reviewed-workflow" | .environment_state="pending")' \
+  "${root}/config/manual-settings.json" >"${fixture_root}/config/manual-settings.json"
 
 cat >"${temporary}/bin/gh" <<'EOF'
 #!/usr/bin/env bash
@@ -754,7 +760,7 @@ chmod +x "${temporary}/bin/gh"
 
 run_verify() {
   local scenario=$1
-  local verification_root=${2:-${root}}
+  local verification_root=${2:-${fixture_root}}
 
   PATH="${temporary}/bin:${PATH}" \
     FAKE_GH_LOG="${temporary}/gh.log" \
@@ -783,12 +789,12 @@ for scenario in crate-repository-drift crate-unprotected crate-ref-drift \
 done
 observed_root=${temporary}/observed-crate
 mkdir -p "${observed_root}/bin"
-cp "${root}/bin/validate" "${root}/bin/verify-manual-settings" "${observed_root}/bin/"
+cp "${root}/bin/validate" "${fixture_root}/bin/verify-manual-settings" "${observed_root}/bin/"
 cp -R "${root}/config" "${root}/community-health" "${root}/.github" "${root}/lib" "${observed_root}/"
 jq '.crates_io_trusted_publishing[0] |= (
   .source_state = "observed-reviewed-workflow" | .environment_state = "observed" |
   .publisher_registration = {state:"owner-observed-registration",observed_on:"2026-08-31",
-    evidence_location:"atrinik/github-settings#owner-setup"})' "${root}/config/manual-settings.json" \
+    evidence_location:"atrinik/github-settings#owner-setup"})' "${fixture_root}/config/manual-settings.json" \
   >"${observed_root}/config/manual-settings.json"
 observed_output=$(run_verify present "${observed_root}")
 future_output=$(run_verify crate-workflow-future-pin "${observed_root}")
@@ -811,11 +817,12 @@ done
 
 planned_updater_root=${temporary}/planned-updater
 mkdir -p "${planned_updater_root}/bin"
-cp "${root}/bin/validate" "${root}/bin/verify-manual-settings" "${planned_updater_root}/bin/"
+cp "${root}/bin/validate" "${fixture_root}/bin/verify-manual-settings" "${planned_updater_root}/bin/"
 cp -R "${root}/config" "${root}/community-health" "${root}/.github" "${planned_updater_root}/"
 jq '.crate_dependency_update_app |= (.status="planned" | .app_id=null | .installation_id=null |
+      .key_created_on=null | .last_verified_on=null | .rotate_by=null |
   .repository_scope_verification="pending-owner-ui" | .observed_on=null | .evidence_location=null |
-  .credential_state="pending-name-metadata")' "${root}/config/manual-settings.json" \
+  .credential_state="pending-name-metadata")' "${fixture_root}/config/manual-settings.json" \
   >"${planned_updater_root}/config/manual-settings.json"
 if run_verify updater-present "${planned_updater_root}" >"${temporary}/updater-planned.out" 2>"${temporary}/updater-planned.err"; then
   echo "error: pending App accepted an unrecorded live installation" >&2
@@ -823,12 +830,12 @@ if run_verify updater-present "${planned_updater_root}" >"${temporary}/updater-p
 fi
 updater_root=${temporary}/observed-updater
 mkdir -p "${updater_root}/bin"
-cp "${root}/bin/validate" "${root}/bin/verify-manual-settings" "${updater_root}/bin/"
+cp "${root}/bin/validate" "${fixture_root}/bin/verify-manual-settings" "${updater_root}/bin/"
 cp -R "${root}/config" "${root}/community-health" "${root}/.github" "${updater_root}/"
 jq '.crate_dependency_update_app |= (.status="owner-observed" | .app_id=5276152 |
   .installation_id=170332148 | .repository_scope_verification="organization_owner_ui" |
   .observed_on="2026-08-31" | .evidence_location="atrinik/github-settings#owner-app")' \
-  "${root}/config/manual-settings.json" >"${updater_root}/config/manual-settings.json"
+  "${fixture_root}/config/manual-settings.json" >"${updater_root}/config/manual-settings.json"
 updater_output=$(run_verify updater-present "${updater_root}")
 grep -Fq 'KEEP atrinik/client crate dependency App credential name metadata' <<<"${updater_output}"
 grep -Fq 'KEEP atrinik/editor crate dependency App credential name metadata' <<<"${updater_output}"
@@ -894,7 +901,7 @@ grep -Fq 'page=2' "${temporary}/gh.log"
 
 environment_page_root=${temporary}/environment-page
 mkdir -p "${environment_page_root}/bin"
-cp "${root}/bin/validate" "${root}/bin/verify-manual-settings" \
+cp "${root}/bin/validate" "${fixture_root}/bin/verify-manual-settings" \
   "${environment_page_root}/bin/"
 cp -R "${root}/config" "${environment_page_root}/config"
 cp -R "${root}/community-health" "${environment_page_root}/community-health"
@@ -905,7 +912,7 @@ jq '
       name: ("branch-" + tostring),
       type: "branch"
     }] + [{name: "main", type: "branch"}])
-' "${root}/config/manual-settings.json" \
+' "${fixture_root}/config/manual-settings.json" \
   >"${environment_page_root}/config/manual-settings.json"
 : >"${temporary}/gh.log"
 output=$(PATH="${temporary}/bin:${PATH}" \
@@ -919,7 +926,7 @@ grep -Fq 'deployment-branch-policies?per_page=100&page=2' "${temporary}/gh.log"
 
 shared_root=${temporary}/shared-repository
 mkdir -p "${shared_root}/bin"
-cp "${root}/bin/validate" "${root}/bin/verify-manual-settings" \
+cp "${root}/bin/validate" "${fixture_root}/bin/verify-manual-settings" \
   "${shared_root}/bin/"
 cp -R "${root}/config" "${shared_root}/config"
 cp -R "${root}/community-health" "${shared_root}/community-health"
@@ -929,7 +936,7 @@ jq '
     .github_actions_credentials[0] |
     .secret_name = "SECOND_SETTINGS_TOKEN"
   ]
-' "${root}/config/manual-settings.json" \
+' "${fixture_root}/config/manual-settings.json" \
   >"${shared_root}/config/manual-settings.json"
 : >"${temporary}/gh.log"
 output=$(PATH="${temporary}/bin:${PATH}" \
@@ -1153,7 +1160,7 @@ fi
 if PATH="${temporary}/bin:${PATH}" \
   FAKE_GH_LOG="${temporary}/gh.log" FAKE_GH_SCENARIO=present \
   GITHUB_ACTIONS=true GH_TOKEN='' ATRINIK_VALIDATION_TODAY=2026-10-11 \
-  "${root}/bin/verify-manual-settings" \
+  "${fixture_root}/bin/verify-manual-settings" \
   >"${temporary}/empty.out" 2>"${temporary}/empty.err"; then
   echo "error: manual-settings verifier accepted an empty workflow credential" >&2
   exit 1
