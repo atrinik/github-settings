@@ -219,7 +219,10 @@ Rollout is owned by an organization administrator:
    revision. Synthetic merge revisions must bind the associated PR's base and
    head. CodeQL requires current-head coverage for every configured default-setup
    language plus policy minima. Classic instead requires its successful full
-   advanced producer and all current source-derived analysis partitions;
+   advanced producer and all current source-derived analysis partitions. The
+   advanced inventory independently requires Classic’s client, server, and core
+   C/C++, Python, and GitHub Actions scope/language pairs, so reducing producer
+   declarations or executed jobs cannot silently reduce required coverage;
    changed-path PR subsets cannot establish readiness. The bounded newest-first
    query stops once current coverage is proven; retired categories and old
    analysis history do not require manual cleanup.
@@ -801,7 +804,14 @@ publisher fails closed if a live repository ID differs from the inventory.
 Do not add a repository to `config/codeql-advanced-setup.json` merely because
 default setup needs tuning. The inventory is reserved for a reviewed advanced
 CodeQL workflow that needs repository-specific build, component, or path
-coverage. Both security configurations must remain identical except for their
+coverage. Its `required_partitions` records semantic scope/language minima,
+while the current producer owns display names and upload categories. Readiness
+reads literal partition declarations without executing repository Python and
+requires a distinct successful job and matching upload for every declaration,
+including additions. Changing action versions needs no coverage-inventory edit.
+Remove the matching minima when removing an advanced repository; an empty
+inventory with an empty minima object is valid. Both security configurations
+must remain identical except for their
 name, description, and `code_scanning_options.allow_advanced` value.
 
 Moving a repository to `archive` is an executable policy change: the next

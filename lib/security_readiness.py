@@ -686,6 +686,67 @@ def classifier_full_events(source):
     return set(events) & {"push", "schedule", "workflow_dispatch"}
 
 
+def advanced_partition_minima(policy, repository_name):
+    """Validate source-owned coverage even when preflight is called directly."""
+    inventories = policy.get("required_partitions")
+    if (not isinstance(inventories, dict) or set(inventories) != set(policy["repositories"])
+            or not isinstance(inventories.get(repository_name), list)
+            or not inventories[repository_name]):
+        raise EvidenceError("advanced CodeQL required partition inventory malformed/missing")
+    minima = set()
+    for item in inventories[repository_name]:
+        if (not isinstance(item, dict) or set(item) != {"scope", "language"}
+                or any(not isinstance(item[key], str)
+                       or not re.fullmatch(r"[a-z][a-z0-9+-]*", item[key]) for key in item)):
+            raise EvidenceError("advanced CodeQL required partition identity malformed")
+        identity = (item["scope"], canonical_language(item["language"]))
+        if identity in minima:
+            raise EvidenceError("advanced CodeQL required partition identity duplicated")
+        minima.add(identity)
+    return minima
+
+
+def classifier_partitions(source, minima):
+    """Inspect literal matrix declarations; never execute repository Python."""
+    tree = ast.parse(source)
+    functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                 and node.name == "write_outputs"]
+    require(len(functions) == 1, "advanced CodeQL partition declarations missing")
+    function = functions[0]
+    assignments = [node for node in ast.walk(function) if isinstance(node, ast.Name)
+                   and node.id == "entries" and isinstance(node.ctx, ast.Store)]
+    initializers = [node for node in function.body if isinstance(node, ast.Assign)
+                    and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+                    and node.targets[0].id == "entries" and isinstance(node.value, ast.List)
+                    and not node.value.elts]
+    require(len(assignments) == len(initializers) == 1,
+            "advanced CodeQL partition declaration shape unsupported")
+    declarations, identities, categories = {}, set(), set()
+    for node in ast.walk(function):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name) and node.func.value.id == "entries"):
+            continue
+        require(node.func.attr == "append" and len(node.args) == 1 and not node.keywords,
+                "advanced CodeQL partition declaration shape unsupported")
+        try:
+            item = ast.literal_eval(node.args[0])
+        except (ValueError, TypeError):
+            raise Deferred("advanced CodeQL partition declaration is not literal") from None
+        require(isinstance(item, dict) and set(item) == {"display", "category", "scope", "language", "run"}
+                and item["run"] is True and all(isinstance(item[key], str) and item[key]
+                    for key in ("display", "category", "scope", "language")),
+                "advanced CodeQL partition declaration malformed")
+        identity = (item["scope"], canonical_language(item["language"]))
+        require(item["display"] not in declarations and item["category"] not in categories
+                and identity not in identities, "advanced CodeQL partition declarations duplicated")
+        declarations[item["display"]] = item
+        categories.add(item["category"])
+        identities.add(identity)
+    require(bool(declarations) and minima <= identities,
+            "advanced CodeQL producer omits required partition coverage")
+    return declarations
+
+
 def latest_full_codeql_run(coordinate, branch, head, events):
     value = api(f"repos/{coordinate}/actions/workflows/codeql.yml/runs?head_sha={head}&per_page=100")
     candidates = [run for run in value["workflow_runs"] if run["event"] in events
@@ -697,7 +758,7 @@ def latest_full_codeql_run(coordinate, branch, head, events):
     return run
 
 
-def advanced_codeql(coordinate, branch, head, minima):
+def advanced_codeql(coordinate, branch, head, minima, partition_minima):
     sources = {}
     for path in (".github/workflows/codeql.yml", "tools/ci/classify_changes.py", "tools/ci/require_checks.py"):
         sources[path] = contents(coordinate, path, branch)
@@ -708,6 +769,7 @@ def advanced_codeql(coordinate, branch, head, minima):
                    "python3 tools/ci/require_checks.py optional", "${{ needs.classify.outputs.run }}",
                    "${{ needs.analyze.result }}"):
         require(marker in workflow, "advanced CodeQL workflow producer contract unsupported")
+    declarations = classifier_partitions(sources["tools/ci/classify_changes.py"], partition_minima)
     events = classifier_full_events(sources["tools/ci/classify_changes.py"])
     run = latest_full_codeql_run(coordinate, branch, head, events)
     jobs_endpoint = f"repos/{coordinate}/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs"
@@ -736,7 +798,8 @@ def advanced_codeql(coordinate, branch, head, minima):
         if match:
             require(match[1] not in selected, "advanced CodeQL analysis jobs duplicated")
             selected[match[1]] = job
-    require(bool(selected), "advanced CodeQL full run selected no analysis jobs")
+    require(set(selected) == set(declarations),
+            "advanced CodeQL full run does not cover every declared partition")
     found, categories, languages = set(), set(), set()
     for entries in newest_analysis_pages(coordinate, branch):
         for analysis in entries:
@@ -752,12 +815,16 @@ def advanced_codeql(coordinate, branch, head, minima):
             if display not in selected:
                 continue
             job = selected[display]
+            declaration = declarations[display]
             if analysis["created_at"] < job["started_at"]:
                 continue
             require(display not in found, "advanced CodeQL selected display has ambiguous upload categories")
             successful_analysis(analysis, head)
             category_language = re.search(r"(?:^|/)language:([a-z0-9+-]+)$", category)
-            require(environment.get("category") == category and category_language is not None
+            require(environment.get("category") == category == declaration["category"]
+                    and environment.get("scope") == declaration["scope"]
+                    and language == canonical_language(declaration["language"])
+                    and category_language is not None
                     and canonical_language(category_language[1]) == language
                     and job["started_at"] <= analysis["created_at"] <= job["completed_at"],
                     "advanced CodeQL analysis upload does not belong to selected full-run job")
@@ -777,7 +844,7 @@ def advanced_codeql(coordinate, branch, head, minima):
             for path, source in sources.items():
                 require(contents(coordinate, path, branch) == source,
                         "advanced CodeQL producer source changed during preflight")
-            return "current full-event CodeQL producer and every selected partition upload successful"
+            return "current full-event CodeQL producer covers policy minima and every declared partition upload"
     raise Deferred("required advanced CodeQL partition upload missing within bounded evidence")
 
 
@@ -789,9 +856,10 @@ def codeql(coordinate):
     require(bool(SHA.fullmatch(head)), "default-branch head missing")
     required = config("security-merge-protection.json")["codeql_required_languages"].get(
         coordinate.split('/')[1], [])
-    advanced = config("codeql-advanced-setup.json")["repositories"]
-    if coordinate.split('/')[1] in advanced:
-        reason = advanced_codeql(coordinate, branch, head, required)
+    advanced = config("codeql-advanced-setup.json")
+    if coordinate.split('/')[1] in advanced["repositories"]:
+        partition_minima = advanced_partition_minima(advanced, coordinate.split('/')[1])
+        reason = advanced_codeql(coordinate, branch, head, required, partition_minima)
     else:
         reason = default_codeql(coordinate, branch, head, [canonical_language(value) for value in required])
     require(api(branch_endpoint)["commit"]["sha"] == head, "default branch changed during CodeQL preflight")

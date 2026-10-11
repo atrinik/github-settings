@@ -1256,7 +1256,7 @@ cp -R "${root}/config" "${rollback_root}/config"
 cp -R "${root}/community-health" "${rollback_root}/community-health"
 mkdir -p "${rollback_root}/.github"
 cp -R "${root}/.github/workflows" "${rollback_root}/.github/workflows"
-jq '.repositories = []' \
+jq '.repositories = [] | .required_partitions = {}' \
   "${root}/config/codeql-advanced-setup.json" \
   >"${rollback_root}/config/codeql-advanced-setup.json"
 rollback_log=${temporary}/empty-inventory.jsonl

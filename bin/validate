@@ -272,7 +272,18 @@ jq -e \
 
 jq -e \
   --slurpfile repositories "${repositories_config}" '
-    (keys == ["repositories"]) and
+    (keys == ["repositories", "required_partitions"]) and
+    (.required_partitions | type == "object") and
+    ((.required_partitions | keys) == (.repositories | sort)) and
+    all(.required_partitions[];
+      type == "array" and length > 0 and
+      all(.[];
+        (keys == ["language", "scope"]) and
+        (.scope | type == "string" and test("^[a-z][a-z0-9+-]*$")) and
+        (.language | type == "string" and test("^[a-z][a-z0-9+-]*$"))
+      ) and
+      ((map([.scope, .language]) | length) == (map([.scope, .language]) | unique | length))
+    ) and
     (.repositories | type == "array") and
     ((.repositories | length) == (.repositories | unique | length)) and
     all(

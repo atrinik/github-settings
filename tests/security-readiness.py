@@ -75,12 +75,36 @@ jobs:
     name: CodeQL validation
     run: python3 tools/ci/require_checks.py optional '${{ needs.classify.outputs.run }}' '${{ needs.analyze.result }}'
 """
-CLASSIFIER = b"""FULL_EVENTS = {'push', 'schedule', 'workflow_dispatch', 'merge_group'}
+PARTITIONS = [
+    {"display": "C/C++ client", "scope": "client", "language": "c-cpp",
+     "category": "/partition:client/language:c-cpp", "run": True},
+    {"display": "C/C++ server", "scope": "server", "language": "c-cpp",
+     "category": "/partition:server/language:c-cpp", "run": True},
+    {"display": "C/C++ core", "scope": "core-cpp", "language": "c-cpp",
+     "category": "/partition:core/language:c-cpp", "run": True},
+    {"display": "Python", "scope": "python", "language": "python",
+     "category": "/partition:core/language:python", "run": True},
+    {"display": "GitHub Actions", "scope": "actions", "language": "actions",
+     "category": "/partition:core/language:actions", "run": True},
+]
+
+
+def classifier_source(partitions):
+    source = """FULL_EVENTS = {'push', 'schedule', 'workflow_dispatch', 'merge_group'}
 def main():
     if arguments.event in FULL_EVENTS:
         full = True
         paths = []
+def write_outputs(path, result, config):
+    entries = []
 """
+    for item in partitions:
+        source += f"    if result[{item['scope']!r}]:\n        entries.append({item!r})\n"
+    source += "    matrix = {'include': entries or [{'run': False, 'scope': 'union'}]}\n"
+    return source.encode()
+
+
+CLASSIFIER = classifier_source(PARTITIONS)
 
 
 def content(data):
@@ -230,7 +254,7 @@ class ReadinessTests(unittest.TestCase):
             "required_ci": {"example": ["Required checks", "Conventional PR title"]}}))
         (self.root / "config/security-merge-protection.json").write_text(json.dumps({
             "codeql_required_languages": {"example": ["rust"]}, "dependency_review": []}))
-        (self.root / "config/codeql-advanced-setup.json").write_text('{"repositories": []}')
+        (self.root / "config/codeql-advanced-setup.json").write_text('{"repositories": [], "required_partitions": {}}')
         self.fixture = Fixture()
         self.root_patch = patch.object(readiness, "ROOT", self.root)
         self.api_patch = patch.object(readiness, "api", self.fixture)
@@ -1099,16 +1123,19 @@ class ReadinessTests(unittest.TestCase):
         self.fixture.analyses.append(second)
         self.assertEqual(self.invoke("codeql")[0], 0)
 
-    def enable_advanced(self):
-        (self.root / "config/codeql-advanced-setup.json").write_text('{"repositories": ["example"]}')
+    def enable_advanced(self, partitions=None):
+        if partitions is None:
+            partitions = PARTITIONS
+        # The policy minimum remains independent of the producer declarations.
+        (self.root / "config/codeql-advanced-setup.json").write_text(json.dumps({
+            "repositories": ["example"], "required_partitions": {"example": [
+                {"scope": item["scope"], "language": item["language"]} for item in PARTITIONS]}}))
+        self.set_classifier_source(classifier_source(partitions))
         (self.root / "config/security-merge-protection.json").write_text('{"codeql_required_languages": {}}')
-        displays = [("C/C++ client", "client", "c-cpp"), ("C/C++ server", "server", "c-cpp"),
-                    ("C/C++ core", "core", "c-cpp"), ("Python", "core", "python"),
-                    ("GitHub Actions", "core", "actions")]
         self.fixture.analyses = []
         self.fixture.codeql_jobs = []
-        for index, (display, partition, language) in enumerate(displays):
-            category = f"/partition:{partition}/language:{language}"
+        for index, item in enumerate(partitions):
+            display, category, language = item["display"], item["category"], item["language"]
             job = {"id": index + 1, "name": f"CodeQL analysis ({display})", "head_sha": HEAD,
                    "status": "completed", "conclusion": "success",
                    "started_at": "2026-10-11T11:59:00Z", "completed_at": "2026-10-11T12:01:00Z"}
@@ -1116,13 +1143,93 @@ class ReadinessTests(unittest.TestCase):
             self.fixture.analyses.append({"id": index + 1, "tool": {"name": "CodeQL"},
                 "analysis_key": ".github/workflows/codeql.yml:analyze", "category": category,
                 "environment": json.dumps({"display": display, "category": category, "language": language,
-                                            "scope": partition, "run": ""}),
+                                            "scope": item["scope"], "run": ""}),
                 "commit_sha": HEAD, "ref": "refs/heads/main", "error": "", "rules_count": 58,
                 "created_at": "2026-10-11T12:00:00Z"})
         for name in ("CodeQL classification", "CodeQL validation"):
             job = copy.deepcopy(self.fixture.codeql_jobs[0])
             job.update(id=999, name=name, check_run_url="https://api.github.com/repos/atrinik/example/check-runs/999")
             self.fixture.codeql_jobs.append(job)
+
+    def set_classifier_source(self, source):
+        self.fixture.codeql_sources["tools/ci/classify_changes.py"] = source
+        self.fixture.codeql_head_sources["tools/ci/classify_changes.py"] = source
+
+    def test_codeql_advanced_reduced_source_and_jobs_below_policy_deferred(self):
+        self.enable_advanced(PARTITIONS[:1])
+        self.assert_deferred("codeql", "omits required partition coverage")
+
+    def test_codeql_advanced_reduced_jobs_with_full_source_deferred(self):
+        self.enable_advanced()
+        self.fixture.codeql_jobs = self.fixture.codeql_jobs[:1] + self.fixture.codeql_jobs[-2:]
+        self.fixture.analyses = self.fixture.analyses[:1]
+        self.assert_deferred("codeql", "every declared partition")
+
+    def test_codeql_advanced_additional_declared_partition_ready(self):
+        extra = {"display": "Extra C/C++", "scope": "extra", "language": "c-cpp",
+                 "category": "/partition:extra/language:c-cpp", "run": True}
+        self.enable_advanced(PARTITIONS + [extra])
+        self.assertEqual(self.invoke("codeql")[0], 0)
+
+    def test_codeql_advanced_additional_declaration_requires_job(self):
+        extra = {"display": "Extra C/C++", "scope": "extra", "language": "c-cpp",
+                 "category": "/partition:extra/language:c-cpp", "run": True}
+        self.enable_advanced(PARTITIONS + [extra])
+        del self.fixture.codeql_jobs[5]
+        self.assert_deferred("codeql", "every declared partition")
+
+    def test_codeql_advanced_category_rename_preserves_semantic_minimum(self):
+        partitions = copy.deepcopy(PARTITIONS)
+        partitions[0]["category"] = "/partition:client-renamed/language:c-cpp"
+        self.enable_advanced(partitions)
+        self.assertEqual(self.invoke("codeql")[0], 0)
+
+    def test_codeql_advanced_upload_matches_declared_scope_category_and_language(self):
+        for field, value in (("scope", "server"), ("category", "/other/language:c-cpp"),
+                             ("language", "python")):
+            with self.subTest(field=field):
+                self.enable_advanced()
+                analysis = self.fixture.analyses[0]
+                environment = json.loads(analysis["environment"])
+                environment[field] = value
+                analysis["environment"] = json.dumps(environment)
+                if field == "category":
+                    analysis["category"] = value
+                self.assert_deferred("codeql", "selected full-run job")
+
+    def test_codeql_advanced_duplicate_declarations_rejected(self):
+        for field in ("display", "category", "scope"):
+            with self.subTest(field=field):
+                partitions = copy.deepcopy(PARTITIONS)
+                partitions[1][field] = partitions[0][field]
+                self.enable_advanced(partitions)
+                self.assert_deferred("codeql", "declarations duplicated")
+
+    def test_codeql_advanced_nonliteral_declaration_deferred(self):
+        self.enable_advanced()
+        self.set_classifier_source(CLASSIFIER.replace(b"entries.append({", b"entries.append(dict(", 1))
+        self.assertEqual(self.invoke("codeql")[0], 2)  # Invalid Python is unreadable evidence.
+        self.set_classifier_source(CLASSIFIER + b"\n")
+        source = CLASSIFIER.replace(b"    matrix =", b"    entries.append(dynamic_partition)\n    matrix =")
+        self.set_classifier_source(source)
+        self.assert_deferred("codeql", "not literal")
+
+    def test_codeql_advanced_unsupported_matrix_mutation_deferred(self):
+        self.enable_advanced()
+        source = CLASSIFIER.replace(b"    matrix =", b"    entries.extend(extra)\n    matrix =")
+        self.set_classifier_source(source)
+        self.assert_deferred("codeql", "shape unsupported")
+
+    def test_codeql_advanced_missing_or_malformed_minima_unreadable(self):
+        for minima in (None, [], {}, [{"scope": "client"}],
+                       [{"scope": "client", "language": "c-cpp"}] * 2):
+            with self.subTest(minima=minima):
+                self.enable_advanced()
+                policy = {"repositories": ["example"], "required_partitions": {"example": minima}}
+                (self.root / "config/codeql-advanced-setup.json").write_text(json.dumps(policy))
+                self.assertEqual(self.invoke("codeql")[0], 2)
+        (self.root / "config/codeql-advanced-setup.json").write_text('{"repositories": ["example"]}')
+        self.assertEqual(self.invoke("codeql")[0], 2)
 
     def test_codeql_advanced_current_full_producer_all_partitions_ready(self):
         self.enable_advanced()
