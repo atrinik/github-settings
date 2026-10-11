@@ -1068,10 +1068,87 @@ converge_codeql_default_setup() {
   done
 }
 
+security_ruleset_matches() {
+  local template=$1 current=$2
+  jq -e --slurpfile desired "${template}" '
+    # GitHub returns the organization-owner sentinel with a null ID.
+    def normalize:
+      .bypass_actors |= (map(
+        if .actor_type == "OrganizationAdmin" and .actor_id == null then
+          .actor_id = 1
+        else . end) | sort_by(.actor_type, .actor_id, .bypass_mode));
+    normalize as $current |
+    all($desired[0] | normalize | to_entries[]; $current[.key] == .value)
+  ' <<<"${current}" >/dev/null
+}
+
+security_gate_applies_to_default_branch() {
+  local repository=$1 kind=$2 id=$3 metadata branch effective
+  metadata=$(github_api "repos/${organization}/${repository}") || return 1
+  jq -e --argjson id "${active_repository_ids["${repository}"]}" '
+    .id == $id and .archived == false and
+    (.default_branch | type == "string" and length > 0)
+  ' <<<"${metadata}" >/dev/null || return 1
+  branch=$(jq -r '.default_branch | @uri' <<<"${metadata}")
+  effective=$(github_api "repos/${organization}/${repository}/rules/branches/${branch}") || return 1
+  jq -e --argjson id "${id}" --arg kind "${kind}" '
+    any(.[]; .ruleset_id == $id and
+      if $kind == "code_scanning" then
+        .type == "code_scanning" and
+        any(.parameters.code_scanning_tools[]?; .tool == "CodeQL")
+      else
+        .type == "required_status_checks" and
+        any(.parameters.required_status_checks[]?;
+          .context == "Dependency review" and .integration_id == 15368)
+      end)
+  ' <<<"${effective}" >/dev/null
+}
+
+delete_removed_security_merge_rulesets() {
+  local repository kind template name existing rule id current metadata
+  for repository in "${active_repositories[@]}"; do
+    [[ -v active_repository_ids["${repository}"] ]] || continue
+    # The complete live inventory was checked against governed repositories
+    # before this function; archived repositories never enter this collection.
+    for kind in code_scanning dependency_review; do
+      if jq -e --arg kind "${kind}" --arg repository "${repository}" \
+        '.[$kind] | index($repository) != null' "${security_merge_config}" >/dev/null; then
+        continue
+      fi
+      if [[ ${kind} == code_scanning ]]; then
+        template=${root}/config/rulesets/code-scanning.json
+      else
+        template=${root}/config/rulesets/dependency-review.json
+      fi
+      name=$(jq -r '.name' "${template}")
+      existing=$(github_api "repos/${organization}/${repository}/rulesets?includes_parents=false")
+      while IFS= read -r rule; do
+        id=$(jq -r '.id' <<<"${rule}")
+        current=$(github_api "repos/${organization}/${repository}/rulesets/${id}")
+        if jq -e --argjson id "${id}" --arg source "${organization}/${repository}" '
+          .id == $id and .source_type == "Repository" and .source == $source
+        ' <<<"${current}" >/dev/null && security_ruleset_matches "${template}" "${current}"; then
+          metadata=$(github_api "repos/${organization}/${repository}")
+          if jq -e --argjson id "${active_repository_ids["${repository}"]}" '
+            .id == $id and .archived == false
+          ' <<<"${metadata}" >/dev/null; then
+            run_api DELETE "repos/${organization}/${repository}/rulesets/${id}"
+          else
+            echo "SKIP ${organization}/${repository} ${name}: repository identity or archive state changed; retained"
+          fi
+        else
+          echo "SKIP ${organization}/${repository} ${name}: unrecognized ownership or payload; retained"
+        fi
+      done < <(jq -c --arg name "${name}" '.[] | select(.name == $name)' <<<"${existing}")
+    done
+  done
+}
+
 # These repository rules remain repository-owned even in organization scope:
 # GitHub Team does not support organization-level code-scanning rules.
 publish_security_merge_rulesets() {
   local repository kind template name existing id current reason status readiness_mode
+  delete_removed_security_merge_rulesets
   for kind in code_scanning dependency_review; do
     if [[ ${kind} == code_scanning ]]; then
       template=${root}/config/rulesets/code-scanning.json
@@ -1098,32 +1175,13 @@ publish_security_merge_rulesets() {
       current='{}'
       if [[ -n ${id} ]]; then
         current=$(github_api "repos/${organization}/${repository}/rulesets/${id}")
-        if jq -e --slurpfile desired "${template}" '
-          # GitHub returns the organization-owner sentinel with a null ID.
-          def normalize:
-            .bypass_actors |= (map(
-              if .actor_type == "OrganizationAdmin" and .actor_id == null then
-                .actor_id = 1
-              else . end) | sort_by(.actor_type, .actor_id, .bypass_mode));
-          normalize as $current |
-          all($desired[0] | normalize | to_entries[]; $current[.key] == .value)
-        ' <<<"${current}" >/dev/null; then
+        if security_ruleset_matches "${template}" "${current}"; then
           echo "KEEP /repos/${organization}/${repository}/rulesets/${id} ${name}"
           continue
         fi
       fi
       # Preserve an already active gate when a later pull request fails it.
-      if ! jq -e --arg kind "${kind}" '
-        .enforcement == "active" and
-        if $kind == "code_scanning" then
-          any(.rules[]?; .type == "code_scanning" and
-            any(.parameters.code_scanning_tools[]?; .tool == "CodeQL"))
-        else
-          any(.rules[]?; .type == "required_status_checks" and
-            any(.parameters.required_status_checks[]?;
-              .context == "Dependency review" and .integration_id == 15368))
-        end
-      ' <<<"${current}" >/dev/null; then
+      if [[ -z ${id} ]] || ! security_gate_applies_to_default_branch "${repository}" "${kind}" "${id}"; then
         status=0
         reason=$("${root}/bin/security-readiness" "${readiness_mode}" \
           "${organization}/${repository}") || status=$?
@@ -1141,8 +1199,27 @@ publish_security_merge_rulesets() {
   done
 }
 
+validate_sha_canary_target() {
+  local canary=$1 owner repository number metadata
+  IFS=/ read -r owner repository number <<<"${canary}"
+  if [[ ${owner} != "${organization}" || ! ${number} =~ ^[1-9][0-9]*$ ||
+    ! ${repository} =~ ^[A-Za-z0-9_.-]+$ ]] ||
+    [[ ! -v active_repository_ids["${repository}"] ]]; then
+    echo "error: SHA canary must identify an active governed repository in ${organization}" >&2
+    return 1
+  fi
+  metadata=$(github_api "repos/${organization}/${repository}")
+  if ! jq -e --argjson id "${active_repository_ids["${repository}"]}" \
+    --arg name "${organization}/${repository}" '
+      .id == $id and .full_name == $name and .archived == false
+    ' <<<"${metadata}" >/dev/null; then
+    echo "error: SHA canary repository identity or archive state changed" >&2
+    return 1
+  fi
+}
+
 converge_actions_permissions() {
-  local current input reason
+  local current input reason phase canary
   current=$(github_api "orgs/${organization}/actions/permissions")
   if ! jq -e 'type == "object" and
     (.enabled_repositories | type == "string") and
@@ -1155,13 +1232,28 @@ converge_actions_permissions() {
   input=$(mktemp)
   temporary_files+=("${input}")
   cp "${root}/config/actions-permissions.json" "${input}"
+  phase=$(jq -r '.phase' "${root}/config/actions-sha-pinning.json")
+  canary=$(jq -r '.canary // empty' "${root}/config/actions-sha-pinning.json")
   if ! jq -e '.sha_pinning_required == true' <<<"${current}" >/dev/null; then
-    if [[ -n ${sha_pinning_canary} ]] &&
-      reason=$("${root}/bin/security-readiness" sha "${sha_pinning_canary}"); then
-      echo "READY SHA pinning: ${reason}"
+    if [[ ${phase} == enforced ]]; then
+      validate_sha_canary_target "${canary}" || return 1
+      if ! reason=$("${root}/bin/security-readiness" sha "${canary}"); then
+        echo "error: enforced SHA pinning cannot be restored: ${reason}" >&2
+        return 1
+      fi
+      echo "READY enforced SHA pinning: ${reason}"
     else
-      echo "PENDING SHA pinning: ${reason:-supply --sha-pinning-canary OWNER/REPOSITORY/PR after an ordinary action update passes CI}"
-      # Omit the field: pending evidence never enables or disables this setting.
+      if [[ -n ${sha_pinning_canary} ]]; then
+        validate_sha_canary_target "${sha_pinning_canary}" || return 1
+        if reason=$("${root}/bin/security-readiness" sha "${sha_pinning_canary}"); then
+          echo "READY canary evidence: ${reason}; source rollout phase remains pending"
+        else
+          echo "PENDING canary evidence: ${reason}"
+        fi
+      fi
+      echo "PENDING SHA pinning: promote the reviewed source rollout phase and accepted canary after readiness"
+      # Pending source never enables or disables SHA pinning, including when
+      # an optional command-line probe succeeds. Enforced source retains proof.
       jq 'del(.sha_pinning_required)' "${input}" >"${input}.pending"
       mv "${input}.pending" "${input}"
     fi
@@ -1173,6 +1265,29 @@ converge_actions_permissions() {
   else
     run_api PUT "orgs/${organization}/actions/permissions" "${input}"
   fi
+}
+
+converge_repository_workflow_permissions() {
+  local repository current
+  for repository in "${active_repositories[@]}"; do
+    [[ -v active_repository_ids["${repository}"] ]] || continue
+    current=$(github_api "repos/${organization}/${repository}/actions/permissions/workflow")
+    if ! jq -e 'type == "object" and
+      (.default_workflow_permissions | IN("read", "write")) and
+      (.can_approve_pull_request_reviews | type == "boolean")
+    ' <<<"${current}" >/dev/null; then
+      echo "error: cannot read repository workflow permissions: ${repository}" >&2
+      return 1
+    fi
+    if jq -e --slurpfile desired "${root}/config/actions-workflow.json" '
+      . as $current | all($desired[0] | to_entries[]; $current[.key] == .value)
+    ' <<<"${current}" >/dev/null; then
+      echo "KEEP /repos/${organization}/${repository}/actions/permissions/workflow"
+    else
+      run_api PUT "repos/${organization}/${repository}/actions/permissions/workflow" \
+        "${root}/config/actions-workflow.json"
+    fi
+  done
 }
 
 publish_organization_security() {
@@ -1487,6 +1602,8 @@ for repository in "${active_repositories[@]}"; do
   run_api PATCH "repos/${organization}/${repository}" \
     "${root}/config/repository-defaults.json"
 done
+
+converge_repository_workflow_permissions
 
 if [[ ${policy_scope} == organization ]]; then
   publish_organization_rulesets

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Read-only GitHub API double for the effective-governance audit tests."""
 import copy
+import fnmatch
 import json
 import os
 import sys
@@ -57,35 +58,69 @@ def rulesets(repository):
         specs.append(('pull-request-gate', None))
     if repository in repositories['required_ci']:
         specs.append(('required-ci', '03 - Required CI - ' + repository))
-    if repository in repositories['release_tags']:
+    if repository in repositories['release_tags'] or scenario in (
+            'inherited-tag-unaffected', 'tag-extra-nonrelease', 'tag-all-nonrelease', 'tag-repository-nonrelease'):
         specs.append(('immutable-release-tags', None))
     if repository in policy['code_scanning'] and scenario not in ('pending-codeql', 'ready-missing-codeql', 'codeql-readiness-unreadable'):
         specs.append(('code-scanning', None))
     if repository in policy['dependency_review'] and scenario not in ('pending', 'ready-missing', 'dependency-readiness-unreadable'):
         specs.append(('dependency-review', None))
+    if scenario == 'foreign-tag':
+        specs.append(('immutable-release-tags', 'Foreign tag retention'))
     result = []
     for index, (template, name) in enumerate(specs, 1):
         item = config('rulesets/' + template + '.json')
         if name:
             item['name'] = name
+        if template == 'required-ci':
             item['rules'][0]['parameters']['required_status_checks'] = [
                 {'context': context, 'integration_id': 15368}
                 for context in repositories['required_ci'][repository]]
         item.update(id=active.index(repository) * 10 + index,
-                    source_type='Repository' if scenario == 'repository-rulesets' else 'Organization')
+                    source_type='Repository' if scenario == 'repository-rulesets' or
+                    template in ('code-scanning', 'dependency-review') else 'Organization')
+        if scenario == 'tag-repository-nonrelease' and template == 'immutable-release-tags':
+            item['source_type'] = 'Repository'
         # Match GitHub's actual owner representation, including repository rulesets.
         for actor in item['bypass_actors']:
             if actor['actor_type'] == 'OrganizationAdmin':
                 actor['actor_id'] = None
         if scenario == 'owner-id-drift' and repository == 'observatory' and template == 'pull-request-gate':
             item['bypass_actors'][0]['actor_id'] = 2
-        item['conditions']['repository_name'] = {
-            'include': [repository], 'exclude': [], 'protected': False}
+        if item['source_type'] == 'Organization':
+            if template in ('default-branch-integrity', 'default-branch-linear-history'):
+                included = ['~ALL']
+                excluded = config('advisory-merge-windows.json')['repositories']
+            elif template == 'pull-request-gate':
+                windows = config('advisory-merge-windows.json')['repositories']
+                included = [name for name in repositories['pull_request_gate'] if name not in windows]
+                excluded = []
+            elif template == 'immutable-release-tags':
+                included, excluded = repositories['release_tags'], []
+            else:
+                included, excluded = [repository], []
+            item['conditions']['repository_name'] = {
+                'include': list(included), 'exclude': list(excluded), 'protected': False}
+        if scenario == 'scope-order' and 'repository_name' in item['conditions']:
+            item['conditions']['repository_name']['include'].reverse()
+            item['conditions']['repository_name']['exclude'].reverse()
+        if scenario == 'repository-scope-extra' and template == 'dependency-review':
+            item['conditions']['repository_name'] = {'include': ['~ALL'], 'exclude': [], 'protected': False}
+        if scenario in ('tag-all-scope', 'tag-all-nonrelease') and template == 'immutable-release-tags':
+            item['conditions']['repository_name']['include'] = ['~ALL']
+        if scenario in ('tag-extra-repo', 'tag-extra-nonrelease') and template == 'immutable-release-tags':
+            item['conditions']['repository_name']['include'].append('.github')
+        if scenario == 'tag-extra-exclude' and template == 'immutable-release-tags':
+            item['conditions']['repository_name']['exclude'] = ['foreign-repository']
+        if scenario == 'pr-all-scope' and template == 'pull-request-gate':
+            item['conditions']['repository_name']['include'] = ['~ALL']
+        if scenario == 'default-extra-exclude' and template == 'default-branch-integrity':
+            item['conditions']['repository_name']['exclude'].append('foreign-repository')
         # Keep inherited names while making actual targeting ineffective.
         if scenario == 'wrong-pr-scope' and repository == '.github' and template == 'pull-request-gate':
             item['conditions']['repository_name']['include'] = ['client']
         if scenario == 'pending-wrong-dependency-scope' and repository == 'observatory' and template == 'dependency-review':
-            item['conditions']['repository_name']['exclude'] = ['observatory']
+            item['conditions']['repository_name'] = {'include': ['observatory'], 'exclude': ['observatory'], 'protected': False}
         if scenario == 'missing-tag-scope' and repository == 'service-updater' and template == 'immutable-release-tags':
             item['conditions']['repository_name']['exclude'] = ['service-updater']
         if scenario == 'tag-ref-drift' and repository == 'service-updater' and template == 'immutable-release-tags':
@@ -131,7 +166,9 @@ elif endpoint.startswith('orgs/atrinik/actions/permissions'):
         reject('Actions read denied')
     payload = config(filename)
     if filename == 'actions-permissions.json':
-        payload['sha_pinning_required'] = scenario != 'pending'
+        payload['sha_pinning_required'] = scenario not in ('pending', 'sha-enforced-off', 'phase-unreadable')
+        if scenario == 'sha-invalid-type':
+            payload['sha_pinning_required'] = 'false'
         if scenario == 'sha-unreadable':
             del payload['sha_pinning_required']
     if filename == 'actions-workflow.json':
@@ -178,8 +215,10 @@ elif endpoint.startswith('repos/atrinik/'):
             reject('effective branch read denied')
         payload = []
         for item in rulesets(repository):
-            scope = item['conditions']['repository_name']
-            if item['target'] == 'branch' and repository in scope['include'] and repository not in scope['exclude']:
+            scope = item['conditions'].get('repository_name', {'include': [repository], 'exclude': []})
+            included = any(pattern == '~ALL' or fnmatch.fnmatchcase(repository, pattern) for pattern in scope['include'])
+            excluded = any(pattern == '~ALL' or fnmatch.fnmatchcase(repository, pattern) for pattern in scope['exclude'])
+            if item['target'] == 'branch' and included and not excluded:
                 payload.extend(copy.deepcopy(item['rules']))
         for rule in payload:
             if target and rule['type'] == 'required_status_checks':

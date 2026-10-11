@@ -226,6 +226,9 @@ if [[ ${method} != GET ]]; then
 fi
 
 case "${endpoint}|${jq_filter}" in
+repos/atrinik/*/actions/permissions/workflow\|*)
+  printf '{"default_workflow_permissions":"read","can_approve_pull_request_reviews":false}\n'
+  ;;
 "orgs/atrinik/actions/permissions|")
   printf '{"enabled_repositories":"all","allowed_actions":"selected","sha_pinning_required":false}\n'
   ;;

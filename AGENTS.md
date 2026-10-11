@@ -177,8 +177,16 @@
   New gates require read-only `bin/security-readiness` evidence for landed and
   successful producers; existing active gates survive later PR failures. Keep
   aggregate checks, zero approvals, and owner pull-request-only bypass intact.
-- Desired Actions SHA enforcement is staged behind `--sha-pinning-canary` proof
-  of an ordinary action-update PR passing current-head CI without an allowlist
-  edit. Missing evidence defers only that field; never disable an existing true
-  setting. Allow reviewed action names with `@*` so pin updates do not require
-  central allowlist edits. Keep full SHAs in producer workflows.
+- `config/actions-sha-pinning.json` persists SHA rollout as `pending` with no
+  canary or `enforced` with an accepted PR coordinate. Promote it through normal
+  source review only after ordinary PR-bound action-update evidence passes.
+  Pending command-line canaries only probe readiness; they never enable SHA
+  enforcement. Enforced policy uses its stored proof to restore drift and fails
+  if proof cannot be revalidated; audit reports disabled enforced policy as
+  drift. Preserve existing true settings. Allow action names with `@*`; keep
+  full SHAs in producer workflows instead of duplicate pin catalogs.
+- Existing security gates may waive initial producer readiness only when the
+  effective default-branch API proves the same ruleset and desired tool/context.
+  Retired targets lose only exact repository-owned managed security rules;
+  preserve archived, foreign, and modified same-name rules. Keep repository
+  workflow overrides read-only and unable to approve PRs, with delta-aware writes.

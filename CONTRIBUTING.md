@@ -134,6 +134,10 @@ gates require successful current-head analyses, including required languages.
 Keep existing gates active on later failures. Tests must cover missing/failed
 producers, unreadable evidence, archived targets, language unions, both scopes,
 and zero security mutations on a converged rerun. SHA enforcement must remain
-pending until the ordinary action-update canary proves successful current-head
-CI without an allowlist edit. Action allowances use owner/action wildcards;
+pending until an ordinary action-update canary proves successful PR-bound
+current-head CI without an allowlist edit and the persistent rollout source is
+promoted to `enforced` with that accepted PR. Later disabled enforcement is drift,
+not pending rollout; ordinary publication revalidates the recorded proof before
+restoring it. Test rule retirement, effective default-branch applicability, and
+repository workflow permission overrides. Action allowances use owner/action wildcards;
 full commit pins belong in workflows, not redundant version assertions.

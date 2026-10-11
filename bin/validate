@@ -70,6 +70,16 @@ jq -e --slurpfile repositories "${repositories_config}" \
 jq -e '.sha_pinning_required == true' \
   "${root}/config/actions-permissions.json" >/dev/null
 
+jq -e --slurpfile repositories "${repositories_config}" '
+  (keys == ["canary", "phase"]) and
+  if .phase == "pending" then .canary == null
+  elif .phase == "enforced" then
+    (.canary | type == "string" and test("^atrinik/[A-Za-z0-9_.-]+/[1-9][0-9]*$")) and
+    ((.canary | split("/")[1]) as $repository |
+      ($repositories[0].required_ci | has($repository)))
+  else false end
+' "${root}/config/actions-sha-pinning.json" >/dev/null
+
 for security_ruleset in code-scanning dependency-review; do
   jq -e '
     .target == "branch" and .enforcement == "active" and

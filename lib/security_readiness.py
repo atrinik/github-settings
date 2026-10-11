@@ -311,16 +311,24 @@ def pin_changes(before, after, selected):
     return changed
 
 
-def merge_check_run(coordinate, check, pr, merges):
-    if check["head_sha"] == pr["head"]["sha"]:
-        return True
-    if check["head_sha"] not in merges:
+def merge_check_run(coordinate, check, pr, merges, proofs):
+    """Establish PR association before selecting the latest check, even if failing."""
+    if check["head_sha"] != pr["head"]["sha"] and check["head_sha"] not in merges:
         return False
-    value = api(f"repos/{coordinate}/actions/runs?check_suite_id={check['check_suite']['id']}&per_page=1")
-    runs = value["workflow_runs"]
-    return bool(len(runs) == 1 and runs[0]["event"] == "pull_request"
-                and runs[0]["head_sha"] == pr["head"]["sha"]
-                and any(item["number"] == pr["number"] for item in runs[0]["pull_requests"]))
+    suite_id = check["check_suite"]["id"]
+    if suite_id not in proofs:
+        endpoint = f"repos/{coordinate}/actions/runs?check_suite_id={suite_id}&per_page=1"
+        value = api(endpoint)
+        runs = value["workflow_runs"]
+        valid = bool(len(runs) == 1 and runs[0]["event"] == "pull_request"
+                     and runs[0]["head_sha"] == pr["head"]["sha"]
+                     and runs[0]["check_suite_id"] == suite_id
+                     and any(item["number"] == pr["number"]
+                             and item["head"]["sha"] == pr["head"]["sha"]
+                             and item["base"]["ref"] == pr["base"]["ref"]
+                             for item in runs[0]["pull_requests"]))
+        proofs[suite_id] = {"endpoint": endpoint, "run": runs[0] if valid else None}
+    return proofs[suite_id]["run"] is not None
 
 
 def sha(coordinate, number):
@@ -384,15 +392,44 @@ def sha(coordinate, number):
     for ref in [pr["head"]["sha"], *sorted(merges)]:
         checks.extend(pages(f"repos/{coordinate}/commits/{ref}/check-runs?filter=all&app_id={ACTION_APP}",
                             "check_runs"))
+    proofs, selected_checks = {}, []
     for context in required:
         candidates = [check for check in checks if check["name"] == context
                       and check["app"]["id"] == ACTION_APP
                       and check["app"]["slug"] == "github-actions"
-                      and merge_check_run(coordinate, check, pr, merges)]
+                      and merge_check_run(coordinate, check, pr, merges, proofs)]
         require(bool(candidates), f"required check missing for canary head: {context}")
-        latest = max(candidates, key=lambda check: (check.get("started_at") or "", check["id"]))
+        # Check IDs order creation, including queued checks with no started_at.
+        # Scheduling/start time must not let an older green check hide a newer
+        # PR-associated check or suite that has not completed successfully.
+        latest = max(candidates, key=lambda check: check["id"])
+        run = proofs[latest["check_suite"]["id"]]["run"]
+        require(run["status"] == "completed" and run["conclusion"] == "success",
+                f"required PR workflow run not successful for canary head: {context}")
         require(latest["status"] == "completed" and latest["conclusion"] == "success",
                 f"required check not successful for canary head: {context}")
+        selected_checks.append(latest)
+    run_keys = ("id", "run_attempt", "event", "head_sha", "check_suite_id", "status", "conclusion",
+                "pull_requests")
+    check_keys = ("id", "name", "head_sha", "status", "conclusion", "app", "check_suite", "started_at")
+    fresh_checks = []
+    for ref in [pr["head"]["sha"], *sorted(merges)]:
+        fresh_checks.extend(pages(f"repos/{coordinate}/commits/{ref}/check-runs?filter=all&app_id={ACTION_APP}",
+                                  "check_runs"))
+    def check_snapshot(values):
+        return sorted(json.dumps({key: check[key] for key in check_keys}, sort_keys=True)
+                      for check in values if check["name"] in required)
+    require(check_snapshot(fresh_checks) == check_snapshot(checks),
+            "canary required check collection changed during preflight")
+    for suite_id in {check["check_suite"]["id"] for check in selected_checks}:
+        proof = proofs[suite_id]
+        fresh_runs = api(proof["endpoint"])["workflow_runs"]
+        require(len(fresh_runs) == 1 and all(fresh_runs[0][key] == proof["run"][key] for key in run_keys),
+                "canary PR workflow-run evidence changed during preflight")
+    for check in selected_checks:
+        fresh_check = api(f"repos/{coordinate}/check-runs/{check['id']}")
+        require(all(fresh_check[key] == check[key] for key in check_keys),
+                "canary required check evidence changed during preflight")
     fresh = api(f"repos/{coordinate}/pulls/{number}")
     require(fresh["head"]["sha"] == pr["head"]["sha"]
             and fresh["base"]["sha"] == pr["base"]["sha"]

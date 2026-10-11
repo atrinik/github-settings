@@ -104,7 +104,9 @@ read-only and are skipped on later runs.
 - GitHub Actions defaults to read-only, cannot approve pull requests, and may
   use only Atrinik, GitHub, Codecov coverage, explicitly allowed Docker
   actions, and `rust-lang/crates-io-auth-action@*`. Workflow references remain
-  full commit SHAs; the action allowlist permits routine pin updates.
+  full commit SHAs; the action allowlist permits routine pin updates. The
+  publisher also restores per-repository workflow permission overrides to
+  read-only with PR approvals disabled, applying only real drift.
 - Historical repositories listed in `config/repositories.json` are archived.
   The five former standalone classic component repositories are already
   archived read-only after their history, active work, issues, and release
@@ -217,14 +219,28 @@ Rollout is owned by an organization administrator:
    remain enforced even when a later PR fails a security check. Scope migrations
    preserve these repository-owned gates. A converged security gate or language
    configuration causes no mutation or security-configuration reattachment.
-4. Desired organization `sha_pinning_required` is true, but the publisher omits
-   this field until an ordinary action-pin update PR passes CI without allowlist
-   edits. Verify it using `bin/security-readiness sha OWNER/REPOSITORY/PR`, then
-   pass `--sha-pinning-canary OWNER/REPOSITORY/PR` to the reviewed plan/apply.
-   The verifier checks live allowance, exact PR changes, and successful current
-   PR-head CI. Missing or failed evidence defers SHA enforcement while the other
-   controls converge; a live true setting is always preserved. Full SHA pinning
-   is not a claim that an allowed action itself is trustworthy.
+   Moving a rule from another branch onto the default branch requires fresh
+   producer proof; only an already effective gate with the same tool or
+   dependency context can retain protection after a later producer failure.
+   Retiring a target removes its required-CI and security inventory entries
+   together. The publisher removes only matching repository-owned security
+   rules from active retired targets, preserving foreign or modified same-name
+   rules for explicit review and leaving archived repositories untouched.
+4. Desired organization `sha_pinning_required` is true. Its durable rollout
+   contract is `config/actions-sha-pinning.json`: the initial `pending` phase
+   has no accepted canary and never enables the field. Verify an ordinary
+   action-pin update PR with `bin/security-readiness sha OWNER/REPOSITORY/PR`.
+   The optional publisher `--sha-pinning-canary` argument only reports readiness
+   while pending. After successful PR evidence, promote the source to
+   `{"phase":"enforced","canary":"OWNER/REPOSITORY/PR"}` through the normal
+   review and merge process before the first separately authorized live apply.
+   This records the accepted PR, with no duplicate action-version inventory.
+   The verifier checks live allowance, exact PR changes, and successful PR-bound
+   current-head CI. Ordinary subsequent publication uses that stored canary,
+   revalidates it and restores a disabled setting. Unreadable or failed evidence
+   blocks restoration with an error; the audit reports disabled enforced policy
+   as drift, never as initial rollout pending. A live true setting is always
+   preserved. Full SHA pinning does not prove an allowed action is trustworthy.
 
 Read-only preflight failures and unfinished producers are explicit pending
 controls, never successful rollout evidence. The audit reports pending controls

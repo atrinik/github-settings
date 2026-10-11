@@ -105,6 +105,7 @@ class Fixture:
                     "conclusion": "success", "head_sha": HEAD, "check_suite_id": 99,
                     "pull_requests": [{"number": 12, "head": {"sha": HEAD},
                                        "base": {"sha": BASE, "ref": "main"}}]}
+        self.suite_runs = {}
         self.suite = {"id": 99, "head_sha": MERGE, "status": "completed", "conclusion": "success",
                       "app": {"id": 15368}, "pull_requests": copy.deepcopy(self.run["pull_requests"])}
         self.jobs = [{"name": "Dependency review", "status": "completed", "conclusion": "success"}]
@@ -154,6 +155,13 @@ class Fixture:
             return {"total_count": len(self.codeql_jobs), "jobs": copy.deepcopy(self.codeql_jobs)}
         if endpoint.endswith("/check-runs/999"):
             return copy.deepcopy(self.codeql_check)
+        if "/check-runs/" in endpoint:
+            identifier = int(endpoint.rsplit("/", 1)[1])
+            for checks in self.checks.values():
+                for current in checks:
+                    if current["id"] == identifier:
+                        return copy.deepcopy(current)
+            raise AssertionError("Unexpected check identity: " + endpoint)
         if "/actions/workflows/dependency-review.yml/runs" in endpoint:
             return {"workflow_runs": [copy.deepcopy(self.run)]}
         if "/attempts/2/jobs" in endpoint:
@@ -167,8 +175,9 @@ class Fixture:
         if "/check-runs?" in endpoint:
             values = copy.deepcopy(self.checks[endpoint.split("/commits/")[1].split("/")[0]])
             return {"total_count": len(values), "check_runs": values}
-        if "/actions/runs?check_suite_id=99" in endpoint:
-            return {"workflow_runs": [copy.deepcopy(self.run)]}
+        if "/actions/runs?check_suite_id=" in endpoint:
+            suite_id = int(parse_qs(urlparse(endpoint).query)["check_suite_id"][0])
+            return {"workflow_runs": [copy.deepcopy(self.suite_runs.get(suite_id, self.run))]}
         if "/actions/runs?event=pull_request&head_sha=" in endpoint:
             return {"total_count": 1, "workflow_runs": [copy.deepcopy(self.run)]}
         if "/check-suites/99" in endpoint:
@@ -476,6 +485,106 @@ class ReadinessTests(unittest.TestCase):
     def test_sha_wrong_head_check_rejected(self):
         self.fixture.checks[HEAD][0]["head_sha"] = OLD
         self.assert_deferred("sha", "missing")
+
+    def test_sha_direct_head_push_checks_rejected(self):
+        self.fixture.run["event"] = "push"
+        self.assert_deferred("sha", "missing")
+
+    def test_sha_direct_head_workflow_dispatch_checks_rejected(self):
+        self.fixture.run["event"] = "workflow_dispatch"
+        self.assert_deferred("sha", "missing")
+
+    def test_sha_direct_head_unrelated_pr_checks_rejected(self):
+        self.fixture.run["pull_requests"][0]["number"] = 100
+        self.assert_deferred("sha", "missing")
+
+    def test_sha_direct_head_wrong_suite_checks_rejected(self):
+        self.fixture.run["check_suite_id"] = 100
+        self.assert_deferred("sha", "missing")
+
+    def test_sha_direct_head_stale_run_checks_rejected(self):
+        self.fixture.run["head_sha"] = OLD
+        self.assert_deferred("sha", "missing")
+
+    def test_sha_direct_head_failed_workflow_run_rejected(self):
+        self.fixture.run["conclusion"] = "failure"
+        self.assert_deferred("sha", "workflow run not successful")
+
+    def add_newer_pr_check(self, check_status="completed", check_conclusion="success",
+                           run_status="completed", run_conclusion="success"):
+        newer = check("Required checks", identifier=50, status=check_status, conclusion=check_conclusion)
+        newer["started_at"] = "2026-10-11T12:01:00Z"
+        newer["check_suite"]["id"] = 100
+        self.fixture.checks[HEAD].append(newer)
+        run = copy.deepcopy(self.fixture.run)
+        run.update(id=20, check_suite_id=100, status=run_status, conclusion=run_conclusion)
+        self.fixture.suite_runs[100] = run
+
+    def test_sha_newer_failing_pr_suite_does_not_hide_behind_older_green_suite(self):
+        self.add_newer_pr_check(check_conclusion="failure", run_conclusion="failure")
+        self.assert_deferred("sha", "workflow run not successful")
+
+    def test_sha_newer_pending_pr_suite_does_not_hide_behind_older_green_suite(self):
+        self.add_newer_pr_check(check_status="queued", check_conclusion=None,
+                               run_status="queued", run_conclusion=None)
+        self.assert_deferred("sha", "workflow run not successful")
+
+    def test_sha_newer_queued_null_start_pr_suite_blocks_older_green_suite(self):
+        self.add_newer_pr_check(check_status="queued", check_conclusion=None,
+                               run_status="queued", run_conclusion=None)
+        self.fixture.checks[HEAD][-1]["started_at"] = None
+        self.assert_deferred("sha", "workflow run not successful")
+
+    def test_sha_newer_queued_null_start_check_blocks_older_green_in_same_suite(self):
+        newer = check("Required checks", identifier=50, status="queued", conclusion=None)
+        newer["started_at"] = None
+        self.fixture.checks[HEAD].append(newer)
+        self.assert_deferred("sha", "required check not successful")
+
+    def test_sha_older_check_starting_later_does_not_hide_newer_failure(self):
+        self.add_newer_pr_check(check_conclusion="failure", run_conclusion="failure")
+        self.fixture.checks[HEAD][0]["started_at"] = "2026-10-11T12:02:00Z"
+        self.assert_deferred("sha", "workflow run not successful")
+
+    def test_sha_newer_green_check_in_failed_pr_run_does_not_hide_behind_older_green_suite(self):
+        self.add_newer_pr_check(run_conclusion="failure")
+        self.assert_deferred("sha", "workflow run not successful")
+
+    def test_sha_direct_head_run_drift_at_completion_deferred(self):
+        calls = 0
+        def drift(endpoint):
+            nonlocal calls
+            value = self.fixture(endpoint)
+            if "/actions/runs?check_suite_id=99" in endpoint:
+                calls += 1
+                if calls > 1:
+                    value["workflow_runs"][0]["run_attempt"] += 1
+            return value
+        with patch.object(readiness, "api", drift):
+            self.assert_deferred("sha", "workflow-run evidence changed")
+
+    def test_sha_direct_head_check_drift_at_completion_deferred(self):
+        def drift(endpoint):
+            value = self.fixture(endpoint)
+            if endpoint.endswith("/check-runs/1"):
+                value["conclusion"] = "failure"
+            return value
+        with patch.object(readiness, "api", drift):
+            self.assert_deferred("sha", "required check evidence changed")
+
+    def test_sha_new_required_check_at_completion_deferred(self):
+        calls = 0
+        def drift(endpoint):
+            nonlocal calls
+            value = self.fixture(endpoint)
+            if f"/commits/{HEAD}/check-runs?" in endpoint:
+                calls += 1
+                if calls > 1:
+                    value["check_runs"].append(check("Required checks", identifier=50, conclusion="failure"))
+                    value["total_count"] += 1
+            return value
+        with patch.object(readiness, "api", drift):
+            self.assert_deferred("sha", "required check collection changed")
 
     def test_sha_wrong_app_check_rejected(self):
         self.fixture.checks[HEAD][0]["app"]["id"] = 1

@@ -183,9 +183,15 @@ audit_actions() {
     fi
     if [[ ${policy} == permissions ]] &&
       jq -e '.sha_pinning_required == true' "${config}" >/dev/null; then
-      case $(jq -r '.sha_pinning_required | tostring' <<<"${current}") in
+      case $(jq -r '.sha_pinning_required | if type == "boolean" then tostring else "unreadable" end' <<<"${current}") in
         true) ;;
-        false) pending+=("Actions SHA pinning deferred pending canary proof: ${organization}") ;;
+        false)
+          case $(jq -r '.phase' "${root}/config/actions-sha-pinning.json") in
+            pending) pending+=("Actions SHA pinning deferred pending canary proof: ${organization}") ;;
+            enforced) record_finding "Actions SHA pinning enforcement drift: ${organization}" ;;
+            *) record_finding "Actions SHA pinning rollout phase could not be read: ${organization}" ;;
+          esac
+          ;;
         *) record_finding "Actions SHA pinning state could not be read: ${organization}" ;;
       esac
     fi
@@ -196,30 +202,39 @@ audit_actions
 
 # The branch endpoint proves effective applicability; inherited names alone do not.
 # Details additionally prove bypass and ref/repository scope, including tag policy.
-ruleset_targets_repository() {
-  local detail=$1 repository=$2 id=$3 pattern matched=false
-  if jq -e '.conditions.repository_id != null' <<<"${detail}" >/dev/null; then
-    jq -e --argjson id "${id}" '.conditions.repository_id.repository_ids | index($id) != null' \
-      <<<"${detail}" >/dev/null || return 1
-  fi
-  if jq -e '.conditions.repository_name != null' <<<"${detail}" >/dev/null; then
-    while IFS= read -r pattern; do
-      # Intentional GitHub repository-name wildcard matching.
-      # shellcheck disable=SC2053
-      if [[ ${pattern} == '~ALL' || ${repository} == ${pattern} ]]; then matched=true; fi
-    done < <(jq -r '.conditions.repository_name.include[]' <<<"${detail}")
-    ${matched} || return 1
-    while IFS= read -r pattern; do
-      # Intentional GitHub repository-name wildcard matching.
-      # shellcheck disable=SC2053
-      if [[ ${pattern} == '~ALL' || ${repository} == ${pattern} ]]; then return 1; fi
-    done < <(jq -r '.conditions.repository_name.exclude[]' <<<"${detail}")
-  fi
+# Match the entire publisher-owned repository scope. Being included in a wider
+# scope does not prove convergence: a widened tag rule can constrain services
+# with no release contract. Repository-level rulesets have only ref conditions.
+organization_ruleset_scope() {
+  local name=$1 repository=$2
+  jq -cn --arg name "${name}" --arg repository "${repository}" \
+    --slurpfile repositories "${repositories_config}" \
+    --slurpfile windows "${advisory_windows}" \
+    --slurpfile security "${root}/config/security-merge-protection.json" '
+    {include: [], exclude: [], protected: false} |
+    if $name == "01 - Default branch integrity" or
+      $name == "01 - Default branch linear history" then
+      .include = ["~ALL"] | .exclude = $windows[0].repositories
+    elif $name == "01 - Default branch integrity - classic" or
+      $name == "01 - Default branch linear history - classic" or
+      $name == "02 - Changes through pull requests - classic" then
+      .include = ["classic"]
+    elif $name == "02 - Changes through pull requests" then
+      .include = ($repositories[0].pull_request_gate - $windows[0].repositories)
+    elif ($name | startswith("03 - Required CI - ")) then
+      .include = [$repository]
+    elif $name == "04 - Immutable release tags" then
+      .include = $repositories[0].release_tags
+    elif $name == "06 - CodeQL security" then
+      .include = $security[0].code_scanning
+    elif $name == "07 - Dependency review" then
+      .include = $security[0].dependency_review
+    else error("unknown managed ruleset scope") end'
 }
 
 check_ruleset() {
-  local repository=$1 name=$2 template=$3 list=$4 metadata=$5
-  local entry id source endpoint detail wanted
+  local repository=$1 name=$2 template=$3 list=$4
+  local entry id source endpoint detail wanted scope
   entry=$(jq -c --arg name "${name}" '[.[] | select(.name == $name)]' <<<"${list}")
   if [[ $(jq length <<<"${entry}") != 1 ]]; then
     record_finding "missing or duplicate inherited ruleset '${name}': ${organization}/${repository}"
@@ -232,6 +247,11 @@ check_ruleset() {
     Repository) endpoint="repos/${organization}/${repository}/rulesets/${id}" ;;
     *) record_finding "ruleset source could not be read '${name}': ${organization}/${repository}"; return ;;
   esac
+  if [[ ${name} == '04 - Immutable release tags' && ${source} == Repository ]] &&
+    ! has_release_tags "${repository}"; then
+    record_finding "unexpected managed release-tag protection: ${organization}/${repository}"
+    return
+  fi
   if [[ ! -v ruleset_cache["${endpoint}"] ]]; then
     if ! detail=$(github_api "${endpoint}"); then
       record_finding "ruleset contents could not be read '${name}': ${organization}/${repository}"
@@ -251,15 +271,21 @@ check_ruleset() {
     "${advisory_windows}" >/dev/null && [[ ${name} == '03 - Required CI - '* ]]; then
     wanted=$(jq '.bypass_actors[].bypass_mode = "always"' <<<"${wanted}")
   fi
-  if ! ruleset_targets_repository "${detail}" "${repository}" "$(jq -r .id "${metadata}")" ||
-    ! jq -e --argjson wanted "${wanted}" '
+  if [[ ${source} == Organization ]]; then
+    scope=$(organization_ruleset_scope "${name}" "${repository}")
+    wanted=$(jq --argjson scope "${scope}" '.conditions.repository_name = $scope' <<<"${wanted}")
+  fi
+  if ! jq -e --argjson wanted "${wanted}" '
       # GitHub returns null for OrganizationAdmin, whose desired actor ID is 1.
       def normalize_bypass:
         map(if .actor_type == "OrganizationAdmin" and .actor_id == null then
           .actor_id = 1 else . end) | sort_by(.actor_type, .actor_id, .bypass_mode);
+      def normalize_conditions:
+        with_entries(if .key == "ref_name" or .key == "repository_name" then
+          .value.include |= sort | .value.exclude |= sort else . end);
       .enforcement == $wanted.enforcement and .target == $wanted.target and
       (.bypass_actors | normalize_bypass) == ($wanted.bypass_actors | normalize_bypass) and
-      .conditions.ref_name == $wanted.conditions.ref_name and
+      (.conditions | normalize_conditions) == ($wanted.conditions | normalize_conditions) and
       (.rules | map(if .type == "required_status_checks" then
         .parameters.required_status_checks |= sort_by(.context, .integration_id) else . end) | sort_by(.type)) ==
         ($wanted.rules | map(if .type == "required_status_checks" then
@@ -439,7 +465,11 @@ for repository in "${!expected_active[@]}"; do
     check_ruleset "${repository}" "03 - Required CI - ${repository}" \
       "${root}/config/rulesets/required-ci.json" "${rulesets}" "${metadata_file}"
   fi
-  if has_release_tags "${repository}"; then
+  # Parent listings can contain correctly scoped but nonapplicable rulesets.
+  # Inspect the exact managed name on nonrelease repositories too, so widening
+  # its complete scope fails while foreign, unmanaged tag rules remain unowned.
+  if has_release_tags "${repository}" ||
+    jq -e 'any(.[]; .name == "04 - Immutable release tags")' <<<"${rulesets}" >/dev/null; then
     check_ruleset "${repository}" '04 - Immutable release tags' \
       "${root}/config/rulesets/immutable-release-tags.json" "${rulesets}" "${metadata_file}"
   fi

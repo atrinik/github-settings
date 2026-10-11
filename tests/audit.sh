@@ -21,19 +21,9 @@ EOF
 chmod +x "${temporary}/full/bin/validate" "${temporary}/full/bin/security-readiness"
 cp "${root}/tests/audit-fixtures.py" "${temporary}/mock/gh"
 chmod +x "${temporary}/mock/gh"
-# Keep standalone tests runnable while publisher-owned schema is being delivered.
-# Once integrated these files are copied directly from authoritative policy.
-if [[ ! -f ${temporary}/full/config/security-merge-protection.json ]]; then
-  jq '{dependency_review: (.required_ci | keys), code_scanning: (.required_ci | keys),
-    codeql_required_languages: {"content-toolkit": ["rust"]}}' \
-    "${temporary}/full/config/repositories.json" >"${temporary}/full/config/security-merge-protection.json"
-  jq '.name = "06 - CodeQL security" | .rules = [{type: "code_scanning", parameters: {
-    code_scanning_tools: [{tool: "CodeQL", security_alerts_threshold: "high_or_higher", alerts_threshold: "none"}]}}]' \
-    "${temporary}/full/config/rulesets/required-ci.json" >"${temporary}/full/config/rulesets/code-scanning.json"
-  jq '.name = "07 - Dependency review" | .rules[0].parameters.required_status_checks =
-    [{context: "Dependency review", integration_id: 15368}]' \
-    "${temporary}/full/config/rulesets/required-ci.json" >"${temporary}/full/config/rulesets/dependency-review.json"
-fi
+# Exercise both reviewed rollout phases using test-owned desired state.
+printf '%s\n' '{"phase":"pending","canary":null}' \
+  >"${temporary}/full/config/actions-sha-pinning.json"
 jq '.sha_pinning_required = true' "${temporary}/full/config/actions-permissions.json" \
   >"${temporary}/actions.json"
 mv "${temporary}/actions.json" "${temporary}/full/config/actions-permissions.json"
@@ -52,14 +42,27 @@ run_audit() {
   local scenario=$1 fixture=${2:-focused} repository=observatory
   if [[ ${fixture} == focused ]]; then
     case ${scenario} in
-      wrong-pr-scope|unexpected-codeql) repository=.github ;;
+      wrong-pr-scope|unexpected-codeql|tag-extra-nonrelease|tag-all-nonrelease|tag-repository-nonrelease|inherited-tag-unaffected|foreign-tag) repository=.github ;;
       advanced-config|advanced-setup) repository=classic ;;
       missing-rust) repository=content-toolkit ;;
-      missing-tag-scope|tag-ref-drift) repository=service-updater ;;
+      missing-tag-scope|tag-ref-drift|tag-all-scope|tag-extra-repo|tag-extra-exclude) repository=service-updater ;;
       unexpected-pr) repository=web-platform ;;
     esac
     fixture="fixture-${repository}"
   fi
+  case ${scenario} in
+    sha-enforced-off|sha-enforced-on)
+      printf '%s\n' '{"phase":"enforced","canary":"atrinik/observatory/1"}' \
+        >"${temporary}/${fixture}/config/actions-sha-pinning.json"
+      ;;
+    phase-unreadable)
+      printf '%s\n' '{}' >"${temporary}/${fixture}/config/actions-sha-pinning.json"
+      ;;
+    *)
+      printf '%s\n' '{"phase":"pending","canary":null}' \
+        >"${temporary}/${fixture}/config/actions-sha-pinning.json"
+      ;;
+  esac
   GH_TEST_SCENARIO=${scenario} \
     PATH="${temporary}/mock:${PATH}" \
     AUDIT_CONFIG_ROOT="${temporary}/${fixture}" \
@@ -75,6 +78,10 @@ output=$(run_audit legacy-security)
 grep -Fq 'Governance audit passed:' <<<"${output}"
 output=$(run_audit repository-rulesets)
 grep -Fq 'Governance audit passed:' <<<"${output}"
+for scenario in scope-order inherited-tag-unaffected foreign-tag sha-enforced-on; do
+  output=$(run_audit "${scenario}")
+  grep -Fq 'Governance audit passed:' <<<"${output}"
+done
 output=$(run_audit pending)
 grep -Fq 'PENDING Actions SHA pinning deferred pending canary proof' <<<"${output}"
 grep -Fq 'PENDING Dependency review merge protection awaits landed successful producer' <<<"${output}"
@@ -105,6 +112,13 @@ assert_drift inventory-unreadable 'organization repository inventory could not b
 assert_drift wrong-pr-scope 'effective pull-request policy drift: atrinik/.github'
 assert_drift missing-tag-scope "ruleset scope or policy drift '04 - Immutable release tags': atrinik/service-updater"
 assert_drift tag-ref-drift "ruleset scope or policy drift '04 - Immutable release tags'"
+for scenario in tag-all-scope tag-extra-repo tag-extra-exclude tag-all-nonrelease tag-extra-nonrelease; do
+  assert_drift "${scenario}" "ruleset scope or policy drift '04 - Immutable release tags'"
+done
+assert_drift tag-repository-nonrelease 'unexpected managed release-tag protection: atrinik/.github'
+assert_drift pr-all-scope "ruleset scope or policy drift '02 - Changes through pull requests'"
+assert_drift default-extra-exclude "ruleset scope or policy drift '01 - Default branch integrity'"
+assert_drift repository-scope-extra "ruleset scope or policy drift '07 - Dependency review'"
 assert_drift integrity-bypass "ruleset scope or policy drift '01 - Default branch integrity'"
 assert_drift pr-bypass "ruleset scope or policy drift '02 - Changes through pull requests'"
 assert_drift owner-id-drift "ruleset scope or policy drift '02 - Changes through pull requests'"
@@ -131,6 +145,9 @@ assert_drift repository-actions-unreadable 'repository Actions workflow permissi
 assert_drift actions-allowlist 'organization Actions selected-actions drift'
 assert_drift actions-unreadable 'organization Actions permissions could not be read'
 assert_drift sha-unreadable 'Actions SHA pinning state could not be read'
+assert_drift sha-invalid-type 'Actions SHA pinning state could not be read'
+assert_drift sha-enforced-off 'Actions SHA pinning enforcement drift'
+assert_drift phase-unreadable 'Actions SHA pinning rollout phase could not be read'
 assert_drift missing-rust 'CodeQL setup or required language drift: atrinik/content-toolkit'
 for scenario in advanced-setup default-setup; do
   assert_drift "${scenario}" 'CodeQL setup or required language drift'
