@@ -484,10 +484,31 @@ for repository in "${!expected_active[@]}"; do
 
   rulesets='[]'
   if ! rulesets=$(github_api --paginate --slurp \
-    "repos/${organization}/${repository}/rulesets?includes_parents=true&per_page=100" | jq -e 'add'); then
+    "repos/${organization}/${repository}/rulesets?includes_parents=true&per_page=100" | jq -e '
+      if type == "array" and length > 0 and all(.[]; type == "array") then add
+      else error("invalid ruleset pages") end |
+      if type == "array" and all(.[];
+        type == "object" and (.name | type == "string" and length > 0)) then .
+      else error("invalid ruleset inventory") end'); then
     record_finding "inherited rulesets could not be read: ${organization}/${repository}"
     rulesets='[]'
   fi
+  # Retired/non-target security gates must be absent from the listing, even
+  # when disabled or scoped away from the default branch. Presence is manual
+  # drift regardless of ownership or payload; this audit never removes a rule.
+  for security_kind in dependency_review code_scanning; do
+    case ${security_kind} in
+      dependency_review) security_name='07 - Dependency review' ;;
+      code_scanning) security_name='06 - CodeQL security' ;;
+    esac
+    if ! jq -e --arg repository "${repository}" --arg kind "${security_kind}" \
+      '.[$kind] | index($repository) != null' \
+      "${root}/config/security-merge-protection.json" >/dev/null &&
+      jq -e --arg name "${security_name}" 'any(.[]; .name == $name)' \
+        <<<"${rulesets}" >/dev/null; then
+      record_finding "unexpected retained security ruleset '${security_name}' requires manual review: ${organization}/${repository}"
+    fi
+  done
   branch=$(jq -r '.default_branch' "${repository_defaults}")
   audit_legacy_protection "${repository}" "${branch}" "${metadata_file}"
   while IFS= read -r maintenance_branch; do

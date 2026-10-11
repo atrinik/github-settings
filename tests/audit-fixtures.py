@@ -86,6 +86,14 @@ def rulesets(repository):
         specs.append(('dependency-review', None))
     if scenario == 'foreign-tag':
         specs.append(('immutable-release-tags', 'Foreign tag retention'))
+    retained_template = None
+    if scenario.startswith(('retained-', 'retired-')):
+        kind = scenario.split('-')[1]
+        retained_template = {'codeql': 'code-scanning', 'dependency': 'dependency-review'}.get(kind)
+        if retained_template:
+            specs.append((retained_template, None))
+            if scenario.endswith('-duplicate'):
+                specs.append((retained_template, None))
     result = []
     for index, (template, name) in enumerate(specs, 1):
         item = config('rulesets/' + template + '.json')
@@ -193,6 +201,19 @@ def rulesets(repository):
             item['rules'][0]['parameters']['code_scanning_tools'][0]['tool'] = 'other-scanner'
         if scenario == 'codeql-quality' and repository == 'observatory' and template == 'code-scanning':
             item['rules'][0]['parameters']['code_scanning_tools'][0]['alerts_threshold'] = 'errors'
+        if template == retained_template:
+            if scenario.endswith(('-disabled', '-foreign-name', '-duplicate')):
+                item['enforcement'] = 'disabled'
+            if scenario.endswith('-moved'):
+                item['conditions']['ref_name']['include'] = ['refs/heads/other']
+            if scenario.endswith('-modified'):
+                item['rules'] = [{'type': 'creation'}]
+                item['enforcement'] = 'disabled'
+            if scenario.endswith('-foreign-owner'):
+                item['source_type'] = 'Organization'
+                item['enforcement'] = 'disabled'
+            if scenario.endswith('-foreign-name'):
+                item['name'] = 'Foreign security policy'
         result.append(item)
     return result
 
@@ -312,7 +333,7 @@ elif endpoint.startswith('repos/atrinik/'):
                 'force-push': {'allow_force_pushes': {'enabled': True}},
                 'matching': {'required_status_checks': {'checks': [
                     {'context': context, 'app_id': 15368}
-                    for context in repositories['required_ci'][repository]]}},
+                    for context in repositories['required_ci'].get(repository, [])]}},
                 'empty': {},
             }
             if variant.startswith('disabled-'):
@@ -350,8 +371,22 @@ elif endpoint.startswith('repos/atrinik/'):
         if scenario == 'properties-drift' and target:
             payload[0]['value'] = 'drift'
     elif path.startswith('rulesets?'):
+        if scenario == 'retained-list-unreadable':
+            reject('ruleset list read denied')
+        if scenario == 'retained-list-non-json':
+            print('<html>unavailable</html>')
+            sys.exit(0)
         payload = [{'name': item['name'], 'id': item['id'], 'source_type': item['source_type']}
                    for item in rulesets(repository)]
+        if scenario == 'retained-list-object':
+            payload = {'message': 'unreadable'}
+        elif scenario == 'retained-list-missing-name':
+            payload.append({'id': 999, 'source_type': 'Repository'})
+        elif scenario == 'retained-list-null-item':
+            payload.append(None)
+        elif scenario == 'retained-list-partial-page':
+            print(json.dumps([payload, None]))
+            sys.exit(0)
     elif path.startswith('rulesets/'):
         identifier = int(path.rsplit('/', 1)[1])
         payload = next((item for item in rulesets(repository) if item['id'] == identifier), None)
@@ -365,7 +400,13 @@ elif endpoint.startswith('repos/atrinik/'):
             scope = item['conditions'].get('repository_name', {'include': [repository], 'exclude': []})
             included = any(pattern == '~ALL' or fnmatch.fnmatchcase(repository, pattern) for pattern in scope['include'])
             excluded = any(pattern == '~ALL' or fnmatch.fnmatchcase(repository, pattern) for pattern in scope['exclude'])
-            if item['target'] == 'branch' and included and not excluded:
+            refs = item['conditions']['ref_name']
+            branch_included = any(pattern == '~DEFAULT_BRANCH' or
+                                  fnmatch.fnmatchcase('refs/heads/main', pattern) for pattern in refs['include'])
+            branch_excluded = any(pattern == '~DEFAULT_BRANCH' or
+                                  fnmatch.fnmatchcase('refs/heads/main', pattern) for pattern in refs['exclude'])
+            if (item['target'] == 'branch' and item['enforcement'] == 'active'
+                    and included and not excluded and branch_included and not branch_excluded):
                 payload.extend(copy.deepcopy(item['rules']))
         for rule in payload:
             if target and rule['type'] == 'required_status_checks':

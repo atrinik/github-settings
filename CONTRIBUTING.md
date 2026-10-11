@@ -140,6 +140,10 @@ first live installation. Pending publication only probes readiness. Enforced
 intent survives missing rules and later producer failures, allowing restoration
 without fresh initial proof; it does not claim live installation success. Remove
 activation entries with retired targets, preserving exact owned-rule rollback.
+Re-read the exact security-rule payload after the repository metadata fence
+immediately before deletion, retaining concurrent modifications. Audit retained
+named security rules on non-target repositories as drift regardless of their
+enforcement or ref applicability.
 For an existing repository-owned `03 - Required CI` rule, also record exact repository
 and ruleset IDs and its prior contexts in `config/retired-required-ci.json`.
 Validate retained/modified/foreign rules and fresh identity checks; keep records

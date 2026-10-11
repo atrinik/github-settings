@@ -1187,6 +1187,13 @@ security_gate_applies_to_default_branch() {
   ' <<<"${effective}" >/dev/null
 }
 
+owned_security_ruleset_matches() {
+  local repository=$1 id=$2 template=$3 current=$4
+  jq -e --argjson id "${id}" --arg source "${organization}/${repository}" '
+    .id == $id and .source_type == "Repository" and .source == $source
+  ' <<<"${current}" >/dev/null && security_ruleset_matches "${template}" "${current}"
+}
+
 delete_removed_security_merge_rulesets() {
   local repository kind template name existing rule id current metadata
   for repository in "${active_repositories[@]}"; do
@@ -1204,18 +1211,25 @@ delete_removed_security_merge_rulesets() {
         template=${root}/config/rulesets/dependency-review.json
       fi
       name=$(jq -r '.name' "${template}")
-      existing=$(github_api "repos/${organization}/${repository}/rulesets?includes_parents=false")
+      existing=$(github_api "repos/${organization}/${repository}/rulesets?includes_parents=false") || return 1
       while IFS= read -r rule; do
         id=$(jq -r '.id' <<<"${rule}")
-        current=$(github_api "repos/${organization}/${repository}/rulesets/${id}")
-        if jq -e --argjson id "${id}" --arg source "${organization}/${repository}" '
-          .id == $id and .source_type == "Repository" and .source == $source
-        ' <<<"${current}" >/dev/null && security_ruleset_matches "${template}" "${current}"; then
-          metadata=$(github_api "repos/${organization}/${repository}")
-          if jq -e --argjson id "${active_repository_ids["${repository}"]}" '
-            .id == $id and .archived == false
+        current=$(github_api "repos/${organization}/${repository}/rulesets/${id}") || return 1
+        if owned_security_ruleset_matches "${repository}" "${id}" "${template}" "${current}"; then
+          metadata=$(github_api "repos/${organization}/${repository}") || return 1
+          if jq -e --argjson id "${active_repository_ids["${repository}"]}" \
+            --arg full_name "${organization}/${repository}" '
+            .id == $id and .full_name == $full_name and .archived == false
           ' <<<"${metadata}" >/dev/null; then
-            run_api DELETE "repos/${organization}/${repository}/rulesets/${id}"
+            current=$(github_api "repos/${organization}/${repository}/rulesets/${id}") || {
+              echo "error: security gate final retirement read failed; retained: ${repository} ${name}" >&2
+              return 1
+            }
+            if ! owned_security_ruleset_matches "${repository}" "${id}" "${template}" "${current}"; then
+              echo "SKIP ${organization}/${repository} ${name}: rule changed during retirement preflight; retained"
+              continue
+            fi
+            run_api DELETE "repos/${organization}/${repository}/rulesets/${id}" || return 1
           else
             echo "SKIP ${organization}/${repository} ${name}: repository identity or archive state changed; retained"
           fi
@@ -1231,7 +1245,7 @@ delete_removed_security_merge_rulesets() {
 # GitHub Team does not support organization-level code-scanning rules.
 publish_security_merge_rulesets() {
   local repository kind template name existing id current reason status readiness_mode phase metadata
-  delete_removed_security_merge_rulesets
+  delete_removed_security_merge_rulesets || return 1
   for kind in code_scanning dependency_review; do
     if [[ ${kind} == code_scanning ]]; then
       template=${root}/config/rulesets/code-scanning.json

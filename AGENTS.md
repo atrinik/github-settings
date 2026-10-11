@@ -255,7 +255,10 @@
   tool/context. Never infer activation from target membership or silently change
   source intent. Retire target and activation entries together. Retired targets
   lose only exact repository-owned managed security rules;
-  preserve archived, foreign, and modified same-name rules. Keep repository
+  preserve archived, foreign, and modified same-name rules. Re-read and validate
+  the exact rule payload after the repository metadata fence immediately before
+  deletion. Audit retained named security rules on non-target repositories as
+  drift even when disabled, modified or scoped to another ref. Keep repository
   workflow overrides read-only and unable to approve PRs, with delta-aware writes.
 - Repository-scope `03 - Required CI` retirement requires reviewed exact prior
   repository/ruleset IDs and contexts in `config/retired-required-ci.json`.

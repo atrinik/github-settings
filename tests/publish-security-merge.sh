@@ -123,16 +123,16 @@ github_api() {
   repos/atrinik/content-toolkit/rulesets/6 | repos/atrinik/content-toolkit/rulesets/7)
     local template=code-scanning
     [[ ${endpoint##*/} != 7 ]] || template=dependency-review
-    if [[ ${ruleset_state} == restoration-race ]]; then
+    if [[ ${ruleset_state} == restoration-race || ${ruleset_state} == retirement-race ]]; then
       local filter=.
       if [[ ${endpoint##*/} == "${gate_update_id}" ]] &&
         (( $(jq -s --arg endpoint "${endpoint}" '[.[] | select(.endpoint == $endpoint)] | length' "${api_log}") >= 2 )); then
         [[ ${gate_update_filter} != unreadable ]] || return 1
         filter=${gate_update_filter}
       fi
-      jq --argjson id "${endpoint##*/}" --argjson target "${gate_update_id}" '
+      jq --argjson id "${endpoint##*/}" --argjson target "${gate_update_id}" --arg state "${ruleset_state}" '
         . + {id: $id, source_type: "Repository", source: "atrinik/content-toolkit"} |
-        if $id == $target then .enforcement = "disabled" else . end' \
+        if $id == $target and $state == "restoration-race" then .enforcement = "disabled" else . end' \
         "${root}/config/rulesets/${template}.json" | jq "${filter}"
       return
     elif [[ ${ruleset_state} == api-default-* ]]; then
@@ -644,8 +644,72 @@ for policy_scope in organization repository; do
   done
 done
 
+# The final retirement GET must still prove exact managed ownership/payload
+# after the repository fence, including for changes that PUT may restore.
+for policy_scope in organization repository; do
+  for retired_gate_id in 6 7; do
+    retired_kind=code_scanning
+    [[ ${retired_gate_id} != 7 ]] || retired_kind=dependency_review
+    retirement_filters=(
+      '.id = 999' '.source_type = "Organization"' '.source = "foreign/content-toolkit"'
+      '.name = "Renamed gate"' '.enforcement = "disabled"' '.enforcement = "evaluate"'
+      '.conditions.ref_name.include = ["refs/heads/other"]'
+      '.conditions.ref_name.exclude = ["~DEFAULT_BRANCH"]'
+      '.bypass_actors[0].bypass_mode = "always"' '.bypass_actors = []'
+      '.rules[0].parameters.unknown_future_control = true' '.rules += [{type:"deletion"}]'
+      'unreadable'
+    )
+    if [[ ${retired_gate_id} == 6 ]]; then
+      retirement_filters+=(
+        '.rules[0].parameters.code_scanning_tools[0].tool = "Other tool"'
+        '.rules[0].parameters.code_scanning_tools[0].security_alerts_threshold = "critical"'
+      )
+    else
+      retirement_filters+=(
+        '.rules[0].parameters.required_status_checks[0].context = "Changed context"'
+        '.rules[0].parameters.required_status_checks[0].integration_id = 9'
+        '.rules[0].parameters.do_not_enforce_on_create = true'
+        '.rules[0].parameters.do_not_enforce_on_create = null'
+      )
+    fi
+    for filter in "${retirement_filters[@]}" '.' \
+      '.bypass_actors[0].actor_id = null | if .rules[0].type == "required_status_checks" then .rules[0].parameters.do_not_enforce_on_create = false else . end'; do
+      reset_case
+      ruleset_state=retirement-race
+      gate_update_id=${retired_gate_id}
+      gate_update_filter=${filter}
+      jq --arg kind "${retired_kind}" '.[$kind] -= ["content-toolkit"] |
+        del(.activation[$kind]["content-toolkit"])' "${security_merge_config}" >"${temporary}/removed.json"
+      cp "${temporary}/removed.json" "${security_merge_config}"
+      status=0
+      # shellcheck source=/dev/null
+      source "${temporary}/dispatch.sh" >"${temporary}/retirement-race.txt" 2>&1 || status=$?
+      if [[ ${filter} == unreadable ]]; then
+        [[ ${status} != 0 ]]
+        assert_no_writes
+        grep -Fq 'final retirement read failed; retained' "${temporary}/retirement-race.txt"
+      elif [[ ${filter} == '.' || ${filter} == '.bypass_actors[0].actor_id = null |'* ]]; then
+        [[ ${status} == 0 ]]
+        jq -se --arg endpoint "repos/atrinik/content-toolkit/rulesets/${retired_gate_id}" '
+          [.[] | select(.method != "GET")] == [{method:"DELETE",endpoint:$endpoint}]' "${api_log}" >/dev/null
+      else
+        [[ ${status} == 0 ]]
+        assert_no_writes
+        grep -Fq 'rule changed during retirement preflight; retained' "${temporary}/retirement-race.txt"
+      fi
+      jq -se --arg endpoint "repos/atrinik/content-toolkit/rulesets/${retired_gate_id}" '
+        [to_entries[] | select(.value.endpoint == $endpoint and .value.method == "GET") | .key] as $reads |
+        ($reads | length) == 2 and
+        any(to_entries[]; .key > $reads[0] and .key < $reads[1] and
+          .value.endpoint == "repos/atrinik/content-toolkit")' "${api_log}" >/dev/null
+      [[ ! -s ${readiness_log} ]]
+    done
+  done
+done
+
 # Retirements also fence a repository archived or replaced after enumeration.
-for retired_state in '{"id":123,"archived":true}' '{"id":999,"archived":false}'; do
+for retired_state in '{"id":123,"archived":true}' '{"id":999,"archived":false}' \
+  '{"id":123,"full_name":"foreign/content-toolkit","archived":false}'; do
   reset_case
   repository_state=${retired_state}
   ruleset_state="removal-owned"
@@ -656,6 +720,20 @@ for retired_state in '{"id":123,"archived":true}' '{"id":999,"archived":false}';
   assert_no_writes
   [[ ! -s ${readiness_log} ]]
 done
+
+# Read errors must propagate even when publication is called conditionally.
+reset_case
+ruleset_state="removal-owned"
+gate_metadata_filter=unreadable
+jq '.code_scanning -= ["content-toolkit"] | .dependency_review -= ["content-toolkit"] |
+  del(.activation.code_scanning["content-toolkit"], .activation.dependency_review["content-toolkit"])' \
+  "${security_merge_config}" >"${temporary}/removed.json"
+cp "${temporary}/removed.json" "${security_merge_config}"
+if publish_security_merge_rulesets >"${temporary}/retirement-metadata-unreadable.txt" 2>&1; then
+  echo 'expected unreadable retirement repository metadata to fail closed' >&2
+  exit 1
+fi
+assert_no_writes
 
 # An archived or missing repository is absent from the active identity map.
 reset_case

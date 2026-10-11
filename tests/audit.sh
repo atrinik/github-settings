@@ -47,10 +47,16 @@ jq '.maintenance_branches = [
 ]' "${temporary}/full/config/repositories.json" \
   >"${temporary}/fixture-legacy-branches/config/repositories.json"
 
+cp -R "${temporary}/fixture-observatory" "${temporary}/fixture-retired-observatory"
+jq 'del(.required_ci.observatory)' "${temporary}/full/config/repositories.json" \
+  >"${temporary}/fixture-retired-observatory/config/repositories.json"
+
 run_audit() {
   local scenario=$1 fixture=${2:-focused} repository=observatory
   if [[ ${fixture} == focused ]]; then
     case ${scenario} in
+      retained-*) repository=.github ;;
+      retired-*) repository=retired-observatory ;;
       legacy-maintenance-*|legacy-multiple) repository=legacy-branches ;;
       wrong-pr-scope|unexpected-codeql|tag-extra-nonrelease|tag-all-nonrelease|tag-repository-nonrelease|inherited-tag-unaffected|foreign-tag) repository=.github ;;
       advanced-config|advanced-setup|advanced-null-languages) repository=classic ;;
@@ -75,6 +81,12 @@ run_audit() {
   esac
   cp "${root}/config/security-merge-protection.json" "${temporary}/${fixture}/config/security-merge-protection.json"
   case ${scenario} in
+    retired-*)
+      jq '.dependency_review -= ["observatory"] | .code_scanning -= ["observatory"] |
+        del(.activation.dependency_review.observatory, .activation.code_scanning.observatory)' \
+        "${temporary}/${fixture}/config/security-merge-protection.json" >"${temporary}/activation.json"
+      mv "${temporary}/activation.json" "${temporary}/${fixture}/config/security-merge-protection.json"
+      ;;
     enforced-missing-dependency|enforced-unreadable-dependency)
       jq '.activation.dependency_review.observatory = "enforced"' \
         "${temporary}/${fixture}/config/security-merge-protection.json" >"${temporary}/activation.json"
@@ -164,6 +176,27 @@ for scenario in wrong-id wrong-owner wrong-name archived missing-field null-ref 
   assert_drift "legacy-disabled-${scenario}" 'legacy branch protection could not be read: atrinik/observatory/main'
 done
 assert_drift legacy-maintenance-disabled-wrong-name 'legacy branch protection could not be read: atrinik/observatory/release/next#candidate'
+
+# Retained named rules remain drift after target removal, regardless of whether
+# their current rules apply to main. Unrelated names remain outside ownership.
+for scope in retained retired; do
+  for kind in codeql dependency; do
+    case ${kind} in
+      codeql) name='06 - CodeQL security' ;;
+      dependency) name='07 - Dependency review' ;;
+    esac
+    for variant in disabled moved modified duplicate foreign-owner; do
+      assert_drift "${scope}-${kind}-${variant}" "unexpected retained security ruleset '${name}' requires manual review"
+    done
+    output=$(run_audit "${scope}-${kind}-foreign-name")
+    grep -Fq 'Governance audit passed:' <<<"${output}"
+  done
+  output=$(run_audit "${scope}-absent")
+  grep -Fq 'Governance audit passed:' <<<"${output}"
+done
+for variant in unreadable non-json object missing-name null-item partial-page; do
+  assert_drift "retained-list-${variant}" 'inherited rulesets could not be read'
+done
 
 assert_drift unmanaged 'active repository is not in the desired-state inventory'
 assert_drift merge-drift 'repository merge policy drift'

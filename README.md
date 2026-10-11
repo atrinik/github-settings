@@ -260,7 +260,11 @@ Rollout is owned by an organization administrator:
    Retiring a target removes its required-CI, security target, and activation
    entries together through source review. The publisher removes only matching
    repository-owned security rules from active retired targets, preserving foreign or modified same-name
-   rules for explicit review and leaving archived repositories untouched.
+   rules for explicit review and leaving archived repositories untouched. It re-reads
+   the exact rule payload after the repository metadata fence immediately before
+   deletion to retain concurrent modifications. Audit reports retained named
+   security rules on non-target repositories as drift even when disabled,
+   modified or scoped to another ref.
 4. Desired organization `sha_pinning_required` is true. Its durable rollout
    contract is `config/actions-sha-pinning.json`: the initial `pending` phase
    has no accepted canary and never enables the field. Verify an ordinary
