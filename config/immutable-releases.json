@@ -4,6 +4,18 @@
     {
       "id": 1327289971,
       "name": "classic"
+    },
+    {
+      "id": 1327107043,
+      "name": "content-toolkit"
+    },
+    {
+      "id": 1327106950,
+      "name": "protocol"
+    },
+    {
+      "id": 1327106998,
+      "name": "renderer"
     }
   ]
 }

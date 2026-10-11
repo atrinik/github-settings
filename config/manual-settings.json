@@ -73,9 +73,9 @@
       },
       "environment_state": "pending",
       "publisher_registration": {
-        "state": "pending-owner-registration",
-        "observed_on": null,
-        "evidence_location": null
+        "state": "owner-observed-registration",
+        "observed_on": "2026-10-11",
+        "evidence_location": "atrinik/protocol/actions/runs/38156755961"
       },
       "provider": "github",
       "repository": "atrinik/protocol",

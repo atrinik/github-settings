@@ -244,6 +244,9 @@ jq -e \
       (keys == ["id", "name"]) and
       (.id | type == "number" and floor == . and . > 0) and
       (.name | type == "string" and length > 0) and
+      ({classic: 1327289971, protocol: 1327106950, renderer: 1327106998,
+        "content-toolkit": 1327107043}[.name] as $id |
+        $id == null or .id == $id) and
       (.name as $repository |
         ($repositories[0].pull_request_gate | index($repository)) != null) and
       (.name as $repository |
@@ -809,9 +812,14 @@ jq -e \
     .repository_id == $expected.id and .crates == $expected.crates and
     .bootstrap_crates == (if $expected.bootstrap == true then $expected.crates else [] end) and
     .bootstrap_policy == "owner-local-api-token-once-then-oidc-only" and
-    .authentication_action == "rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18" and
+    (.authentication_action | type == "string" and
+      test("^rust-lang/crates-io-auth-action@[0-9a-f]{40}$")) and
     (.authentication_action as $action |
-      ($actions[0].patterns_allowed | map(select(startswith("rust-lang/")))) == [$action]) and
+      ($actions[0].patterns_allowed | map(select(startswith("rust-lang/")))) as $patterns |
+      ($patterns | length) > 0 and
+      all($patterns[]; test("^rust-lang/crates-io-auth-action@([0-9a-f]{40}|\\*)$")) and
+      (($patterns | index($action)) != null or
+       ($patterns | index("rust-lang/crates-io-auth-action@*")) != null)) and
     .provider == "github" and
     ($repositories[0].pull_request_gate | index($name)) != null and
     ($repositories[0].archive | index($name)) == null and
@@ -822,10 +830,7 @@ jq -e \
     (.source_state | IN("pending-reviewed-workflow", "observed-reviewed-workflow")) and
     (.environment_state | IN("pending", "observed")) and
     (.publisher_registration | observation) and
-    (if .environment_state == "observed" or .publisher_registration.state == "owner-observed-registration"
-      then .source_state == "observed-reviewed-workflow" else true end) and
-    (if .publisher_registration.state == "owner-observed-registration"
-      then .environment_state == "observed" else true end) and
+    (if .environment_state == "observed" then .source_state == "observed-reviewed-workflow" else true end) and
     .environment == {
       can_admins_bypass: false,
       deployment_branch_policy: {

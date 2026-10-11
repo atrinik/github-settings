@@ -97,8 +97,10 @@ plan attaches the advanced-allowed security configuration before disabling
 default setup, and include the immediate workflow rerun and rollback owner in
 the deployment handoff.
 
-An immutable-release inventory change must be coordinated with a merged,
-verified draft-first release workflow in every selected repository. Review the
+An immutable-release inventory change stages desired state and must be activated
+only with a merged, qualified draft-first release workflow in every newly
+selected repository. Nonempty new crate manifests must fail before tags while
+live owner-enforced immutability is disabled, then retry after activation. Review the
 repository name and stable numeric ID, the exact organization selected set,
 owner-enforcement verification, and snapshot rollback tests. Merge the policy
 before requesting explicit authorization for `bin/publish --apply`; never
@@ -127,7 +129,9 @@ never combine either operation with tag, release, asset, default-branch, or
 unrelated policy changes.
 
 Crates.io publication contracts bind exact repository/workflow/environment and
-immutable auth-action identities. Automatic publication follows reviewed
+official auth-action identities with full immutable workflow SHA references;
+preserve the reviewed `rust-lang/crates-io-auth-action@*` allowance for normal
+Dependabot updates without a central version lock. Automatic publication follows reviewed
 source/version merges with zero environment reviewers/wait and no registry
 secrets. Keep pending onboarding distinct from observed source/environment and
 owner-observed external registration; verify live protected main and exact

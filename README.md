@@ -673,9 +673,11 @@ they also need a pull-request gate, required CI, immutable release tags, or
 archival.
 
 Immutable releases require a stricter release contract than an immutable tag
-alone. Add a repository to `config/immutable-releases.json` only after its
-release workflow creates a draft, uploads and verifies every intended asset,
-and publishes the draft as its final step. Record both the repository name and
+alone. Stage repository additions in `config/immutable-releases.json` as pending
+activation, then apply only after reviewed workflow qualification proves draft
+creation/recovery, complete verified assets, and publication as the final step.
+New crate source finalization fails before tags while live owner-enforced
+immutability is disabled; rerun after coordinated activation. Record both the repository name and
 the ID reported by GitHub. Validation requires every selected repository to be
 active, pull-request governed, and protected by the release-tag ruleset; the
 publisher fails closed if a live repository ID differs from the inventory.
@@ -795,26 +797,41 @@ confirm a successful default-setup analysis before rescheduling the migration.
 Never delete the advanced workflow first and assume a later policy run will
 repair coverage.
 
-## Enabling immutable releases for Classic
+## Enabling immutable source releases
 
-The initial desired state is the organization-level `selected` mode with only
-repository ID `1327289971` (`atrinik/classic`). Do not apply it until the
-Classic draft-first release workflow is merged and its build, packaging,
-retry/recovery, and publication paths have passed on `main`. A published
-release must be complete because its tag and assets can no longer be replaced.
+The desired organization-level `selected` inventory preserves Classic
+(`1327289971`) and adds protocol (`1327106950`), renderer (`1327106998`), and
+content-toolkit (`1327107043`). These additions are pending activation until
+reviewed source workflows are merged and qualified. Their release producers
+must assemble and verify the complete crate/archive/manifest payload on a draft
+before publishing it. A published immutable release must be complete because
+its tag and assets can no longer be replaced. The crate source finalizer checks
+live `enabled=true,enforced_by_owner=true` before emitting any tag for a
+nonempty new crate manifest. A merge before policy activation therefore fails
+closed, preserving a retry after coordinated activation.
+
+For protocol, separately verify that the actual immutable pinned
+semantic-release GitHub plugin supports the configured draft-first publication
+and the complete asset payload. A configured flag alone is not release proof.
+Qualification includes build, packaging, draft assembly, retry/recovery,
+pre-tag disabled-policy failure, and publication paths.
 
 Use this rollout order:
 
-1. Merge and verify the Classic release workflow. Confirm it creates or
-   recovers a draft, attaches the complete release payload, and publishes only
-   after all validation succeeds.
+1. Review, merge, and qualify each owning release workflow before activating
+   its selection. Confirm draft creation/recovery and complete asset assembly;
+   preserve Classic. Retain exact source revision and producer validation
+   evidence, including failure before tags when live immutability is disabled.
 2. Merge this governance policy. Run `bin/publish` and inspect the exact
    `PUT /orgs/atrinik/settings/immutable-releases` payload. It must select only
-   `[1327289971]`.
+   `[1327106950,1327106998,1327107043,1327289971]` in this inventory.
+   Preserve any additional previously accepted selection during future edits.
 3. With explicit deployment authorization, run `bin/publish --apply`. The
    publisher verifies the organization selection and the repository's
    `enabled=true,enforced_by_owner=true` state before continuing.
-4. Confirm the live state independently:
+4. Confirm the exact full live selection and each repository independently,
+   then rerun the failed source workflow and verify its complete immutable
+   release and registry readiness:
 
    ```sh
    gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
@@ -822,8 +839,10 @@ Use this rollout order:
    gh api --paginate -H 'X-GitHub-Api-Version: 2026-03-10' \
      'orgs/atrinik/settings/immutable-releases/repositories?per_page=100' \
      --jq '.repositories[] | [.name, .id]'
-   gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
-     repos/atrinik/classic/immutable-releases
+   for repository in classic protocol renderer content-toolkit; do
+     gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
+       "repos/atrinik/${repository}/immutable-releases"
+   done
    ```
 
 If the apply or its verification fails, the publisher automatically sends the
@@ -1079,8 +1098,12 @@ checks to succeed without package permissions or registry authentication.
 ## Automatic crate Trusted Publishing
 
 `config/manual-settings.json` records the desired, value-free contracts below.
-They remain **pending** until the reviewed workflows and owner setup have been
-observed. This change does not register a crates.io publisher, provision an
+Automatic source/environment setup remains **pending** until observed.
+Protocol registration was owner-observed on 2026-10-11 and its manual 0.2 upload
+succeeded in [run 38156755961](https://github.com/atrinik/protocol/actions/runs/38156755961).
+That registration does not imply the future automatic source workflow or
+zero-review environment is ready: the current protocol environment still uses
+the manually approved reviewer policy until the reviewed transition is applied. This change does not register a crates.io publisher, provision an
 Actions environment, upload a crate, or install a GitHub App.
 
 | Repository | Stable repository ID | Published libraries |
@@ -1091,8 +1114,7 @@ Actions environment, upload a crate, or install a GitHub App.
 
 Every Trusted Publisher binds the exact repository, `publish-crate.yml`, and
 `crates-io-release` environment. Publication runs on protected `refs/heads/main`
-through `workflow_dispatch`; the owning hourly reconciliation workflow
-`crate-release-reconcile.yml` dispatches eligible reviewed releases after
+through `workflow_dispatch`; the owning hourly reconciliation path dispatches eligible reviewed releases after
 credential-free preparation. The release approval is the reviewed source and
 version merge. Once onboarding is complete, eligible releases publish without
 another release confirmation or environment approval. Hourly schedules are
@@ -1107,9 +1129,13 @@ this contract does not modify them. Protocol 0.2 retains its current approved
 manual publication path and exact release proof. The generic automatic path
 applies to later eligible reviewed versions.
 
-The selected-actions allowance is exactly
-`rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18`,
-verified against upstream `v1.0.5`. The
+The reviewed selected-actions allowance is
+`rust-lang/crates-io-auth-action@*`, so ordinary Dependabot pin updates do not
+require a redundant central version change. Actual executable workflows must
+use a full immutable SHA for the official action. The initial observed action
+reference is `rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18`
+(upstream `v1.0.5`); that inventory observation is not a permanent version lock.
+The
 [pinned official action](https://github.com/rust-lang/crates-io-auth-action/blob/c6f97d42243bad5fab37ca0427f495c86d5b1a18/README.md)
 exchanges GitHub OIDC for a temporary crates.io token and revokes it in its
 post step. Only the guarded upload job requests `id-token: write`; preparation
@@ -1153,15 +1179,26 @@ are the supported provisioning references. Activation proceeds in this order:
 `bin/publish` reports this manual setup but never performs it.
 `bin/verify-manual-settings` always checks actual repository identity, exact
 main ref, and protected main. Pending source/environment/registration states
-remain explicit. Observed source requires the immutable auth action and main,
-automatic, and environment markers on that exact main revision. Observed
+remain explicit. Observed source is parsed structurally on that exact main revision by
+`lib/verify_crate_workflow.py`. Install the declared
+`requirements-validation.txt` dependency before local observed-source checks;
+the policy and publication workflows install it before verification. The
+parser rejects duplicate YAML keys, comment-only/plain text, disabled automatic
+jobs, missing OIDC, mutable action refs, extra OIDC jobs, widened guards,
+inexact checkout/input bindings, and skipped verification/auth/upload steps.
+It verifies executable dispatch, repository/ID/protected-main conditions,
+credential-free dependency, environment, scoped permissions, an unconditional
+full-SHA official auth action, and only the returned temporary upload token.
+Safe schedule reconciliation may coexist; its jobs receive no OIDC. Observed
 environments require the exact selected main branch, no reviewer or wait
 protection rule, disabled administrator bypass, and empty secret/variable name
 metadata. Any identity/protection drift fails closed. The verifier reports
 crates.io registration as owner-observed evidence: GitHub metadata cannot prove
 external registration, token scope, successful upload, or future readiness.
-Change a pending state only through reviewed source with the corresponding
-observation; a status edit alone cannot activate a publisher.
+Change each pending state only through reviewed source with its corresponding
+observation. External registration can be observed before a later automatic
+source/environment transition; it does not activate that transition. A status
+edit alone cannot prove publication readiness.
 
 Rollback begins by stopping new reconciliation/publication through reviewed
 source and revoking the exact crates.io publisher through its supported owner
@@ -1175,8 +1212,9 @@ Removing unactivated inventory intent is also a valid reviewed rollback.
 The automatic contract above replaces the former planned per-release
 maintainer-review policy. Protocol 0.2 keeps its approved manual release path;
 future reviewed source/version merges use the automatic path after observed
-onboarding. No inventory record claims that its environment or publisher has
-already been provisioned.
+onboarding. Protocol registration is owner-observed with the successful manual 0.2 run;
+its automatic source/environment transition remains pending. Renderer/toolkit
+registration and the dependency App remain unprovisioned pending owner actions.
 
 ## Crate dependency update App
 

@@ -5,6 +5,14 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 temporary=$(mktemp -d)
 trap 'rm -rf "${temporary}"' EXIT
+source_root=${root}
+# Retain the original Classic rollout/recovery scenarios as a bounded fixture.
+root=${temporary}/classic-policy
+mkdir -p "${root}/bin"
+cp "${source_root}/bin/publish" "${source_root}/bin/validate" "${root}/bin/"
+cp -R "${source_root}/config" "${source_root}/community-health" "${source_root}/.github" "${root}/"
+jq '.repositories |= map(select(.name == "classic"))' \
+  "${source_root}/config/immutable-releases.json" >"${root}/config/immutable-releases.json"
 mkdir "${temporary}/bin"
 
 cat >"${temporary}/bin/gh" <<'EOF'
@@ -255,6 +263,11 @@ case "${endpoint}|${jq_filter}" in
   printf 'classic\t%s\tfalse\tpublic\tfalse\tfalse\ttrue\ttrue\ttrue\n' \
     "${GH_CLASSIC_REPOSITORY_ID:-1327289971}"
   printf 'content\t101\tfalse\tpublic\tfalse\tfalse\ttrue\ttrue\ttrue\n'
+  if [[ ${GH_CRATE_IMMUTABLE_INVENTORY:-false} == true ]]; then
+    printf 'protocol\t%s\tfalse\tpublic\tfalse\tfalse\ttrue\ttrue\ttrue\n' "${GH_PROTOCOL_REPOSITORY_ID:-1327106950}"
+    printf 'renderer\t1327106998\tfalse\tpublic\tfalse\tfalse\ttrue\ttrue\ttrue\n'
+    printf 'content-toolkit\t1327107043\tfalse\tpublic\tfalse\tfalse\ttrue\ttrue\ttrue\n'
+  fi
   printf 'classic-ghsa-8533-3vg8-r287\t999\ttrue\tprivate\tfalse\tfalse\tfalse\tfalse\tfalse\n'
   ;;
 "orgs/atrinik/settings/immutable-releases|"*)
@@ -267,6 +280,26 @@ case "${endpoint}|${jq_filter}" in
       repositories: [.selected_repository_ids[]? | {id: .}]
     }
   ' "${GH_IMMUTABLE_STATE}" | jq -r "${jq_filter}"
+  ;;
+"repos/atrinik/protocol/immutable-releases|"* | "repos/atrinik/renderer/immutable-releases|"* | "repos/atrinik/content-toolkit/immutable-releases|"*)
+  case ${endpoint} in
+  */protocol/*) repository_id=1327106950 ;;
+  */renderer/*) repository_id=1327106998 ;;
+  */content-toolkit/*) repository_id=1327107043 ;;
+  esac
+  if [[ ${GH_CRATE_IMMUTABLE_VERIFY_FAILURE:-false} == true && ${repository_id} == 1327107043 ]]; then
+    printf '{"enabled":false,"enforced_by_owner":false}\n'
+  elif jq -e --argjson id "${repository_id}" '.enforced_repositories == "selected" and (.selected_repository_ids | index($id)) != null' "${GH_IMMUTABLE_STATE}" >/dev/null; then
+    printf '{"enabled":true,"enforced_by_owner":true}\n'
+  else
+    printf '{"enabled":false,"enforced_by_owner":false}\n'
+  fi
+  ;;
+"repos/atrinik/protocol/code-security-configuration|"* | "repos/atrinik/renderer/code-security-configuration|"* | "repos/atrinik/content-toolkit/code-security-configuration|"*)
+  printf '{"status":"enforced","configuration":{"id":265376}}\n'
+  ;;
+"repos/atrinik/protocol/code-scanning/default-setup|"* | "repos/atrinik/renderer/code-scanning/default-setup|"* | "repos/atrinik/content-toolkit/code-scanning/default-setup|"*)
+  printf '{"state":"configured","query_suite":"default"}\n'
   ;;
 "repos/atrinik/classic/immutable-releases|"*)
   if [[ ${GH_IMMUTABLE_VERIFY_FAILURE:-false} == true ]]; then
@@ -1523,5 +1556,37 @@ grep -F \
   'error: immutable-release inventory id for classic is 1327289971, but GitHub reports 999' \
   "${identity_drift_output}" >/dev/null
 jq -s -e 'all(.[]; .method == "GET")' "${identity_drift_log}" >/dev/null
+
+# Qualify the complete crate-family owner selection and preserve old members.
+crate_state=${temporary}/crate-immutable-state.json
+crate_log=${temporary}/crate-immutable-log.jsonl
+printf '%s\n' '{"enforced_repositories":"selected","selected_repository_ids":[1327289971]}' >"${crate_state}"
+GH_API_LOG=${crate_log} GH_IMMUTABLE_STATE=${crate_state} \
+  GH_CRATE_IMMUTABLE_INVENTORY=true GH_SECURITY_SCENARIO=converged \
+  PATH="${temporary}/bin:${PATH}" ATRINIK_POLICY_SCOPE=organization \
+  "${source_root}/bin/publish" --apply >"${temporary}/crate-immutable-apply.out"
+jq -e '. == {enforced_repositories:"selected",selected_repository_ids:[1327106950,1327106998,1327107043,1327289971]}' "${crate_state}" >/dev/null
+for repository in classic protocol renderer content-toolkit; do
+  jq -se --arg endpoint "repos/atrinik/${repository}/immutable-releases" \
+    'any(.[]; .method == "GET" and .endpoint == $endpoint)' "${crate_log}" >/dev/null
+done
+crate_failure_log=${temporary}/crate-immutable-failure.jsonl
+printf '%s\n' '{"enforced_repositories":"selected","selected_repository_ids":[101,1327289971]}' >"${crate_state}"
+if GH_API_LOG=${crate_failure_log} GH_IMMUTABLE_STATE=${crate_state} \
+  GH_CRATE_IMMUTABLE_INVENTORY=true GH_CRATE_IMMUTABLE_VERIFY_FAILURE=true \
+  GH_SECURITY_SCENARIO=converged PATH="${temporary}/bin:${PATH}" ATRINIK_POLICY_SCOPE=organization \
+  "${source_root}/bin/publish" --apply >"${temporary}/crate-immutable-failure.out" 2>&1; then
+  echo "error: crate-family immutable readback drift did not fail" >&2
+  exit 1
+fi
+jq -e '. == {enforced_repositories:"selected",selected_repository_ids:[101,1327289971]}' "${crate_state}" >/dev/null
+if GH_API_LOG=${temporary}/crate-identity-drift.jsonl GH_IMMUTABLE_STATE=${crate_state} \
+  GH_CRATE_IMMUTABLE_INVENTORY=true GH_PROTOCOL_REPOSITORY_ID=999 \
+  GH_SECURITY_SCENARIO=converged PATH="${temporary}/bin:${PATH}" ATRINIK_POLICY_SCOPE=organization \
+  "${source_root}/bin/publish" --apply >"${temporary}/crate-identity-drift.out" 2>&1; then
+  echo "error: crate-family repository identity drift did not fail" >&2
+  exit 1
+fi
+jq -se 'all(.[]; .method == "GET")' "${temporary}/crate-identity-drift.jsonl" >/dev/null
 
 echo "Publisher policy-scope tests passed."

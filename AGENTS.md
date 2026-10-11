@@ -119,11 +119,17 @@
 - Crates.io Trusted Publishing is a value-free desired contract for protocol,
   renderer, and content-toolkit. Bind exact stable repository IDs,
   `publish-crate.yml`, protected `refs/heads/main`, `crates-io-release`, and the
-  exact immutable official auth action. Reviewed source/version merge approves
+  official auth action with a full immutable workflow SHA; allow the reviewed
+  `rust-lang/crates-io-auth-action@*` pattern for Dependabot updates without a
+  redundant central action-version lock. Reviewed source/version merge approves
   automatic future publication; environments have zero reviewers/wait and no
   registry secrets. Keep pending source/environment/registration distinct from
   observations; verify live repository/ref/protection and observed environments.
-  External registration remains sanitized owner evidence, not a GitHub API fact.
+  Parse observed exact-main workflows structurally with the declared
+  `requirements-validation.txt` dependency; comments/plain text or disabled
+  jobs are not executable source proof. External registration remains sanitized
+  owner evidence, not a GitHub API fact, and can precede a pending later
+  automatic source/environment transition.
   First owner-local API-token publication is limited to the fourteen declared
   renderer/toolkit libraries; exclude CLIs, revoke bootstrap credentials, and
   use OIDC only afterward. Protocol 0.2 retains its approved manual path.
@@ -164,9 +170,11 @@
 - Treat `config/immutable-releases.json` as the exhaustive owner-enforced
   organization inventory. Record stable repository IDs as well as names, fail
   closed on live identity drift, and preserve the exact previous mode and
-  selected-ID set for verified automatic rollback. Add a repository only after
-  its draft-first, complete-before-publication release workflow is merged and
-  proven. Never apply immutable-release policy from an unmerged branch.
+  selected-ID set for verified automatic rollback. Stage additions as pending
+  desired state; apply only after their reviewed draft-first workflows are
+  merged and qualified. Nonempty new crate finalization fails before tags while
+  live owner-enforced immutability is disabled, then retries after coordinated
+  activation. Never apply immutable-release policy from an unmerged branch.
 - Never print or commit administrative tokens, live secrets, or API responses
   containing credentials.
 - Run `bin/validate`, `bash -n`, ShellCheck on governance scripts, the publisher

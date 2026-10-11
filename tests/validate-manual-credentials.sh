@@ -23,8 +23,9 @@ assert_invalid() {
 }
 
 reset_manual_settings() {
-  cp "${root}/config/manual-settings.json" \
-    "${temporary}/config/manual-settings.json"
+  jq '.crates_io_trusted_publishing[].publisher_registration =
+    {state:"pending-owner-registration",observed_on:null,evidence_location:null}' \
+    "${root}/config/manual-settings.json" >"${temporary}/config/manual-settings.json"
 }
 
 rewrite_manual_settings() {
@@ -36,6 +37,7 @@ rewrite_manual_settings() {
   mv "${output}" "${temporary}/config/manual-settings.json"
 }
 
+reset_manual_settings
 ATRINIK_VALIDATION_TODAY=2026-08-31 \
   "${temporary}/bin/validate" >/dev/null
 jq -e '

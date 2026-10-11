@@ -433,19 +433,14 @@ while IFS= read -r crate_record; do
       "repos/${repository}/contents/.github/workflows/publish-crate.yml?ref=${branch_sha}")
     workflow_source=$(jq -er 'select(.encoding == "base64" and .type == "file") | .content' \
       <<<"${workflow}" | base64 --decode)
-    for marker in 'crates-io-release' 'refs/heads/main' 'automatic' \
-      "$(jq -r '.authentication_action' <<<"${crate_record}")"; do
-      if [[ ${workflow_source} != *"${marker}"* ]]; then
-        echo "error: crate publication workflow marker drift for ${repository}: ${marker}" >&2
-        exit 1
-      fi
-    done
+    python3 "${root}/lib/verify_crate_workflow.py" --repository "${repository}" \
+      --repository-id "${repository_id}" <<<"${workflow_source}"
     echo "KEEP ${repository} reviewed publication workflow at ${branch_sha}"
   fi
   crates=$(jq -r '.crates | join(",")' <<<"${crate_record}")
   echo "KEEP ${repository} exact protected main publication identity"
   onboarding_status=PENDING
-  if [[ $(jq -r '.publisher_registration.state' <<<"${crate_record}") == owner-observed-registration ]]; then
+  if jq -e '.source_state == "observed-reviewed-workflow" and .environment_state == "observed" and .publisher_registration.state == "owner-observed-registration"' <<<"${crate_record}" >/dev/null; then
     onboarding_status=OWNER-OBSERVED
   fi
   echo "${onboarding_status} ${repository} crates.io ${crates} via publish-crate.yml / crates-io-release: source=$(jq -r '.source_state' <<<"${crate_record}"), environment=$(jq -r '.environment_state' <<<"${crate_record}"), registration=$(jq -r '.publisher_registration.state' <<<"${crate_record}")"

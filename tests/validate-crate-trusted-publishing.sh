@@ -35,7 +35,7 @@ for filter in \
   '.crates_io_trusted_publishing[0].workflow_trigger = "push"' \
   '.crates_io_trusted_publishing[0].environment_state = "active"' \
   '.crates_io_trusted_publishing[0].publisher_registration.state = "active"' \
-  '.crates_io_trusted_publishing[0].publisher_registration.evidence_location = "invented"' \
+  '.crates_io_trusted_publishing[1].publisher_registration.evidence_location = "invented"' \
   '.crates_io_trusted_publishing[1].bootstrap_crates += ["atrinik-render"]' \
   '.crates_io_trusted_publishing[2].bootstrap_crates += ["atrinik-content"]' \
   '.crates_io_trusted_publishing[0].bootstrap_crates = ["atrinik-protocol"]' \
@@ -63,14 +63,14 @@ done
 jq '.patterns_allowed |= map(select(startswith("rust-lang/crates-io-auth-action@") | not))' \
   "${root}/config/actions-selected.json" >"${temporary}/config/actions-selected.json"
 if "${temporary}/bin/validate" >/dev/null 2>&1; then
-  echo "error: accepted planned publisher without exact action allowance" >&2
+  echo "error: accepted planned publisher without official action allowance" >&2
   exit 1
 fi
 reset_policy
 jq '.patterns_allowed |= map(if startswith("rust-lang/crates-io-auth-action@") then "rust-lang/*" else . end)' \
   "${root}/config/actions-selected.json" >"${temporary}/config/actions-selected.json"
 if "${temporary}/bin/validate" >/dev/null 2>&1; then
-  echo "error: accepted wildcard action allowance instead of exact pin" >&2
+  echo "error: accepted an unrelated broader Rust action allowance" >&2
   exit 1
 fi
 reset_policy
@@ -80,6 +80,11 @@ if "${temporary}/bin/validate" >/dev/null 2>&1; then
   echo "error: accepted broader Rust action access beside the exact pin" >&2
   exit 1
 fi
+reset_policy
+# Dependabot can change the immutable workflow pin without a central version lock.
+jq '.crates_io_trusted_publishing[0].authentication_action = "rust-lang/crates-io-auth-action@2222222222222222222222222222222222222222"' \
+  "${root}/config/manual-settings.json" >"${temporary}/config/manual-settings.json"
+"${temporary}/bin/validate" >/dev/null
 reset_policy
 # Observed onboarding requires coherent source/environment/external proof.
 jq '.crates_io_trusted_publishing[0] |= (
