@@ -39,10 +39,19 @@ for repository in .github classic observatory content-toolkit service-updater we
     "${temporary}/full/config/repository-properties.json" >"${fixture}/config/repository-properties.json"
 done
 
+cp -R "${temporary}/fixture-observatory" "${temporary}/fixture-legacy-branches"
+jq '.maintenance_branches = [
+  {repository: "observatory", branch: "release/2.x", required_ci: []},
+  {repository: "observatory", branch: "release/next#candidate", required_ci: []},
+  {repository: "classic", branch: "foreign/maintenance", required_ci: []}
+]' "${temporary}/full/config/repositories.json" \
+  >"${temporary}/fixture-legacy-branches/config/repositories.json"
+
 run_audit() {
   local scenario=$1 fixture=${2:-focused} repository=observatory
   if [[ ${fixture} == focused ]]; then
     case ${scenario} in
+      legacy-maintenance-*|legacy-multiple) repository=legacy-branches ;;
       wrong-pr-scope|unexpected-codeql|tag-extra-nonrelease|tag-all-nonrelease|tag-repository-nonrelease|inherited-tag-unaffected|foreign-tag) repository=.github ;;
       advanced-config|advanced-setup|advanced-null-languages) repository=classic ;;
       missing-rust) repository=content-toolkit ;;
@@ -119,6 +128,29 @@ assert_drift() {
     exit 1
   fi
 }
+
+# Only the precise GitHub absence response is accepted; legacy policies are
+# manual drift even when their contexts match the declared ruleset contract.
+for scenario in extra-context wrong-app approval force-push matching empty success-error; do
+  assert_drift "legacy-${scenario}" 'unexpected legacy branch protection requires manual review: atrinik/observatory/main'
+done
+for scenario in forbidden not-found wrong-status mismatched-http transport-error wrong-exit non-json success-non-json null array; do
+  assert_drift "legacy-${scenario}" 'legacy branch protection could not be read: atrinik/observatory/main'
+done
+for scenario in extra-context approval; do
+  assert_drift "legacy-maintenance-${scenario}" 'unexpected legacy branch protection requires manual review: atrinik/observatory/release/next#candidate'
+done
+assert_drift legacy-maintenance-forbidden 'legacy branch protection could not be read: atrinik/observatory/release/next#candidate'
+: >"${temporary}/api.log"
+output=$(run_audit legacy-multiple)
+grep -Fq 'Governance audit passed:' <<<"${output}"
+for branch in main release%2F2.x release%2Fnext%23candidate; do
+  [[ $(grep -Fxc "repos/atrinik/observatory/branches/${branch}/protection" "${temporary}/api.log") == 1 ]]
+done
+if grep -Fq 'foreign' "${temporary}/api.log"; then
+  echo 'maintenance protection must remain scoped to its repository' >&2
+  exit 1
+fi
 
 assert_drift unmanaged 'active repository is not in the desired-state inventory'
 assert_drift merge-drift 'repository merge policy drift'

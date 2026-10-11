@@ -813,7 +813,7 @@ def advanced_codeql_coverage(coordinate, branch, head, minima, selected, declara
     raise Deferred("required advanced CodeQL partition upload missing within bounded evidence")
 
 
-def advanced_workflow_wiring(source):
+def advanced_workflow_wiring(source, default_branch):
     """Check executable dataflow, not the honesty of repository-owned Python.
 
     The supported ordinary-job shape is deliberately bounded. Producer-owned
@@ -944,6 +944,42 @@ def advanced_workflow_wiring(source):
         return path
 
     execution_settings(workflow, "workflow")
+    check(isinstance(default_branch, str) and bool(default_branch), "default branch missing")
+    events = workflow.get("on")
+    if isinstance(events, str):
+        events = {events: None}
+    elif isinstance(events, list):
+        check(all(isinstance(event, str) for event in events)
+              and len(events) == len(set(events)), "workflow events malformed")
+        events = dict.fromkeys(events)
+    check(isinstance(events, dict) and "pull_request" in events,
+          "pull_request trigger missing")
+    pull_request = events["pull_request"]
+    if pull_request is None:
+        pull_request = {}
+    # Do not partially interpret GitHub glob/exclusion or workflow path filters:
+    # they can leave a required producer pending. Path selection belongs in the
+    # trusted classifier after the workflow has started for the pull request.
+    check(isinstance(pull_request, dict) and set(pull_request) <= {"branches", "types"},
+          "pull_request filters unsupported")
+    if "branches" in pull_request:
+        branches = pull_request["branches"]
+        check(isinstance(branches, list) and bool(branches)
+              and all(isinstance(branch, str) and branch
+                      and not any(char in branch for char in "*?[]!+\\") for branch in branches)
+              and default_branch in branches, "pull_request does not cover the default branch")
+    activities = {"opened", "synchronize", "reopened"}
+    if "types" in pull_request:
+        # Values need an explicit enum: the Actions loader preserves YAML
+        # booleans as text, so an invalid `false` must not become an event name.
+        supported = activities | {"assigned", "unassigned", "labeled", "unlabeled", "edited", "closed",
+                                  "converted_to_draft", "locked", "unlocked", "enqueued", "dequeued",
+                                  "milestoned", "demilestoned", "ready_for_review", "review_requested",
+                                  "review_request_removed", "auto_merge_enabled", "auto_merge_disabled"}
+        types = pull_request["types"]
+        check(isinstance(types, list) and all(isinstance(value, str) and value in supported for value in types)
+              and len(types) == len(set(types)) and activities <= set(types),
+              "pull_request activity coverage incomplete")
     jobs = workflow.get("jobs")
     check(isinstance(jobs, dict) and set(jobs) == {"classify", "analyze", "codeql-validation"},
           "requires ordinary classification, analysis and validation jobs")
@@ -1021,7 +1057,7 @@ def advanced_codeql(coordinate, branch, head, minima, partition_minima):
     for path in (".github/workflows/codeql.yml", "tools/ci/classify_changes.py", "tools/ci/require_checks.py"):
         sources[path] = contents(coordinate, path, branch)
         require(contents(coordinate, path, head) == sources[path], "advanced CodeQL producer source is stale")
-    advanced_workflow_wiring(sources[".github/workflows/codeql.yml"])
+    advanced_workflow_wiring(sources[".github/workflows/codeql.yml"], branch)
     declarations = classifier_partitions(sources["tools/ci/classify_changes.py"], partition_minima)
     events = classifier_full_events(sources["tools/ci/classify_changes.py"])
     run = latest_full_codeql_run(coordinate, branch, head, events)

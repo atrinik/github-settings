@@ -1150,6 +1150,21 @@ security_ruleset_matches() {
   ' <<<"${current}" >/dev/null
 }
 
+security_ruleset_restoration_allowed() {
+  local repository=$1 id=$2 template=$3 current=$4
+  jq -e --argjson id "${id}" --slurpfile desired "${template}" \
+    --arg source "${organization}/${repository}" '
+    .id == $id and .name == $desired[0].name and
+    .source_type == "Repository" and .source == $source and
+    (.enforcement | IN("active", "disabled", "evaluate"))
+  ' <<<"${current}" >/dev/null &&
+    security_ruleset_matches "${template}" "$(jq --slurpfile desired "${template}" '
+      .enforcement = $desired[0].enforcement |
+      .conditions.ref_name.include = $desired[0].conditions.ref_name.include |
+      .conditions.ref_name.exclude = $desired[0].conditions.ref_name.exclude
+    ' <<<"${current}")"
+}
+
 security_gate_applies_to_default_branch() {
   local repository=$1 kind=$2 id=$3 metadata branch effective
   metadata=$(github_api "repos/${organization}/${repository}") || return 1
@@ -1249,17 +1264,7 @@ publish_security_merge_rulesets() {
       current='{}'
       if [[ -n ${id} ]]; then
         current=$(github_api "repos/${organization}/${repository}/rulesets/${id}")
-        if ! jq -e --argjson id "${id}" --arg name "${name}" \
-          --arg source "${organization}/${repository}" '
-          .id == $id and .name == $name and
-          .source_type == "Repository" and .source == $source and
-          (.enforcement | IN("active", "disabled", "evaluate"))
-        ' <<<"${current}" >/dev/null ||
-          ! security_ruleset_matches "${template}" "$(jq --slurpfile desired "${template}" '
-            .enforcement = $desired[0].enforcement |
-            .conditions.ref_name.include = $desired[0].conditions.ref_name.include |
-            .conditions.ref_name.exclude = $desired[0].conditions.ref_name.exclude
-          ' <<<"${current}")"; then
+        if ! security_ruleset_restoration_allowed "${repository}" "${id}" "${template}" "${current}"; then
           echo "error: security gate ownership or managed rule identity changed; retained: ${repository} ${name}" >&2
           return 1
         fi
@@ -1294,6 +1299,20 @@ publish_security_merge_rulesets() {
         return 1
       fi
       if [[ -n ${id} ]]; then
+        # Re-read after producer and repository checks: a concurrent policy edit
+        # must not be overwritten with the earlier restoration decision.
+        current=$(github_api "repos/${organization}/${repository}/rulesets/${id}") || {
+          echo "error: security gate final read failed; retained: ${repository} ${name}" >&2
+          return 1
+        }
+        if ! security_ruleset_restoration_allowed "${repository}" "${id}" "${template}" "${current}"; then
+          echo "error: security gate changed during restoration preflight; retained: ${repository} ${name}" >&2
+          return 1
+        fi
+        if security_ruleset_matches "${template}" "${current}"; then
+          echo "KEEP /repos/${organization}/${repository}/rulesets/${id} ${name}"
+          continue
+        fi
         run_api PUT "repos/${organization}/${repository}/rulesets/${id}" "${template}"
       else
         run_api POST "repos/${organization}/${repository}/rulesets" "${template}"

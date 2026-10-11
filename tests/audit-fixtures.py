@@ -24,6 +24,7 @@ args = sys.argv[1:]
 if not args or args.pop(0) != 'api':
     reject('API only')
 slurp = False
+include = False
 endpoint = None
 while args:
     arg = args.pop(0)
@@ -36,6 +37,8 @@ while args:
         pass
     elif arg == '--slurp':
         slurp = True
+    elif arg == '--include':
+        include = True
     elif arg.startswith('-'):
         reject(f'unexpected or mutating API flag: {arg}')
     else:
@@ -236,6 +239,57 @@ elif endpoint.startswith('repos/atrinik/'):
             payload['default_workflow_permissions'] = 'write'
         if scenario == 'repository-approval' and target:
             payload['can_approve_pull_request_reviews'] = True
+    elif path.startswith('branches/') and path.endswith('/protection'):
+        if not include:
+            reject('legacy protection requires an observable HTTP status')
+        branch = path.removeprefix('branches/').removesuffix('/protection')
+        if branch not in ('main', 'release%2F2.x', 'release%2Fnext%23candidate'):
+            reject('unexpected or unencoded branch: ' + branch)
+        code, payload, result = 404, {'message': 'Branch not protected', 'status': '404'}, 1
+        selected = target and branch == 'main'
+        if scenario.startswith('legacy-maintenance-'):
+            selected = target and branch == 'release%2Fnext%23candidate'
+        if selected:
+            variant = scenario.removeprefix('legacy-maintenance-').removeprefix('legacy-')
+            policies = {
+                'extra-context': {'required_status_checks': {'checks': [
+                    {'context': 'Unconfigured check', 'app_id': 15368}]}},
+                'wrong-app': {'required_status_checks': {'checks': [
+                    {'context': 'Conventional PR title', 'app_id': 99}]}},
+                'approval': {'required_pull_request_reviews': {'required_approving_review_count': 1}},
+                'force-push': {'allow_force_pushes': {'enabled': True}},
+                'matching': {'required_status_checks': {'checks': [
+                    {'context': context, 'app_id': 15368}
+                    for context in repositories['required_ci'][repository]]}},
+                'empty': {},
+            }
+            if variant in policies:
+                code, payload, result = 200, policies[variant], 0
+            elif variant == 'forbidden':
+                code, payload = 403, {'message': 'Resource not accessible by integration', 'status': '403'}
+            elif variant == 'not-found':
+                payload['message'] = 'Not Found'
+            elif variant == 'wrong-status':
+                payload['status'] = '403'
+            elif variant == 'mismatched-http':
+                code = 403
+            elif variant == 'transport-error':
+                reject('connection failed')
+            elif variant == 'wrong-exit':
+                result = 2
+            elif variant == 'success-error':
+                code, result = 200, 0
+            elif variant == 'non-json':
+                payload = '<html>service unavailable</html>'
+            elif variant == 'success-non-json':
+                code, payload, result = 200, '<html>service unavailable</html>', 0
+            elif variant == 'null':
+                payload = None
+            elif variant == 'array':
+                payload = [payload]
+        print(f'HTTP/2.0 {code} Fixture\r\nContent-Type: application/json\r\n\r')
+        print(payload if isinstance(payload, str) else json.dumps(payload))
+        sys.exit(result)
     elif path == 'properties/values':
         payload = [{'property_name': key, 'value': value}
                    for key, value in properties['repositories'][repository].items()]

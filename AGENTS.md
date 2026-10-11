@@ -238,6 +238,8 @@
   dependency: bind classification outputs, matrix, scoped config, official
   full-SHA init/analyze actions, and the always-running aggregate. Reject
   duplicate keys, disconnected or disabled steps, and failure suppression.
+  Require ordinary pull-request triggers covering the live default branch and
+  opened/synchronize/reopened events without path filters.
   Producer helpers remain trusted; preserve owner-controlled action updates,
   category names and paths without a duplicate version/path catalog.
 - `config/actions-sha-pinning.json` persists SHA rollout as `pending` with no
@@ -260,3 +262,10 @@
   Delete only the unchanged Actions-bound template after fresh identity/archive
   and payload checks. Preserve modified/foreign rules and missing-provenance
   rules with actionable `SKIP`; retain records for idempotent reruns.
+
+- Before updating an existing security gate, re-read and revalidate its identity
+  and recognized payload, retaining concurrent modifications. Audit full legacy
+  protection on active default and declared maintenance branches; any presence
+  is drift under the canonical ruleset contract. Only verified unprotected
+  responses count as absent; unreadable evidence fails closed and audit never
+  removes protections.

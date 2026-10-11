@@ -157,12 +157,20 @@ full commit pins belong in workflows, not redundant version assertions.
 Advanced CodeQL readiness must validate executable YAML wiring from classifier
 invocation and outputs through the dynamic analysis matrix, scoped generated
 configuration, official full-SHA CodeQL actions, and the unconditional aggregate.
-Use the existing validation dependency with duplicate-key rejection. Test
+Require the live default branch's ordinary pull-request trigger without path
+filters, including opened, synchronize and reopened events. Use the existing
+validation dependency with duplicate-key rejection. Test
 comments-only markers, disconnected inputs, disabled or failure-suppressed steps,
 checkout revision drift, and ambiguous YAML; preserve full-SHA updates, formatting
 changes, additional partitions, and category renames. Classification path
 semantics remain in trusted producer helpers; do not add a central source-path or
 action-version catalog or claim resistance to malicious repository writers.
+
+Security gate updates must re-read and validate ownership and the recognized
+payload immediately before PUT, preserving concurrent modifications. Audit
+legacy protection on active default and maintenance branches as drift under the
+canonical ruleset contract; distinguish verified unprotected responses from
+unreadable evidence, and never remove protection during audit.
 
 Crates.io publication contracts bind exact repository/workflow/environment and
 official auth-action identities with full immutable workflow SHA references;

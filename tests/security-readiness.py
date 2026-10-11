@@ -12,7 +12,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -278,7 +278,8 @@ class Fixture:
             return content(self.before if "ref=" + self.pr["base"]["sha"] in endpoint else self.after)
         if "/contents/" in endpoint:
             path = endpoint.split("/contents/")[1].split("?")[0]
-            sources = self.codeql_sources if "ref=main" in endpoint else self.codeql_head_sources
+            ref = parse_qs(urlparse(endpoint).query).get("ref", [None])[0]
+            sources = self.codeql_sources if ref == self.metadata["default_branch"] else self.codeql_head_sources
             return content(sources[path])
         if "/actions/workflows/codeql.yml/runs" in endpoint:
             return {"workflow_runs": [copy.deepcopy(self.codeql_run)]}
@@ -330,7 +331,7 @@ class Fixture:
             value = copy.deepcopy(self.suite)
             value["id"] = int(endpoint.rsplit("/", 1)[1])
             return value
-        if "/branches/main" in endpoint:
+        if endpoint == "repos/atrinik/example/branches/" + quote(self.metadata["default_branch"], safe=""):
             return {"commit": {"sha": self.branch_head}}
         if "/code-scanning/analyses?" in endpoint:
             page = int(parse_qs(urlparse(endpoint).query)["page"][0])
@@ -1323,6 +1324,91 @@ class ReadinessTests(unittest.TestCase):
             self.assertEqual(result, 2, message)
             self.assertIn("install requirements-validation.txt", message)
             self.assertEqual(self.invoke("dependency")[0], 0)
+
+    def test_codeql_advanced_full_run_cannot_replace_pull_request_trigger(self):
+        for event in ('push', 'schedule', 'workflow_dispatch'):
+            for triggers in (None, 'push', ['push', 'workflow_dispatch'],
+                             {'push': {'branches': ['main']}, 'schedule': [{'cron': '0 0 * * *'}],
+                              'workflow_dispatch': None}, {'pull_request_target': None}):
+                with self.subTest(event=event, triggers=triggers):
+                    self.enable_advanced()
+                    self.fixture.codeql_run['event'] = event
+                    document = self.codeql_document()
+                    if triggers is None:
+                        del document['on']
+                    else:
+                        document['on'] = triggers
+                    self.set_codeql_document(document)
+                    self.assert_deferred('codeql', 'pull_request trigger missing')
+
+    def test_codeql_advanced_pull_request_filters_cannot_skip_required_producer(self):
+        rejected = [False, [], 'main', {'branches': ['develop']},
+                    {'branches': []}, {'branches': 'main'}, {'branches': None},
+                    {'branches': ['main', '!main']}, {'branches': ['**']},
+                    {'branches': ['main', 3]}, {'branches-ignore': ['main']},
+                    {'branches-ignore': ['unrelated']}, {'paths': ['client/**']},
+                    {'paths': ['**']}, {'paths-ignore': ['docs/**']},
+                    {'branches': ['main'], 'paths-ignore': []},
+                    {'tags': ['v*']}, {'types': None}, {'types': 'opened'},
+                    {'types': []}, {'types': ['opened', 'reopened']},
+                    {'types': ['synchronize', 'reopened']}, {'types': ['opened', 'synchronize']},
+                    {'types': ['opened', 'synchronize', 'reopened', False]},
+                    {'types': ['opened', 'synchronize', 'reopened', 'invented']},
+                    {'types': ['opened', 'synchronize', 'reopened', 'opened']}]
+        for trigger in rejected:
+            with self.subTest(trigger=trigger):
+                self.enable_advanced()
+                document = self.codeql_document()
+                document['on']['pull_request'] = trigger
+                self.set_codeql_document(document)
+                self.assert_deferred('codeql', 'pull_request')
+
+    def test_codeql_advanced_pull_request_event_forms_and_additional_types_ready(self):
+        for triggers in ('pull_request', ['push', 'pull_request', 'workflow_dispatch'],
+                         {'pull_request': None}, {'pull_request': {}},
+                         {'pull_request': {'branches': ['main', 'maintenance']}},
+                         {'pull_request': {'types': ['opened', 'synchronize', 'reopened']}},
+                         {'pull_request': {'branches': ['main'], 'types': [
+                             'ready_for_review', 'edited', 'reopened', 'opened', 'synchronize']}}):
+            with self.subTest(triggers=triggers):
+                self.enable_advanced()
+                document = self.codeql_document()
+                document['on'] = triggers
+                self.set_codeql_document(document)
+                result, message = self.invoke('codeql')
+                self.assertEqual(result, 0, message)
+
+    def test_codeql_advanced_pull_request_uses_fresh_default_branch(self):
+        self.enable_advanced()
+        branch = 'release/current'
+        self.fixture.metadata['default_branch'] = branch
+        self.fixture.codeql_run['head_branch'] = branch
+        for analysis in self.fixture.analyses:
+            analysis['ref'] = 'refs/heads/' + branch
+        self.assert_deferred('codeql', 'pull_request does not cover the default branch')
+        document = self.codeql_document()
+        document['on']['pull_request']['branches'] = [branch]
+        document['on']['push']['branches'] = [branch]
+        self.set_codeql_document(document)
+        result, message = self.invoke('codeql')
+        self.assertEqual(result, 0, message)
+        self.assertIn('repos/atrinik/example/branches/release%2Fcurrent', self.fixture.calls)
+
+    def test_codeql_advanced_default_branch_change_during_preflight_deferred(self):
+        self.enable_advanced()
+        reads = 0
+
+        def drift(endpoint):
+            nonlocal reads
+            result = self.fixture(endpoint)
+            if endpoint == 'repos/atrinik/example':
+                reads += 1
+                if reads > 1:
+                    result = dict(result, default_branch='release/current')
+            return result
+
+        with patch.object(readiness, 'api', drift):
+            self.assert_deferred('codeql', 'repository default branch changed')
 
     def test_codeql_advanced_comments_cannot_prove_executable_wiring(self):
         self.enable_advanced()

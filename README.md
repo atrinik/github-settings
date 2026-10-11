@@ -289,6 +289,19 @@ Rollout is owned by an organization administrator:
    as drift, never as initial rollout pending. A live true setting is always
    preserved. Full SHA pinning does not prove an allowed action is trustworthy.
 
+Advanced CodeQL qualification also requires ordinary pull-request triggers
+covering the live default branch and opened, synchronize and reopened events,
+without workflow path filters. Successful manual or scheduled analysis cannot
+qualify a missing or retargeted pull-request producer. Before updating an
+existing security gate, publication rechecks its ownership and recognized
+payload immediately before the write, retaining concurrent policy changes.
+
+Rulesets are the canonical branch protection contract. Audit also reads legacy
+protection on every active default branch and declared maintenance branch. Any
+legacy protection is drift requiring separate reviewed manual remediation;
+unreadable responses fail closed. Only a verified unprotected-branch response
+counts as absent. The audit never removes branch protections.
+
 Repository-scope retirement of an existing `03 - Required CI` rule also needs a
 reviewed `config/retired-required-ci.json` record with its exact repository and
 ruleset IDs and previous required contexts. Remove the repository from

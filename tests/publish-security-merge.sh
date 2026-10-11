@@ -75,7 +75,12 @@ github_api() {
     '{method: "GET", endpoint: $endpoint}' >>"${api_log}"
   case ${endpoint} in
   repos/atrinik/content-toolkit)
-    printf '%s\n' "${repository_state}"
+    if [[ -n ${gate_metadata_filter} ]]; then
+      [[ ${gate_metadata_filter} != unreadable ]] || return 1
+      jq "${gate_metadata_filter}" <<<"${repository_state}"
+    else
+      printf '%s\n' "${repository_state}"
+    fi
     ;;
   repos/atrinik/content-toolkit/rules/branches/main | repos/atrinik/content-toolkit/rules/branches/release%2Fcurrent)
     if [[ ${effective_state} == covering ]]; then
@@ -118,7 +123,19 @@ github_api() {
   repos/atrinik/content-toolkit/rulesets/6 | repos/atrinik/content-toolkit/rulesets/7)
     local template=code-scanning
     [[ ${endpoint##*/} != 7 ]] || template=dependency-review
-    if [[ ${ruleset_state} == api-default-* ]]; then
+    if [[ ${ruleset_state} == restoration-race ]]; then
+      local filter=.
+      if [[ ${endpoint##*/} == "${gate_update_id}" ]] &&
+        (( $(jq -s --arg endpoint "${endpoint}" '[.[] | select(.endpoint == $endpoint)] | length' "${api_log}") >= 2 )); then
+        [[ ${gate_update_filter} != unreadable ]] || return 1
+        filter=${gate_update_filter}
+      fi
+      jq --argjson id "${endpoint##*/}" --argjson target "${gate_update_id}" '
+        . + {id: $id, source_type: "Repository", source: "atrinik/content-toolkit"} |
+        if $id == $target then .enforcement = "disabled" else . end' \
+        "${root}/config/rulesets/${template}.json" | jq "${filter}"
+      return
+    elif [[ ${ruleset_state} == api-default-* ]]; then
       jq --argjson id "${endpoint##*/}" --arg state "${ruleset_state}" '
         . + {id: $id, source_type: "Repository", source: "atrinik/content-toolkit"} |
         .bypass_actors[0].actor_id = null |
@@ -245,6 +262,9 @@ reset_case() {
   : >"${readiness_log}"
   codeql_state='{"state":"configured","query_suite":"default","languages":["python","javascript-typescript"]}'
   ruleset_state=missing
+  gate_update_id=6
+  gate_update_filter=.
+  gate_metadata_filter=
   effective_state=covering
   repository_state='{"id":123,"full_name":"atrinik/content-toolkit","archived":false,"default_branch":"main"}'
   workflow_state='{"default_workflow_permissions":"write","can_approve_pull_request_reviews":true}'
@@ -373,6 +393,89 @@ for policy_scope in organization repository; do
         [.[].payload] == [$codeql[0], $dependency[0]] and
         all(.[]; .method == $method)' "${api_log}" >/dev/null
       [[ ! -s ${readiness_log} ]]
+    done
+  done
+done
+
+# Changes made after the initial GET cannot be erased by restoration PUT.
+for policy_scope in organization repository; do
+  for gate_update_target in 6 7; do
+    common_filters=(
+      '.id = 999' '.source_type = "Organization"' '.source = "foreign/content-toolkit"'
+      '.name = "Renamed gate"' '.target = "tag"' '.enforcement = "unknown"'
+      '.bypass_actors[0].bypass_mode = "always"' '.bypass_actors = []'
+      '.rules[0].parameters.unknown_future_control = true'
+      '.conditions.ref_name.unknown_future_scope = true' '.rules += [{type:"deletion"}]'
+      'unreadable'
+    )
+    if [[ ${gate_update_target} == 6 ]]; then
+      common_filters+=(
+        '.rules[0].parameters.code_scanning_tools[0].tool = "Other tool"'
+        '.rules[0].parameters.code_scanning_tools[0].security_alerts_threshold = "critical"'
+      )
+    else
+      common_filters+=(
+        '.rules[0].parameters.required_status_checks[0].context = "Unrelated context"'
+        '.rules[0].parameters.required_status_checks[0].integration_id = 9'
+        '.rules[0].parameters.do_not_enforce_on_create = true'
+        '.rules[0].parameters.do_not_enforce_on_create = null'
+      )
+    fi
+    for filter in "${common_filters[@]}"; do
+      reset_case
+      ruleset_state=restoration-race
+      gate_update_id=${gate_update_target}
+      gate_update_filter=${filter}
+      jq '.activation |= with_entries(.value |= with_entries(.value = "enforced"))' \
+        "${security_merge_config}" >"${temporary}/enforced.json"
+      cp "${temporary}/enforced.json" "${security_merge_config}"
+      # shellcheck source=/dev/null
+      if source "${temporary}/dispatch.sh" >"${temporary}/concurrent-gate.txt" 2>&1; then
+        echo "expected concurrent gate change to be retained: ${filter}" >&2
+        exit 1
+      fi
+      assert_no_writes
+      grep -Fq 'retained:' "${temporary}/concurrent-gate.txt"
+      jq -se --arg endpoint "repos/atrinik/content-toolkit/rulesets/${gate_update_id}" \
+        '[.[] | select(.endpoint == $endpoint)] | length == 2' "${api_log}" >/dev/null
+    done
+    # Unchanged ownership, explicit API defaults, and allowed enforcement/ref
+    # restoration still converge; a concurrent completed repair causes KEEP.
+    for filter in '.' \
+      '.bypass_actors[0].actor_id = null | if .rules[0].type == "required_status_checks" then .rules[0].parameters.do_not_enforce_on_create = false else . end' \
+      '.enforcement = "evaluate" | .conditions.ref_name.include = ["refs/heads/other"]' \
+      '.enforcement = "active"'; do
+      reset_case
+      ruleset_state=restoration-race
+      gate_update_id=${gate_update_target}
+      gate_update_filter=${filter}
+      jq '.activation |= with_entries(.value |= with_entries(.value = "enforced"))' \
+        "${security_merge_config}" >"${temporary}/enforced.json"
+      cp "${temporary}/enforced.json" "${security_merge_config}"
+      # shellcheck source=/dev/null
+      source "${temporary}/dispatch.sh" >"${temporary}/safe-concurrent-gate.txt"
+      if [[ ${filter} == '.enforcement = "active"' ]]; then
+        assert_no_writes
+      else
+        jq -se --arg endpoint "repos/atrinik/content-toolkit/rulesets/${gate_update_id}" '
+          [.[] | select(.method != "GET")] | length == 1 and
+          .[0].method == "PUT" and .[0].endpoint == $endpoint' "${api_log}" >/dev/null
+      fi
+    done
+    for filter in '.archived = true' '.id = 999' '.full_name = "foreign/content-toolkit"' unreadable; do
+      reset_case
+      ruleset_state=restoration-race
+      gate_update_id=${gate_update_target}
+      gate_metadata_filter=${filter}
+      jq '.activation |= with_entries(.value |= with_entries(.value = "enforced"))' \
+        "${security_merge_config}" >"${temporary}/enforced.json"
+      cp "${temporary}/enforced.json" "${security_merge_config}"
+      # shellcheck source=/dev/null
+      if source "${temporary}/dispatch.sh" >"${temporary}/fresh-repository.txt" 2>&1; then
+        echo 'expected fresh repository identity/archive/read failure to block PUT' >&2
+        exit 1
+      fi
+      assert_no_writes
     done
   done
 done

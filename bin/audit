@@ -311,6 +311,32 @@ check_ruleset() {
   fi
 }
 
+# Rulesets are the declared protection contract in both publisher scopes.
+# Legacy protection layers additional requirements outside the rules endpoint;
+# retain it for manual review rather than silently treating rulesets as complete.
+audit_legacy_protection() {
+  local repository=$1 branch=$2 encoded response status=0 body
+  encoded=$(jq -rn --arg branch "${branch}" '$branch | @uri')
+  response=$(github_api --include \
+    "repos/${organization}/${repository}/branches/${encoded}/protection" \
+    2>"${temporary}/legacy-protection.err") || status=$?
+  response=${response//$'\r'/}
+  body=${response#*$'\n\n'}
+  if [[ ${status} == 1 && ${response%%$'\n'*} =~ ^HTTP/[0-9.]+\ 404(\ |$) ]] &&
+    jq -se 'length == 1 and (.[0] | type == "object" and
+      .message == "Branch not protected" and .status == "404")' \
+      <<<"${body}" >/dev/null 2>&1; then
+    return
+  fi
+  if [[ ${status} == 0 && ${response%%$'\n'*} =~ ^HTTP/[0-9.]+\ 200(\ |$) ]] &&
+    jq -se 'length == 1 and (.[0] | type == "object")' \
+      <<<"${body}" >/dev/null 2>&1; then
+    record_finding "unexpected legacy branch protection requires manual review: ${organization}/${repository}/${branch}"
+  else
+    record_finding "legacy branch protection could not be read: ${organization}/${repository}/${branch}"
+  fi
+}
+
 audit_security() {
   local repository=$1 desired="${root}/config/code-security.json" setup="${root}/config/codeql-default-setup.json"
   local current languages
@@ -413,6 +439,12 @@ for repository in "${!expected_active[@]}"; do
     rulesets='[]'
   fi
   branch=$(jq -r '.default_branch' "${repository_defaults}")
+  audit_legacy_protection "${repository}" "${branch}"
+  while IFS= read -r maintenance_branch; do
+    audit_legacy_protection "${repository}" "${maintenance_branch}"
+  done < <(jq -r --arg repository "${repository}" '
+    .maintenance_branches[] | select(.repository == $repository) | .branch
+  ' "${repositories_config}")
   effective='[]'
   if ! effective=$(github_api --paginate --slurp \
     "repos/${organization}/${repository}/rules/branches/${branch}?per_page=100" | jq -e 'add'); then
