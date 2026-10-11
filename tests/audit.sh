@@ -78,7 +78,7 @@ output=$(run_audit legacy-security)
 grep -Fq 'Governance audit passed:' <<<"${output}"
 output=$(run_audit repository-rulesets)
 grep -Fq 'Governance audit passed:' <<<"${output}"
-for scenario in scope-order inherited-tag-unaffected foreign-tag sha-enforced-on languages-readable languages-empty advanced-null-languages; do
+for scenario in api-defaults-omitted api-default-order scope-order inherited-tag-unaffected foreign-tag sha-enforced-on languages-readable languages-empty advanced-null-languages; do
   output=$(run_audit "${scenario}")
   grep -Fq 'Governance audit passed:' <<<"${output}"
 done
@@ -116,6 +116,13 @@ for scenario in tag-all-scope tag-extra-repo tag-extra-exclude tag-all-nonreleas
   assert_drift "${scenario}" "ruleset scope or policy drift '04 - Immutable release tags'"
 done
 assert_drift tag-repository-nonrelease 'unexpected managed release-tag protection: atrinik/.github'
+for scenario in api-required-reviewers api-extra-approval api-restricted-merges api-duplicate-merges \
+  api-malformed-reviewers api-malformed-approval api-malformed-merges api-unknown-pr-field; do
+  assert_drift "${scenario}" "ruleset scope or policy drift '02 - Changes through pull requests'"
+done
+for scenario in api-create-exemption api-malformed-create-exemption; do
+  assert_drift "${scenario}" "ruleset scope or policy drift '03 - Required CI - observatory'"
+done
 assert_drift pr-all-scope "ruleset scope or policy drift '02 - Changes through pull requests'"
 assert_drift default-extra-exclude "ruleset scope or policy drift '01 - Default branch integrity'"
 assert_drift repository-scope-extra "ruleset scope or policy drift '07 - Dependency review'"

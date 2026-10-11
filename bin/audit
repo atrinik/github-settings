@@ -227,6 +227,25 @@ organization_ruleset_scope() {
     else error("unknown managed ruleset scope") end'
 }
 
+ruleset_normalization='
+# Omitted request fields are expanded by GitHub to these exact defaults.
+# Preserve nondefault, malformed and unknown fields as observable drift.
+def normalize_rules:
+  map(if .type == "pull_request" then
+    .parameters |= (
+      if .required_reviewers == [] then del(.required_reviewers) else . end |
+      if .require_extra_approval_for_unattributed_changes == true then
+        del(.require_extra_approval_for_unattributed_changes) else . end |
+      if (.allowed_merge_methods | type) == "array" and
+        (.allowed_merge_methods | sort) == ["merge", "rebase", "squash"] then
+        del(.allowed_merge_methods) else . end)
+  elif .type == "required_status_checks" then
+    .parameters |= (
+      if .do_not_enforce_on_create == false then del(.do_not_enforce_on_create) else . end |
+      .required_status_checks |= sort_by(.context, .integration_id))
+  else . end) | sort_by(.type);
+'
+
 check_ruleset() {
   local repository=$1 name=$2 template=$3 list=$4
   local entry id source endpoint detail wanted scope
@@ -275,7 +294,7 @@ check_ruleset() {
     scope=$(organization_ruleset_scope "${name}" "${repository}")
     wanted=$(jq --argjson scope "${scope}" '.conditions.repository_name = $scope' <<<"${wanted}")
   fi
-  if ! jq -e --argjson wanted "${wanted}" '
+  if ! jq -e --argjson wanted "${wanted}" "${ruleset_normalization}"'
       # GitHub returns null for OrganizationAdmin, whose desired actor ID is 1.
       def normalize_bypass:
         map(if .actor_type == "OrganizationAdmin" and .actor_id == null then
@@ -286,10 +305,7 @@ check_ruleset() {
       .enforcement == $wanted.enforcement and .target == $wanted.target and
       (.bypass_actors | normalize_bypass) == ($wanted.bypass_actors | normalize_bypass) and
       (.conditions | normalize_conditions) == ($wanted.conditions | normalize_conditions) and
-      (.rules | map(if .type == "required_status_checks" then
-        .parameters.required_status_checks |= sort_by(.context, .integration_id) else . end) | sort_by(.type)) ==
-        ($wanted.rules | map(if .type == "required_status_checks" then
-        .parameters.required_status_checks |= sort_by(.context, .integration_id) else . end) | sort_by(.type))
+      (.rules | normalize_rules) == ($wanted.rules | normalize_rules)
     ' <<<"${detail}" >/dev/null; then
     record_finding "ruleset scope or policy drift '${name}': ${organization}/${repository}"
   fi
@@ -457,7 +473,8 @@ for repository in "${!expected_active[@]}"; do
       "${advisory_windows}" >/dev/null; then template="${root}/config/rulesets/pull-request-gate-classic.json"; fi
     check_ruleset "${repository}" "$(jq -r .name "${template}")" "${template}" "${rulesets}" "${metadata_file}"
     if ! jq -e --slurpfile desired "${template}" \
-      '[.[] | select(.type == "pull_request") | .parameters] == [$desired[0].rules[0].parameters]' \
+      "${ruleset_normalization}"'([.[] | select(.type == "pull_request") | {type, parameters}] |
+        normalize_rules) == ($desired[0].rules | normalize_rules)' \
       <<<"${effective}" >/dev/null; then
       record_finding "effective pull-request policy drift: ${organization}/${repository}"
     fi

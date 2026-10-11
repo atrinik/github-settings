@@ -76,6 +76,38 @@ def rulesets(repository):
             item['rules'][0]['parameters']['required_status_checks'] = [
                 {'context': context, 'integration_id': 15368}
                 for context in repositories['required_ci'][repository]]
+        # Actual ruleset GET responses expand omitted request parameters.
+        for rule in item['rules']:
+            if rule['type'] == 'pull_request':
+                rule['parameters'].update(required_reviewers=[],
+                    require_extra_approval_for_unattributed_changes=True,
+                    allowed_merge_methods=['merge', 'squash', 'rebase'])
+                deviations = {
+                    'api-required-reviewers': ('required_reviewers', [{'reviewer': {'id': 42, 'type': 'Team'}, 'minimum_approvals': 1}]),
+                    'api-extra-approval': ('require_extra_approval_for_unattributed_changes', False),
+                    'api-restricted-merges': ('allowed_merge_methods', ['squash']),
+                    'api-duplicate-merges': ('allowed_merge_methods', ['merge', 'squash', 'rebase', 'merge']),
+                    'api-malformed-reviewers': ('required_reviewers', None),
+                    'api-malformed-approval': ('require_extra_approval_for_unattributed_changes', 'true'),
+                    'api-malformed-merges': ('allowed_merge_methods', 'merge,squash,rebase'),
+                    'api-unknown-pr-field': ('unknown_future_control', False),
+                }
+                if scenario in deviations:
+                    key, value = deviations[scenario]
+                    rule['parameters'][key] = value
+                if scenario == 'api-default-order':
+                    rule['parameters']['allowed_merge_methods'].reverse()
+            if rule['type'] == 'required_status_checks':
+                rule['parameters']['do_not_enforce_on_create'] = False
+                if scenario == 'api-create-exemption':
+                    rule['parameters']['do_not_enforce_on_create'] = True
+                if scenario == 'api-malformed-create-exemption':
+                    rule['parameters']['do_not_enforce_on_create'] = None
+        if scenario == 'api-defaults-omitted':
+            for rule in item['rules']:
+                for key in ('required_reviewers', 'require_extra_approval_for_unattributed_changes',
+                            'allowed_merge_methods', 'do_not_enforce_on_create'):
+                    rule.get('parameters', {}).pop(key, None)
         item.update(id=active.index(repository) * 10 + index,
                     source_type='Repository' if scenario == 'repository-rulesets' or
                     template in ('code-scanning', 'dependency-review') else 'Organization')
