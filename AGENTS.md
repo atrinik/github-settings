@@ -116,6 +116,13 @@
   branch policies and reviewer sets, and variable and secret names only. Never
   record credential values. Provision them only after the owning workflow is
   merged and reviewed, and do not imply that `bin/publish` applies them.
+- Planned crates.io Trusted Publishing belongs in the value-free manual
+  inventory with exact repository, workflow, environment and immutable action
+  identities. Keep its desired maintainer review policy explicit; pending source
+  releases do not invent release pins or imply live environment/registration.
+  Verify repository/reviewer identities and maintainer permission read-only.
+  Activation, environment provisioning, external registration and dispatch each
+  require their owning authorization; publishers never perform these steps.
 - Record GitHub Pages sites with stable repository identity, exact provider URL,
   HTTPS enforcement, owning deployment environment, desired Actions source,
   workflow path, and immutable deployment-action marker. Before that marker is

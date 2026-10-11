@@ -1379,4 +1379,9 @@ while IFS= read -r external_app; do
   repositories=$(jq -r '[.repositories[].repository] | join(", ")' <<<"${external_app}")
   echo "MANUAL ${app_slug} installation ${installation_id} selected repositories: ${repositories}; publisher does not apply"
 done < <(jq -c '.external_provider_apps[]' "${root}/config/manual-settings.json")
+while IFS= read -r crate_record; do
+  repository=$(jq -r '.repository' <<<"${crate_record}")
+  crate=$(jq -r '.crate' <<<"${crate_record}")
+  echo "MANUAL PENDING ${repository} crates.io ${crate}: reviewed source release, maintainer-reviewed crates-io-release environment and Trusted Publisher owner setup; publisher does not apply"
+done < <(jq -c '.crates_io_trusted_publishing[]' "${root}/config/manual-settings.json")
 echo "Manual confirmation required for config/manual-settings.json."

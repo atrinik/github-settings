@@ -286,6 +286,7 @@ jq -e '. == {state: "not-configured"}' \
 jq -e '
   (keys == [
     "codecov_github_app_repositories",
+    "crates_io_trusted_publishing",
     "external_provider_apps",
     "github_actions_apps",
     "github_actions_credentials",
@@ -764,6 +765,47 @@ jq -e '
     ) and
     (.role == "read")
   )
+' "${manual_settings_config}" >/dev/null
+
+# Planned crate publishing is a distinct manual contract: its desired review
+# policy is explicit, but no live registration or release pin is invented.
+jq -e \
+  --slurpfile repositories "${repositories_config}" \
+  --slurpfile actions "${root}/config/actions-selected.json" '
+  .github_actions_environments as $environments |
+  .crates_io_trusted_publishing as $publishers |
+  ($publishers | type == "array" and length <= 1) and
+  all($publishers[];
+    (keys == ["activation_state", "authentication_action", "crate", "environment",
+      "provider", "repository", "repository_id", "runbook", "workflow_filename",
+      "workflow_ref", "workflow_trigger"]) and
+    .activation_state == "pending-source-release" and
+    .authentication_action == "rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18" and
+    (.authentication_action as $action |
+      ($actions[0].patterns_allowed | map(select(startswith("rust-lang/")))) == [$action]) and
+    .crate == "atrinik-protocol" and .provider == "github" and
+    .repository == "atrinik/protocol" and .repository_id == 1327106950 and
+    ($repositories[0].pull_request_gate | index("protocol")) != null and
+    ($repositories[0].archive | index("protocol")) == null and
+    .workflow_filename == "publish-crate.yml" and
+    .workflow_ref == "refs/heads/main" and .workflow_trigger == "workflow_dispatch" and
+    .runbook == "README.md#protocol-crate-trusted-publishing" and
+    .environment == {
+      can_admins_bypass: false,
+      deployment_branch_policy: {
+        custom_branch_policies: true,
+        patterns: [{name: "main", type: "branch"}],
+        protected_branches: false
+      },
+      name: "crates-io-release", prevent_self_review: false,
+      required_reviewers: [{type: "User", id: 3865595, login: "zoeyrose"}],
+      reviewer_requirement: "repository-maintainer",
+      secret_names: [], variable_names: []
+    }
+  ) and
+  all($publishers[]; . as $publisher |
+    all($environments[];
+      .repository != $publisher.repository or .environment != $publisher.environment.name))
 ' "${manual_settings_config}" >/dev/null
 
 jq -e \
