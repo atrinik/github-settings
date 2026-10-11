@@ -57,7 +57,7 @@ rewrite_manual_settings() {
 }
 
 jq -e '
-  (.github_actions_environments | length) == 2 and
+  (.github_actions_environments | length) == 3 and
   any(.github_actions_environments[]; . == {
       deployment_branch_policy: {
         custom_branch_policies: true,
@@ -86,6 +86,28 @@ jq -e '
       required_reviewers: [],
       secret_names: [],
       variable_names: []
+    }) and
+  any(.github_actions_environments[]; . == {
+      deployment_branch_policy: {
+        custom_branch_policies: false,
+        patterns: [],
+        protected_branches: true
+      },
+      environment: "development",
+      repository: "atrinik/metaserver-worker",
+      repository_id: 1324297032,
+      required_reviewers: [],
+      secret_names: [
+        "ATRINIK_DELIVERY_RESOURCE_POLICY",
+        "ATRINIK_DELIVERY_RESOURCE_READ_TOKEN",
+        "ATRINIK_DEVELOPMENT_CORE_CONFIG",
+        "ATRINIK_DEVELOPMENT_PUBLISHER_CONFIG",
+        "ATRINIK_DEVELOPMENT_RENDEZVOUS_CONFIG",
+        "ATRINIK_PRODUCTION_BUILDS_READ_TOKEN",
+        "CLOUDFLARE_ACCOUNT_ID",
+        "CLOUDFLARE_API_TOKEN"
+      ],
+      variable_names: ["ATRINIK_PRODUCTION_WRITER_FENCE_POLICY"]
     }) and
   .github_pages_sites == [{
     activation_marker: "actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e",
@@ -135,7 +157,30 @@ rewrite_manual_settings '
     protected_branches: true
   }
 '
-assert_invalid 'a protected-branches policy instead of an exact custom policy'
+"${temporary}/bin/validate" >/dev/null
+rewrite_manual_settings \
+  '.github_actions_environments[0].deployment_branch_policy.patterns = [{name: "main", type: "branch"}]'
+assert_invalid 'custom patterns combined with protected-branches mode'
+reset_manual_settings
+
+rewrite_manual_settings '
+  .github_actions_environments[0].deployment_branch_policy.custom_branch_policies = true |
+  .github_actions_environments[0].deployment_branch_policy.protected_branches = true
+'
+assert_invalid 'both deployment branch policy modes enabled'
+reset_manual_settings
+
+rewrite_manual_settings '
+  .github_actions_environments[0].deployment_branch_policy = {
+    custom_branch_policies: false, patterns: [], protected_branches: false
+  }
+'
+assert_invalid 'both deployment branch policy modes disabled'
+reset_manual_settings
+
+rewrite_manual_settings \
+  '.github_actions_environments[0].deployment_branch_policy.patterns = []'
+assert_invalid 'custom branch policy mode with no exact patterns'
 reset_manual_settings
 
 rewrite_manual_settings \

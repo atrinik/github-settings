@@ -31,6 +31,11 @@
   the existing organization and repository administration scopes. Personal
   issue-dashboard saved views remain documented manual state because GitHub
   exposes no public API for them.
+- Keep environment-scoped Cloudflare DEV credential lifecycle records bound to
+  the exact metaserver repository ID, environment, workflow and declared scopes.
+  Protected-branch environment verification must not request custom branch
+  policies; derive an empty custom-pattern set from the verified mode. Effective
+  token permissions and expiry are separate from secret-name metadata.
 - Keep every administrative Actions credential value out of Git. Inventory its
   stable repository, secret placement, scopes, consumers, accountable owner,
   verification date, rotate-by deadline, cadence, and runbook in
