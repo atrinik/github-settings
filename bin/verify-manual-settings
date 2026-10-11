@@ -428,7 +428,7 @@ while IFS= read -r crate_record; do
   fi
   reviewer_permission=$(github_api "read crate publishing reviewer permission" \
     "repos/${repository}/collaborators/zoeyrose/permission")
-  if ! jq -e '.permission == "admin" or .permission == "maintain"' \
+  if ! jq -e '.role_name == "admin" or .role_name == "maintain"' \
     <<<"${reviewer_permission}" >/dev/null; then
     echo "error: crate publishing reviewer is not a repository maintainer" >&2
     exit 1

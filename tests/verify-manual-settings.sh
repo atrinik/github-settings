@@ -88,10 +88,17 @@ users/zoeyrose)
   ;;
 repos/atrinik/protocol/collaborators/zoeyrose/permission)
   permission=admin
-  if [[ ${FAKE_GH_SCENARIO} == crate-reviewer-permission ]]; then
-    permission=read
-  fi
-  jq -n --arg permission "${permission}" '{permission: $permission}'
+  role_name=admin
+  case ${FAKE_GH_SCENARIO} in
+  crate-reviewer-maintain) permission=write; role_name=maintain ;;
+  crate-reviewer-permission) permission=read; role_name=read ;;
+  crate-reviewer-triage) permission=read; role_name=triage ;;
+  crate-reviewer-write) permission=write; role_name=write ;;
+  crate-reviewer-unknown-role) role_name=unknown ;;
+  crate-reviewer-missing-role) jq -n '{permission: "admin"}'; exit 0 ;;
+  esac
+  jq -n --arg permission "${permission}" --arg role_name "${role_name}" \
+    '{permission: $permission, role_name: $role_name}'
   ;;
 repos/atrinik/github-settings)
   if [[ ${FAKE_GH_SCENARIO} == identity-drift ]]; then
@@ -658,7 +665,11 @@ if grep -Eq 'protocol/environments|crates.io|/trusted-publishers' "${temporary}/
   echo "error: planned crate contract inspected or mutated unprovisioned state" >&2
   exit 1
 fi
-for scenario in crate-repository-drift crate-reviewer-drift crate-reviewer-permission; do
+maintain_output=$(run_verify crate-reviewer-maintain)
+grep -Fq 'PENDING atrinik/protocol crates.io atrinik-protocol via publish-crate.yml / crates-io-release' <<<"${maintain_output}"
+for scenario in crate-repository-drift crate-reviewer-drift crate-reviewer-permission \
+  crate-reviewer-triage crate-reviewer-write crate-reviewer-unknown-role \
+  crate-reviewer-missing-role; do
   if run_verify "${scenario}" >"${temporary}/${scenario}.out" 2>"${temporary}/${scenario}.err"; then
     echo "error: verifier accepted ${scenario}" >&2
     exit 1
