@@ -649,7 +649,7 @@ class ReadinessTests(unittest.TestCase):
             document = readiness.workflow_yaml((ROOT / path).read_bytes(), "advisory")
             documents.append(document)
             notice = document["jobs"]["dependency-review"]["steps"][1]
-            self.assertEqual(notice["if"], "always() && steps.dependency_review.outcome == 'failure'")
+            self.assertEqual(notice["if"], "${{ !cancelled() && steps.dependency_review.outcome == 'failure' }}")
             self.assertEqual(notice["continue-on-error"], "true")
             self.assertNotIn("uses", notice)
             self.assertEqual(notice["shell"], "python")
