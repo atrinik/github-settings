@@ -114,7 +114,8 @@ for filter in \
 done
 jq '.crate_dependency_update_app |= (.status="owner-observed" | .app_id=85500002 |
   .installation_id=154000002 | .repository_scope_verification="organization_owner_ui" |
-  .observed_on="2026-08-31" | .evidence_location="atrinik/github-settings#owner-app")' \
+  .observed_on="2026-08-31" | .evidence_location="atrinik/github-settings#owner-app" |
+  .workflow_activation={state:"pending-reviewed-workflows", observed_on:null, evidence_location:null})' \
   "${root}/config/manual-settings.json" >"${temporary}/config/manual-settings.json"
 "${temporary}/bin/validate" >/dev/null
 reset_policy
