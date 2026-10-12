@@ -541,6 +541,71 @@
       "runbook": "README.md#metaserver-development-credentials",
       "secret_name": "ATRINIK_PRODUCTION_BUILDS_READ_TOKEN",
       "secret_scope": "environment"
+    },
+    {
+      "consumers": [
+        ".github/workflows/promote-production.yml"
+      ],
+      "credential_type": "cloudflare_account_token",
+      "environment": "production",
+      "last_verified_on": "2026-10-12",
+      "owner": "Zoey Seraphina Rose (Atrinik organization owner)",
+      "purpose": "Dedicated PROD deployment credential, distinct from DEV. Requires account-wide Workers Scripts Edit and D1 Read. Active-token, PROD Worker settings and D1 identity GETs verified; provider permission metadata and write capability remain unproven. Creation and expiry are unknown; rotate_by is internal policy, not provider expiry. Production secret placement is pending.",
+      "repository": "atrinik/metaserver-worker",
+      "repository_id": 1324297032,
+      "required_scopes": [
+        "D1 Read",
+        "Workers Scripts Edit"
+      ],
+      "rotate_by": "2027-01-10",
+      "rotation_cadence_days": 90,
+      "rotation_owner": "Zoey Seraphina Rose (Atrinik organization owner)",
+      "runbook": "README.md#metaserver-production-credentials",
+      "secret_name": "CLOUDFLARE_API_TOKEN",
+      "secret_scope": "environment"
+    },
+    {
+      "consumers": [
+        ".github/workflows/promote-production.yml"
+      ],
+      "credential_type": "cloudflare_account_token",
+      "environment": "production",
+      "last_verified_on": "2026-10-11",
+      "owner": "Zoey Seraphina Rose (Atrinik organization owner)",
+      "purpose": "Read the exact all-cohort resource inventory without mutation. Reuse in the production control-plane workflow is owner-authorized; this record declares production placement, which remains pending. Provider expiry is unknown and rotate_by is internal policy.",
+      "repository": "atrinik/metaserver-worker",
+      "repository_id": 1324297032,
+      "required_scopes": [
+        "Workers Scripts Read"
+      ],
+      "rotate_by": "2027-01-09",
+      "rotation_cadence_days": 90,
+      "rotation_owner": "Zoey Seraphina Rose (Atrinik organization owner)",
+      "runbook": "README.md#metaserver-production-credentials",
+      "secret_name": "ATRINIK_DELIVERY_RESOURCE_READ_TOKEN",
+      "secret_scope": "environment"
+    },
+    {
+      "consumers": [
+        ".github/workflows/promote-production.yml"
+      ],
+      "credential_type": "cloudflare_user_token",
+      "environment": "production",
+      "last_verified_on": "2026-10-11",
+      "owner": "Zoey Seraphina Rose (Atrinik organization owner)",
+      "purpose": "Read retained Builds and Worker settings to prove the stopped-writer fence without deployment. Reuse in the production control-plane workflow is owner-authorized; this record declares production placement, which remains pending. Provider expiry is unknown and rotate_by is internal policy.",
+      "repository": "atrinik/metaserver-worker",
+      "repository_id": 1324297032,
+      "required_scopes": [
+        "Workers CI Read",
+        "Workers Scripts Read"
+      ],
+      "rotate_by": "2027-01-09",
+      "rotation_cadence_days": 90,
+      "rotation_owner": "Zoey Seraphina Rose (Atrinik organization owner)",
+      "runbook": "README.md#metaserver-production-credentials",
+      "secret_name": "ATRINIK_PRODUCTION_BUILDS_READ_TOKEN",
+      "secret_scope": "environment"
     }
   ],
   "github_packages_actions_access": [

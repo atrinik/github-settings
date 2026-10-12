@@ -1157,6 +1157,18 @@ owning workflow succeeds. GitHub secret-name metadata proves
 placement only. Keep token values, provider token identifiers and private
 qualification evidence out of this inventory, commits and logs.
 
+The dedicated production token was verified on 2026-10-12 as active and distinct
+from DEV, with bounded reads of all three PROD Worker settings and the exact D1
+database identity. Required `Workers Scripts Edit` and `D1 Read` permissions
+remain the intended deployment contract; provider permission metadata and
+write capability are unproven. Provider creation and expiry remain unknown.
+Its 2027-01-10 rotation deadline is internal 90-day policy, not provider expiry.
+The two owner-authorized shared read-only control-plane credentials retain their
+2026-10-11 qualification and 2027-01-09 internal deadlines; expiry remains unknown.
+Their separate production lifecycle entries declare desired placement, not
+installation or successful use by the production workflow. Provision and verify
+only after this inventory is reviewed and accepted.
+
 ## Enabling immutable source releases
 
 The desired organization-level `selected` inventory preserves Classic
