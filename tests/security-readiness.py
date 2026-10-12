@@ -657,13 +657,16 @@ class ReadinessTests(unittest.TestCase):
             self.assertEqual(notice["env"], {
                 "GITHUB_TOKEN": "${{ github.token }}",
                 "PR_NUMBER": "${{ github.event.pull_request.number }}",
-                "PR_HEAD_SHA": "${{ github.event.pull_request.head.sha }}"})
+                "PR_HEAD_SHA": "${{ github.event.pull_request.head.sha }}",
+                "PR_BASE_REF": "${{ github.event.pull_request.base.ref }}",
+                "PR_BASE_SHA": "${{ github.event.pull_request.base.sha }}"})
             summary = self.root / "failure-summary.md"
             summary.write_text("Existing vulnerability and license report.\n")
             # Invalid API context exercises the local fallback before any network access.
             env = {"PATH": os.environ["PATH"], "GITHUB_STEP_SUMMARY": str(summary),
                    "GITHUB_REPOSITORY": "atrinik/example", "PR_NUMBER": "42",
-                   "PR_HEAD_SHA": HEAD, "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1",
+                   "PR_HEAD_SHA": HEAD, "PR_BASE_REF": "main", "PR_BASE_SHA": BASE,
+                   "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1",
                    "GITHUB_API_URL": "https://invalid.example", "GITHUB_SERVER_URL": "https://github.com",
                    "GITHUB_EVENT_NAME": "pull_request"}
             result = subprocess.run([sys.executable, "-c", notice["run"]],
