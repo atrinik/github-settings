@@ -240,12 +240,17 @@
   behavior. The retained generic `07` tooling must reject advisory producer
   evidence and retire only recognized owned old gates with fresh identity and
   payload fences; source changes never authorize live settings apply.
-- Dependency review uses ordinary PR and merge-group events with no checkout,
-  secrets, or contributor execution. Keep its official immutable action, low
-  severity reporting, all scopes, `warn-only: true`, `license-check: false`,
+- Dependency review uses ordinary PR events for every target branch, without
+  branch/path filters, and merge-group events with no checkout, secrets, or
+  contributor execution. Reporting does not declare a supported maintenance
+  line. Keep its official immutable action, low severity reporting, all scopes, `warn-only: true`, `license-check: true`,
   `comment-summary-in-pr: always`, and step `continue-on-error: true` so findings
-  and operational failures do not block CI. Contents read and PR write support
-  reporting; fork/Dependabot comment denials warn and fall back to job summaries.
+  and operational failures do not block CI. Retain license findings as advice.
+  Per-PR/ref concurrency cancels superseded runs; a failure-report step warns and
+  adds a job-summary notice using the action's raw outcome. Preserve available
+  reports and state that vulnerability/license results are unknown if absent.
+  Contents read and PR write support reporting; fork/Dependabot comment denials
+  warn and fall back to job summaries.
   Implementing agents must read the comment or summary before merge, fix
   actionable findings, or record explicit maintainer-accepted risk. Inspect
   missing-report errors rather than treating them as a clean scan. Do not add

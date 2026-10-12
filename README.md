@@ -177,16 +177,20 @@ the existing identity, archive, payload and final-read fences. Modified or
 foreign rules are retained for review; a source merge alone does not remove
 live protection.
 
-The dependency workflow runs on pull requests to `main` when opened, updated,
-reopened, or edited, including a base-branch retarget, and on merge queue groups.
+The dependency workflow runs on pull requests to every target branch when opened,
+updated, reopened, or edited, including a base-branch retarget, and on merge queue
+groups. Reporting visibility does not declare a branch supported or maintained.
 The pinned official action reads event revisions without checkout, contributor
 code execution, secrets, or `pull_request_target`. It requests contents read
 and pull-request write solely for its report. It reports low through critical
 vulnerabilities in runtime, development, and unknown scopes with `warn-only:
-true`, disables license checks, and always attempts a PR summary comment.
+true`, keeps license findings advisory, and always attempts a PR summary comment.
 Fork and Dependabot tokens may deny comment writes; the action warns and keeps
 its job summary. Operational errors remain visible in logs but step-level
-`continue-on-error: true` keeps this advisory job nonblocking.
+`continue-on-error: true` keeps this advisory job nonblocking. A following
+failure-report step warns and adds a job-summary notice without claiming the
+action produced no analysis; absent reports mean vulnerability and license
+results are unknown. Per-PR/ref concurrency cancels superseded review runs.
 
 Implementing agents must read the dependency comment or job summary before
 merging, fix actionable findings, or record a maintainer's explicit acceptance

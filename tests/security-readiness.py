@@ -6,6 +6,7 @@ import copy
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -617,21 +618,54 @@ class ReadinessTests(unittest.TestCase):
             (ROOT / ".github/workflows/dependency-review.yml").read_bytes(), "advisory")
         self.assertEqual(document["permissions"], {"contents": "read", "pull-requests": "write"})
         self.assertEqual(set(document["on"]), {"pull_request", "merge_group"})
+        self.assertEqual(document["on"]["pull_request"], {
+            "types": ["opened", "synchronize", "reopened", "edited"]})
+        self.assertEqual(document["on"]["merge_group"], {"types": ["checks_requested"]})
         job = document["jobs"]["dependency-review"]
-        self.assertEqual(len(job["steps"]), 1)
+        self.assertEqual(document["concurrency"], {
+            "group": "dependency-review-${{ github.event.pull_request.number || github.ref }}",
+            "cancel-in-progress": "true"})
+        self.assertEqual(len(job["steps"]), 2)
         step = job["steps"][0]
+        self.assertEqual(step["id"], "dependency_review")
         self.assertRegex(step["uses"], r"^actions/dependency-review-action@[0-9a-f]{40}$")
         self.assertEqual(step["continue-on-error"], "true")
         self.assertEqual(step["with"]["warn-only"], "true")
         self.assertEqual(step["with"]["fail-on-severity"], "low")
         self.assertEqual(step["with"]["fail-on-scopes"], "runtime,development,unknown")
-        self.assertEqual(step["with"]["license-check"], "false")
+        self.assertEqual(step["with"]["license-check"], "true")
         self.assertEqual(step["with"]["comment-summary-in-pr"], "always")
         self.assertNotIn("if", job)
         self.assertNotIn("if", step)
         self.assertNotIn("run", step)
         self.assertNotIn("secrets", job)
         self.assertNotIn("allow-ghsas", step["with"])
+
+    def test_advisory_failure_notice_preserves_available_report_and_is_nonblocking(self):
+        documents = []
+        for path in (".github/workflows/dependency-review.yml",
+                     "community-health/workflows/dependency-review.yml"):
+            document = readiness.workflow_yaml((ROOT / path).read_bytes(), "advisory")
+            documents.append(document)
+            notice = document["jobs"]["dependency-review"]["steps"][1]
+            self.assertEqual(notice["if"], "always() && steps.dependency_review.outcome == 'failure'")
+            self.assertEqual(notice["continue-on-error"], "true")
+            self.assertNotIn("uses", notice)
+            summary = self.root / "failure-summary.md"
+            summary.write_text("Existing vulnerability and license report.\n")
+            env = {**os.environ, "GITHUB_STEP_SUMMARY": str(summary)}
+            result = subprocess.run(["bash", "-e", "-c", notice["run"]],
+                                    capture_output=True, text=True, env=env, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("::warning::", result.stdout)
+            report = summary.read_text()
+            self.assertTrue(report.startswith("Existing vulnerability and license report.\n"))
+            self.assertIn("Dependency review needs attention", report)
+            self.assertIn("if report absent vulnerability/license results unknown", report)
+            self.assertIn("remains advisory", report)
+        # Optional action step naming is the only executable-source difference.
+        documents[1]["jobs"]["dependency-review"]["steps"][0].pop("name", None)
+        self.assertEqual(documents[0], documents[1])
 
     def test_production_advisory_never_qualifies_required_gate(self):
         source = (ROOT / ".github/workflows/dependency-review.yml").read_bytes()
