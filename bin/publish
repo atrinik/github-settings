@@ -7,6 +7,7 @@ policy_scope=${ATRINIK_POLICY_SCOPE:-auto}
 api_version=2026-03-10
 apply=false
 retire_maintenance=
+qualified_metaserver_source_sha=
 
 while (($#)); do
   case $1 in
@@ -1221,6 +1222,7 @@ converge_immutable_release_policy() {
 
   input=$(write_immutable_release_payload "${desired}")
   temporary_files+=("${input}")
+  assert_metaserver_immutable_source_fresh
   if github_api --method PUT \
     "orgs/${organization}/settings/immutable-releases" \
     --input "${input}" >/dev/null &&
@@ -1278,7 +1280,21 @@ qualify_metaserver_immutable_source() {
     echo "error: metaserver main moved during immutable qualification" >&2
     return 1
   fi
+  qualified_metaserver_source_sha=${source_sha}
   echo "KEEP metaserver draft-first source at ${source_sha}; independent qualification remains required"
+}
+
+assert_metaserver_immutable_source_fresh() {
+  [[ -n ${qualified_metaserver_source_sha} ]] || return 0
+  local current_sha
+
+  current_sha=$(github_api "repos/${organization}/metaserver-worker/git/ref/heads/main" |
+    jq -er 'select(.ref == "refs/heads/main" and .object.type == "commit") | .object.sha |
+      select(test("^[0-9a-f]{40}$"))')
+  if [[ ${current_sha} != "${qualified_metaserver_source_sha}" ]]; then
+    echo "error: metaserver main moved after source qualification; no initial immutable selection performed" >&2
+    return 1
+  fi
 }
 
 preflight_new_crate_immutable_selection() {
@@ -1309,6 +1325,7 @@ preflight_new_crate_immutable_selection() {
     echo "error: immutable-release policy changed during initial qualification; no broad apply performed" >&2
     exit 1
   fi
+  assert_metaserver_immutable_source_fresh
 }
 
 organization_metadata=$(github_api "orgs/${organization}")

@@ -828,7 +828,9 @@ creates a draft, finishes and verifies every release asset, and only then
 publishes that draft. Before any broad publisher mutation introducing this
 selection, the read-only preflight checks the exact authenticated current-main
 draft-first plugin order, both finalizer files, successful main-push `Check`
-workflow and unchanged main. This source check complements independent producer
+workflow and unchanged main. Retain that qualified SHA and re-read it after
+all library/environment preflights and immediately before the first immutable
+policy write; movement stops without mutation. This source check complements independent producer
 qualification; marker text alone is not proof of asset assembly. Merge and
 qualify that source first. This governance
 source neither publishes a release nor promotes a Worker.

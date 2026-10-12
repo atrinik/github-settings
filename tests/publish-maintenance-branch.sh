@@ -388,6 +388,11 @@ repos/atrinik/protocol/branches/main\| | repos/atrinik/renderer/branches/main\| 
   printf '{"name":"main","protected":true,"commit":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}\n'
   ;;
 repos/atrinik/metaserver-worker/git/ref/heads/main\|)
+  if [[ ${GH_METASERVER_SOURCE_SCENARIO:-valid} == late-main-drift ]] &&
+    jq -se 'any(.[]; .endpoint == "repos/atrinik/protocol/git/ref/heads/main")' "${GH_API_LOG}" >/dev/null; then
+    printf '%s\n' '{"ref":"refs/heads/main","object":{"type":"commit","sha":"2222222222222222222222222222222222222222"}}'
+    exit 0
+  fi
   printf '%s\n' '{"ref":"refs/heads/main","object":{"type":"commit","sha":"1111111111111111111111111111111111111111"}}'
   ;;
 repos/atrinik/metaserver-worker/contents/.releaserc.json*\|)
@@ -1726,7 +1731,7 @@ assert_setup_failed_before_mutation() {
 }
 
 # Metaserver draft-first and exact-main check failures stop before any write.
-for scenario in partial-producer failed-source-check; do
+for scenario in partial-producer failed-source-check late-main-drift; do
   scenario_log=${temporary}/metaserver-${scenario}.jsonl
   printf '%s\n' '{"enforced_repositories":"selected","selected_repository_ids":[1327289971]}' >"${crate_state}"
   if GH_API_LOG=${scenario_log} GH_IMMUTABLE_STATE=${crate_state} \
