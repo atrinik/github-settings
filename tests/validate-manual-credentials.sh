@@ -209,6 +209,30 @@ jq -e '
   ]
 ' "${root}/config/manual-settings.json" >/dev/null
 
+# Fixture records exercise the schema; they do not declare live PROD credentials.
+jq '.github_actions_credentials += [
+  .github_actions_credentials[] | select(.secret_scope == "environment") |
+  .environment = "production" |
+  .consumers = [".github/workflows/promote-production.yml"] |
+  .runbook = "README.md#metaserver-production-credentials"
+]' "${root}/config/manual-settings.json" >"${temporary}/production-credentials.json"
+cp "${temporary}/production-credentials.json" "${temporary}/config/manual-settings.json"
+ATRINIK_VALIDATION_TODAY=2026-10-12 "${temporary}/bin/validate" >/dev/null
+
+for invalid in \
+  '.github_actions_credentials += [.github_actions_credentials[-1]]' \
+  '.github_actions_credentials[-1].environment = "staging"' \
+  '.github_actions_credentials[-1].consumers = [".github/workflows/deploy-development.yml"]' \
+  '.github_actions_credentials[-1].runbook = "README.md#metaserver-development-credentials"' \
+  '.github_actions_credentials[-1].required_scopes += ["Workers Scripts Edit"]' \
+  '.github_actions_credentials[-1].credential_type = "cloudflare_account_token"'; do
+  jq "$invalid" "${temporary}/production-credentials.json" >"${temporary}/config/manual-settings.json"
+  if ATRINIK_VALIDATION_TODAY=2026-10-12 "${temporary}/bin/validate" >/dev/null 2>&1; then
+    echo "error: validator accepted malformed PROD credential lifecycle: ${invalid}" >&2
+    exit 1
+  fi
+done
+
 for invalid in \
   '.github_actions_credentials[1].required_scopes = ["Workers Scripts Read"]' \
   '.github_actions_credentials[2].credential_type = "cloudflare_user_token"' \
@@ -217,7 +241,7 @@ for invalid in \
   '.github_actions_credentials[1].consumers = [".github/workflows/publish.yml"]' \
   '.github_actions_credentials[1].credential_value = "secret"'; do
   jq "$invalid" "${root}/config/manual-settings.json" >"${temporary}/config/manual-settings.json"
-  if ATRINIK_VALIDATION_TODAY=2026-10-11 "${temporary}/bin/validate" >/dev/null 2>&1; then
+  if ATRINIK_VALIDATION_TODAY=2026-10-12 "${temporary}/bin/validate" >/dev/null 2>&1; then
     echo "error: validator accepted malformed DEV credential lifecycle: ${invalid}" >&2
     exit 1
   fi
