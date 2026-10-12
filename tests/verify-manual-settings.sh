@@ -611,6 +611,29 @@ repos/atrinik/classic/pages)
     }]
   }'
   ;;
+repos/atrinik/metaserver-worker/environments/production)
+  jq -n '{name: "production", deployment_branch_policy: {
+    protected_branches: true, custom_branch_policies: false
+  }, protection_rules: [{type: "branch_policy"}]}'
+  ;;
+"repos/atrinik/metaserver-worker/environments/production/deployment-branch-policies?per_page=100&page=1")
+  echo "error: protected production environment must not request custom policies" >&2
+  exit 79
+  ;;
+"repos/atrinik/metaserver-worker/environments/production/secrets?per_page=100&page=1")
+  jq -n '{total_count: 8, secrets: [
+    {name: "ATRINIK_DELIVERY_RESOURCE_POLICY"}, {name: "ATRINIK_DELIVERY_RESOURCE_READ_TOKEN"},
+    {name: "ATRINIK_PRODUCTION_BUILDS_READ_TOKEN"}, {name: "ATRINIK_PRODUCTION_CORE_CONFIG"},
+    {name: "ATRINIK_PRODUCTION_PUBLISHER_CONFIG"}, {name: "ATRINIK_PRODUCTION_RENDEZVOUS_CONFIG"},
+    {name: "CLOUDFLARE_ACCOUNT_ID"}, {name: "CLOUDFLARE_API_TOKEN"}
+  ]}'
+  ;;
+"repos/atrinik/metaserver-worker/environments/production/variables?per_page=100&page=1")
+  jq -n '{total_count: 2, variables: [
+    {name: "ATRINIK_PRODUCTION_RECOVERY_PUBLIC_KEY"},
+    {name: "ATRINIK_PRODUCTION_WRITER_FENCE_POLICY"}
+  ]}'
+  ;;
 repos/atrinik/metaserver-worker/environments/development)
   jq -n '{
     name: "development",
@@ -808,6 +831,7 @@ run_verify() {
 : >"${temporary}/gh.log"
 output=$(run_verify present)
 grep -Fq 'KEEP atrinik/metaserver-worker environment development metadata' <<<"${output}"
+grep -Fq 'KEEP atrinik/metaserver-worker environment production metadata' <<<"${output}"
 if grep -Fq 'metaserver-worker/environments/development/deployment-branch-policies' "${temporary}/gh.log"; then
   echo "error: protected-branch mode queried custom branch policies" >&2
   exit 1
