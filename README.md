@@ -881,10 +881,17 @@ The names-only `production` environment inventory matches the merged
 `.github/workflows/promote-production.yml`: protected branches enabled,
 custom policies disabled, no custom patterns and no required reviewers. Solo
 owner dispatch of the exact reviewed inputs remains the approval boundary.
-The eight secret names and one variable name are desired state, not proof that
+The eight secret names and two variable names are desired state, not proof that
 the environment or effective credentials exist. Provision through supported
 GitHub environment operations only after source review and separately granted
-setup authority. Keep DEV and PROD configurations and runtime secrets disjoint;
+setup authority. `ATRINIK_PRODUCTION_RECOVERY_PUBLIC_KEY` contains only the
+owner's public RSA SPKI PEM (at least 3072 bits). It selects the recipient for
+standard JWE RSA-OAEP-256 with A256GCM encryption; the protected recovery policy
+pins its canonical DER SPKI SHA-256 and 90-day retention. The private key stays
+owner-only outside Actions. Only ciphertext recovery artifacts enter Actions;
+verify the completed pre-mutation intent artifact download before any secret
+PATCH, and retain a separate post-readback receipt. This public recipient name
+confers no mutation authority. Keep DEV and PROD configurations and runtime secrets disjoint;
 do not copy a DEV deployment token into PROD. Any new administrative credential
 also needs a truthful lifecycle inventory before use, with separately verified
 scope and rotation metadata. `bin/verify-manual-settings` verifies names and

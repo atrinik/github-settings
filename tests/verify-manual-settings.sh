@@ -629,7 +629,10 @@ repos/atrinik/metaserver-worker/environments/production)
   ]}'
   ;;
 "repos/atrinik/metaserver-worker/environments/production/variables?per_page=100&page=1")
-  jq -n '{total_count: 1, variables: [{name: "ATRINIK_PRODUCTION_WRITER_FENCE_POLICY"}]}'
+  jq -n '{total_count: 2, variables: [
+    {name: "ATRINIK_PRODUCTION_RECOVERY_PUBLIC_KEY"},
+    {name: "ATRINIK_PRODUCTION_WRITER_FENCE_POLICY"}
+  ]}'
   ;;
 repos/atrinik/metaserver-worker/environments/development)
   jq -n '{

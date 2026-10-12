@@ -121,7 +121,7 @@ jq -e '
         "ATRINIK_PRODUCTION_PUBLISHER_CONFIG", "ATRINIK_PRODUCTION_RENDEZVOUS_CONFIG",
         "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN"
       ],
-      variable_names: ["ATRINIK_PRODUCTION_WRITER_FENCE_POLICY"]
+      variable_names: ["ATRINIK_PRODUCTION_RECOVERY_PUBLIC_KEY", "ATRINIK_PRODUCTION_WRITER_FENCE_POLICY"]
     }) and
   .github_pages_sites == [{
     activation_marker: "actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e",

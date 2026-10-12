@@ -403,6 +403,7 @@
         "CLOUDFLARE_API_TOKEN"
       ],
       "variable_names": [
+        "ATRINIK_PRODUCTION_RECOVERY_PUBLIC_KEY",
         "ATRINIK_PRODUCTION_WRITER_FENCE_POLICY"
       ]
     }
