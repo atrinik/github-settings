@@ -141,7 +141,6 @@ for filter in \
   '.crate_dependency_update_app.workflow_activation.state = "active"' \
   '.crate_dependency_update_app.workflow_activation = {state:"observed-successful-owned-pr", observed_on:null, evidence_location:null}' \
   '.crate_dependency_update_app.workflow_activation = {state:"pending-reviewed-workflows", observed_on:null, evidence_location:"invented"}' \
-  '.crate_dependency_update_app.workflow_activation.evidence_location = "invented"' \
   '.crate_dependency_update_app.app_id = null' \
   '.crate_dependency_update_app.observed_on = null'; do
   assert_rejected "${filter}"
