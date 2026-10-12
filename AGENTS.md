@@ -201,6 +201,11 @@
   verify the advanced analysis before merging the workflow. If it cannot pass
   promptly, restore the baseline/default setup through a reviewed inventory
   rollback; do not leave an unobserved scanning gap.
+- Metaserver production environment names and immutable-release selection are
+  desired state only until its reviewed draft-first producer and setup are
+  qualified. Preserve old mutable releases and tags as historical evidence;
+  only a new immutable release can satisfy production promotion. Keep setup,
+  release publication and exact-tag dispatch under their distinct authorizations.
 - Treat `config/immutable-releases.json` as the exhaustive owner-enforced
   organization inventory. Record stable repository IDs as well as names, fail
   closed on live identity drift, and preserve the exact previous mode and

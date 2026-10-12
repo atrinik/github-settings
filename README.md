@@ -46,8 +46,9 @@ read-only and are skipped on later runs.
   inventories; they must be omitted from `release_tags` until that contract
   exists.
 - Published releases in the exhaustive `config/immutable-releases.json`
-  inventory are owner-enforced immutable releases. The inventory initially
-  selects only `atrinik/classic` by its stable repository ID. This organization
+  inventory declare owner-enforced immutable releases. The inventory preserves
+  Classic and the qualified library producers and stages metaserver-worker
+  until its draft-first producer is merged and qualified. This organization
   policy is independent of the release-tag ruleset and applies in both
   publisher policy scopes.
 - Active repositories allow squash merges only. The squash commit uses the
@@ -423,23 +424,14 @@ coordinate is public governance metadata; the evidence contents remain private
 and contain no credential values. `bin/publish` remains plan-only for this
 record and never changes installation access.
 
-The App may publish its native Cloudflare check/deployment result. For
-`metaserver-worker`, `main` remains the sole automatic production branch and a
-normal protected-branch pull-request merge is the routine authorization; do
-not add another production branch, an Actions environment approval, a release
-or tag gate, Deploy Hook, privileged dispatch, bypass actor, or GitHub Actions
-deployment credential. The existing PR-only `main` rule remains unchanged.
-The provider's post-merge production result is evidence, not a pre-merge merge
-gate. Any review-branch result described by issue #55 must be observed as
-stable and unambiguous before a later reviewed governance change can make it a
-required check.
-
-Migration or separately authorized control-plane recovery may retry only the
-provider build for the exact SHA that is still current `main`. It is not a
-GitHub branch-policy bypass: never push a recovery ref, create a second
-long-lived production branch, invoke a privileged GitHub dispatch, or weaken
-the pull-request gate. If `main` advances, abandon that retry and re-evaluate
-the new current revision through the provider-owned recovery contract.
+The App connection and its former production/review history do not authorize
+current metaserver deployment. DEV now runs through its reviewed GitHub Actions
+main workflow. PROD accepts only an explicit owner-approved immutable-tag
+promotion dispatch with exact digests and predecessor. Retained Cloudflare
+Builds require their reviewed command fence and stopped-Build readback; a
+branch pause alone cannot fence manual/retry execution. Preserve the shared
+website installation and PR-only main policy. Historical #55/#56 automatic
+production instructions are evidence, not current activation authority.
 
 To revoke metaserver access, first disconnect the repository in Cloudflare and
 stop its Builds triggers under the recovery procedure owned by #56. Then merge
@@ -826,6 +818,64 @@ governance change (or revert the exception), run and review the publisher, and
 confirm a successful default-setup analysis before rescheduling the migration.
 Never delete the advanced workflow first and assume a later policy run will
 repair coverage.
+
+## Metaserver immutable releases and production environment
+
+The desired selected inventory adds only `atrinik/metaserver-worker`, stable
+repository ID `1324297032`, while preserving Classic, content-toolkit, protocol
+and renderer. This is pending activation until the reviewed metaserver producer
+creates a draft, finishes and verifies every release asset, and only then
+publishes that draft. Before any broad publisher mutation introducing this
+selection, the read-only preflight checks the exact authenticated current-main
+draft-first plugin order, both finalizer files, successful main-push `Check`
+workflow and unchanged main. This source check complements independent producer
+qualification; marker text alone is not proof of asset assembly. Merge and
+qualify that source first. This governance
+source neither publishes a release nor promotes a Worker.
+
+GitHub supports a narrow selected-repository operation,
+`PUT /orgs/atrinik/settings/immutable-releases/repositories/1324297032`, when
+the organization mode is `selected`. Its
+[documented API](https://docs.github.com/en/rest/orgs/orgs#enable-a-selected-repository-for-immutable-releases-in-an-organization)
+adds one repository without replacing the existing set. Before any separately
+authorized apply, inspect the read-only publisher plan, verify exact repository
+and actor identity, and snapshot the complete current selected set and repository
+state privately. Do not apply the publisher's unrelated drift. Re-read the
+complete selected set and `GET /repos/atrinik/metaserver-worker/immutable-releases`
+after the narrow write, requiring `enabled=true` and `enforced_by_owner=true`
+with every prior selection preserved. A failed write/readback stops release
+publication; reconcile the actual state before any separately reviewed rollback.
+
+The supported repository-only alternative is
+`PUT /repos/atrinik/metaserver-worker/immutable-releases`, which requires
+repository administration write, but it does not satisfy this owner-enforced
+organization inventory by itself. The UI alternatives are the Releases section
+of [repository settings](https://github.com/atrinik/metaserver-worker/settings)
+and the selected repository set under
+[organization repository settings](https://github.com/organizations/atrinik/settings/repositories).
+Follow [GitHub's instructions](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/establish-provenance-and-integrity/prevent-release-changes).
+
+Immutability applies only to future releases. Existing mutable releases,
+including `v4.34.0`, remain historical and cannot satisfy promotion's immutable
+release proof. Never delete/recreate one, move its tag, or weaken the promotion
+check. Produce a new reviewed stable release after enablement and retain its
+exact immutable tag/SHA, successful main validation, completed assets and
+provenance for the promotion review.
+
+The names-only `production` environment inventory matches the merged
+`.github/workflows/promote-production.yml`: protected branches enabled,
+custom policies disabled, no custom patterns and no required reviewers. Solo
+owner dispatch of the exact reviewed inputs remains the approval boundary.
+The eight secret names and one variable name are desired state, not proof that
+the environment or effective credentials exist. Provision through supported
+GitHub environment operations only after source review and separately granted
+setup authority. Keep DEV and PROD configurations and runtime secrets disjoint;
+do not copy a DEV deployment token into PROD. Any new administrative credential
+also needs a truthful lifecycle inventory before use, with separately verified
+scope and rotation metadata. `bin/verify-manual-settings` verifies names and
+identity without reading values; it derives an empty custom-policy list in
+protected-branch mode. Publishers never create this environment or dispatch
+promotion. Stop until the owner approves the exact future tag and operation.
 
 ## Enabling immutable source releases
 

@@ -325,6 +325,7 @@ case "${endpoint}|${jq_filter}" in
     "${GH_CLASSIC_REPOSITORY_ID:-1327289971}"
   printf 'content\t101\tfalse\tpublic\tfalse\tfalse\ttrue\ttrue\ttrue\n'
   if [[ ${GH_CRATE_IMMUTABLE_INVENTORY:-false} == true ]]; then
+    printf 'metaserver-worker\t1324297032\tfalse\tpublic\tfalse\tfalse\ttrue\ttrue\ttrue\n'
     printf 'protocol\t%s\tfalse\tpublic\tfalse\tfalse\ttrue\ttrue\ttrue\n' "${GH_PROTOCOL_REPOSITORY_ID:-1327106950}"
     printf 'renderer\t1327106998\tfalse\tpublic\tfalse\tfalse\ttrue\ttrue\ttrue\n'
     printf 'content-toolkit\t1327107043\tfalse\tpublic\tfalse\tfalse\ttrue\ttrue\ttrue\n'
@@ -342,8 +343,9 @@ case "${endpoint}|${jq_filter}" in
     }
   ' "${GH_IMMUTABLE_STATE}" | jq -r "${jq_filter}"
   ;;
-"repos/atrinik/protocol/immutable-releases|"* | "repos/atrinik/renderer/immutable-releases|"* | "repos/atrinik/content-toolkit/immutable-releases|"*)
+"repos/atrinik/metaserver-worker/immutable-releases|"* | "repos/atrinik/protocol/immutable-releases|"* | "repos/atrinik/renderer/immutable-releases|"* | "repos/atrinik/content-toolkit/immutable-releases|"*)
   case ${endpoint} in
+  */metaserver-worker/*) repository_id=1324297032 ;;
   */protocol/*) repository_id=1327106950 ;;
   */renderer/*) repository_id=1327106998 ;;
   */content-toolkit/*) repository_id=1327107043 ;;
@@ -356,10 +358,10 @@ case "${endpoint}|${jq_filter}" in
     printf '{"enabled":false,"enforced_by_owner":false}\n'
   fi
   ;;
-"repos/atrinik/protocol/code-security-configuration|"* | "repos/atrinik/renderer/code-security-configuration|"* | "repos/atrinik/content-toolkit/code-security-configuration|"*)
+"repos/atrinik/metaserver-worker/code-security-configuration|"* | "repos/atrinik/protocol/code-security-configuration|"* | "repos/atrinik/renderer/code-security-configuration|"* | "repos/atrinik/content-toolkit/code-security-configuration|"*)
   printf '{"status":"enforced","configuration":{"id":265376}}\n'
   ;;
-"repos/atrinik/protocol/code-scanning/default-setup|"* | "repos/atrinik/renderer/code-scanning/default-setup|"* | "repos/atrinik/content-toolkit/code-scanning/default-setup|"*)
+"repos/atrinik/metaserver-worker/code-scanning/default-setup|"* | "repos/atrinik/protocol/code-scanning/default-setup|"* | "repos/atrinik/renderer/code-scanning/default-setup|"* | "repos/atrinik/content-toolkit/code-scanning/default-setup|"*)
   printf '{"state":"configured","query_suite":"default"}\n'
   ;;
 "repos/atrinik/classic/immutable-releases|"*)
@@ -384,6 +386,29 @@ repos/atrinik/protocol\| | repos/atrinik/renderer\| | repos/atrinik/content-tool
   ;;
 repos/atrinik/protocol/branches/main\| | repos/atrinik/renderer/branches/main\| | repos/atrinik/content-toolkit/branches/main\|)
   printf '{"name":"main","protected":true,"commit":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}\n'
+  ;;
+repos/atrinik/metaserver-worker/git/ref/heads/main\|)
+  printf '%s\n' '{"ref":"refs/heads/main","object":{"type":"commit","sha":"1111111111111111111111111111111111111111"}}'
+  ;;
+repos/atrinik/metaserver-worker/contents/.releaserc.json*\|)
+  if [[ ${GH_METASERVER_SOURCE_SCENARIO:-valid} == partial-producer ]]; then
+    source='{"plugins":[["@semantic-release/github",{"draftRelease":false}]]}'
+  else
+    source='{"plugins":[["@semantic-release/github",{"draftRelease":true}],"./scripts/release/publish-complete-release.cjs"]}'
+  fi
+  encoded=$(printf '%s' "${source}" | base64 -w 0)
+  jq -n --arg content "${encoded}" '{type:"file",encoding:"base64",content:$content}'
+  ;;
+repos/atrinik/metaserver-worker/contents/scripts/release/publish-complete-release.*\|)
+  jq -n '{type:"file",encoding:"base64",size:1,content:"eA=="}'
+  ;;
+repos/atrinik/metaserver-worker/actions/workflows/check.yml/runs*\|)
+  conclusion=success
+  if [[ ${GH_METASERVER_SOURCE_SCENARIO:-valid} == failed-source-check ]]; then conclusion=failure; fi
+  jq -n --arg conclusion "${conclusion}" '{workflow_runs:[{
+    head_sha:"1111111111111111111111111111111111111111",head_branch:"main",event:"push",
+    head_repository:{full_name:"atrinik/metaserver-worker"},status:"completed",conclusion:$conclusion
+  }]}'
   ;;
 repos/atrinik/protocol/git/ref/heads/main\| | repos/atrinik/renderer/git/ref/heads/main\| | repos/atrinik/content-toolkit/git/ref/heads/main\|)
   printf '{"ref":"refs/heads/main","object":{"type":"commit","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}\n'
@@ -1664,7 +1689,7 @@ GH_API_LOG=${crate_log} GH_IMMUTABLE_STATE=${crate_state} \
   GH_CRATE_IMMUTABLE_INVENTORY=true GH_SECURITY_SCENARIO=converged \
   GH_CRATE_FIXTURE_ROOT=${source_root} PATH="${temporary}/bin:${PATH}" ATRINIK_POLICY_SCOPE=organization \
   "${source_root}/bin/publish" --apply >"${temporary}/crate-immutable-apply.out"
-jq -e '. == {enforced_repositories:"selected",selected_repository_ids:[1327106950,1327106998,1327107043,1327289971]}' "${crate_state}" >/dev/null
+jq -e '. == {enforced_repositories:"selected",selected_repository_ids:[1324297032,1327106950,1327106998,1327107043,1327289971]}' "${crate_state}" >/dev/null
 jq -s -e '
   . as $calls |
   ([ $calls | to_entries[] |
@@ -1699,6 +1724,21 @@ assert_setup_failed_before_mutation() {
 
   jq -s -e 'all(.[]; .method == "GET")' "${log}" >/dev/null
 }
+
+# Metaserver draft-first and exact-main check failures stop before any write.
+for scenario in partial-producer failed-source-check; do
+  scenario_log=${temporary}/metaserver-${scenario}.jsonl
+  printf '%s\n' '{"enforced_repositories":"selected","selected_repository_ids":[1327289971]}' >"${crate_state}"
+  if GH_API_LOG=${scenario_log} GH_IMMUTABLE_STATE=${crate_state} \
+    GH_CRATE_IMMUTABLE_INVENTORY=true GH_METASERVER_SOURCE_SCENARIO=${scenario} \
+    GH_CRATE_FIXTURE_ROOT=${source_root} PATH="${temporary}/bin:${PATH}" \
+    ATRINIK_POLICY_SCOPE=organization "${source_root}/bin/publish" --apply \
+    >"${temporary}/metaserver-${scenario}.out" 2>&1; then
+    echo "error: unqualified metaserver producer did not block initial selection" >&2
+    exit 1
+  fi
+  assert_setup_failed_before_mutation "${scenario_log}"
+done
 
 # A pending or absent manual record blocks a newly selected producer before
 # immutable policy or any unrelated governance setting can mutate.
@@ -1776,7 +1816,7 @@ assert_setup_failed_before_mutation "${snapshot_drift_log}"
 for mode in selected all; do
   mode_log=${temporary}/crate-${mode}-already-selected.jsonl
   if [[ ${mode} == selected ]]; then
-    printf '%s\n' '{"enforced_repositories":"selected","selected_repository_ids":[1327106950,1327106998,1327107043,1327289971]}' >"${crate_state}"
+    printf '%s\n' '{"enforced_repositories":"selected","selected_repository_ids":[1324297032,1327106950,1327106998,1327107043,1327289971]}' >"${crate_state}"
   else
     printf '%s\n' '{"enforced_repositories":"all"}' >"${crate_state}"
   fi

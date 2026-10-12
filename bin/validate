@@ -245,7 +245,7 @@ jq -e \
       (.id | type == "number" and floor == . and . > 0) and
       (.name | type == "string" and length > 0) and
       ({classic: 1327289971, protocol: 1327106950, renderer: 1327106998,
-        "content-toolkit": 1327107043}[.name] as $id |
+        "content-toolkit": 1327107043, "metaserver-worker": 1324297032}[.name] as $id |
         $id == null or .id == $id) and
       (.name as $repository |
         ($repositories[0].pull_request_gate | index($repository)) != null) and

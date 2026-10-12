@@ -36,8 +36,10 @@ expect_invalid() {
 "${root}/bin/validate" >/dev/null
 jq -e '.enforced_repositories == "selected" and .repositories == [
   {id:1327289971,name:"classic"},{id:1327107043,name:"content-toolkit"},
+  {id:1324297032,name:"metaserver-worker"},
   {id:1327106950,name:"protocol"},{id:1327106998,name:"renderer"}
 ]' "${root}/config/immutable-releases.json" >/dev/null
+expect_invalid metaserver-identity '.repositories |= map(if .name == "metaserver-worker" then .id = 1 else . end)'
 expect_invalid protocol-identity '.repositories |= map(if .name == "protocol" then .id = 1 else . end)'
 expect_invalid renderer-identity '.repositories |= map(if .name == "renderer" then .id = 1 else . end)'
 expect_invalid toolkit-identity '.repositories |= map(if .name == "content-toolkit" then .id = 1 else . end)'

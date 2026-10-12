@@ -1236,6 +1236,51 @@ converge_immutable_release_policy() {
   return 1
 }
 
+qualify_metaserver_immutable_source() {
+  local source_sha configuration source_runs script_path source_file
+
+  source_sha=$(github_api "repos/${organization}/metaserver-worker/git/ref/heads/main" |
+    jq -er 'select(.ref == "refs/heads/main" and .object.type == "commit") | .object.sha |
+      select(test("^[0-9a-f]{40}$"))')
+  configuration=$(github_api \
+    "repos/${organization}/metaserver-worker/contents/.releaserc.json?ref=${source_sha}" |
+    jq -er 'select(.type == "file" and .encoding == "base64") | .content' | base64 --decode)
+  if ! jq -e '
+    [.plugins[] | select(type == "array" and .[0] == "@semantic-release/github")] as $github |
+    (.plugins | index([$github[0]])) as $draft_index |
+    ($github | length) == 1 and $github[0][1].draftRelease == true and
+    $draft_index != null and .plugins[$draft_index + 1] == "./scripts/release/publish-complete-release.cjs"
+  ' <<<"${configuration}" >/dev/null; then
+    echo "error: metaserver immutable selection requires the qualified draft-first producer" >&2
+    return 1
+  fi
+  for script_path in scripts/release/publish-complete-release.cjs scripts/release/publish-complete-release.mjs; do
+    source_file=$(github_api \
+      "repos/${organization}/metaserver-worker/contents/${script_path}?ref=${source_sha}")
+    jq -e 'select(.type == "file" and .encoding == "base64" and
+      (.size | type == "number" and floor == . and . > 0 and . <= 65536) and
+      (.content | type == "string" and length <= 90000))' \
+      <<<"${source_file}" >/dev/null
+  done
+  source_runs=$(github_api \
+    "repos/${organization}/metaserver-worker/actions/workflows/check.yml/runs?branch=main&event=push&head_sha=${source_sha}&per_page=100")
+  if ! jq -e --arg sha "${source_sha}" --arg repository "${organization}/metaserver-worker" '
+    any(.workflow_runs[];
+      .head_sha == $sha and .head_branch == "main" and .event == "push" and
+      .head_repository.full_name == $repository and
+      .status == "completed" and .conclusion == "success")
+  ' <<<"${source_runs}" >/dev/null; then
+    echo "error: metaserver immutable selection requires successful exact-main source validation" >&2
+    return 1
+  fi
+  if [[ $(github_api "repos/${organization}/metaserver-worker/git/ref/heads/main" |
+    jq -r '.object.sha') != "${source_sha}" ]]; then
+    echo "error: metaserver main moved during immutable qualification" >&2
+    return 1
+  fi
+  echo "KEEP metaserver draft-first source at ${source_sha}; independent qualification remains required"
+}
+
 preflight_new_crate_immutable_selection() {
   local snapshot additions repository
   ${apply} || return 0
@@ -1246,6 +1291,11 @@ preflight_new_crate_immutable_selection() {
     elif $current.enforced_repositories == "none" then [$desired[0].repositories[].id]
     else [$desired[0].repositories[].id] - $current.selected_repository_ids end
   ')
+  if jq -e --argjson additions "${additions}" \
+    'any(.repositories[]; .name == "metaserver-worker" and (.id as $id | $additions | index($id) != null))' \
+    "${immutable_releases_config}" >/dev/null; then
+    qualify_metaserver_immutable_source
+  fi
   while IFS= read -r repository; do
     # These are the newly introduced library producers; Classic retains its
     # existing separately qualified release policy. Missing manual records fail
