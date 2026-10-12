@@ -241,7 +241,12 @@ jq -e \
     (.repositories | type == "array" and length > 0) and
     all(
       .repositories[];
-      (keys == ["id", "name"]) and
+      ((keys - ["activation_variable"]) == ["id", "name"]) and
+      (if has("activation_variable") then
+        .name == "metaserver-worker" and .activation_variable == {
+          name: "ATRINIK_RELEASE_IMMUTABILITY_ACTIVE", scope: "repository"
+        }
+      else true end) and
       (.id | type == "number" and floor == . and . > 0) and
       (.name | type == "string" and length > 0) and
       ({classic: 1327289971, protocol: 1327106950, renderer: 1327106998,

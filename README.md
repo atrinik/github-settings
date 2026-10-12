@@ -857,6 +857,19 @@ and the selected repository set under
 [organization repository settings](https://github.com/organizations/atrinik/settings/repositories).
 Follow [GitHub's instructions](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/establish-provenance-and-integrity/prevent-release-changes).
 
+The optional metaserver-only `activation_variable` names
+`ATRINIK_RELEASE_IMMUTABILITY_ACTIVE` in repository scope. Publishers never set
+it. The producer leaves a verified complete draft while this variable is absent
+or disabled; it may publish only after the reviewed draft-first producer is
+merged, its exact source passes `Check`, current main remains qualified, and
+fresh target immutability readback proves enablement. Recheck source and target
+at the point of use before separately authorized activation and publication.
+The plain `enabled` value is a release gate, never a substitute for actual
+target API proof. The ordinary workflow token cannot read administrative
+immutability settings, so retain the authorized owner readback privately and
+verify the published release's own `immutable=true` response. Do not publish a
+mutable draft and try to repair immutability afterward.
+
 Immutability applies only to future releases. Existing mutable releases,
 including `v4.34.0`, remain historical and cannot satisfy promotion's immutable
 release proof. Never delete/recreate one, move its tag, or weaken the promotion
