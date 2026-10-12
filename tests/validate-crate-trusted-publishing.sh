@@ -80,7 +80,7 @@ reset_policy
 jq '.patterns_allowed += ["rust-lang/*"]' "${root}/config/actions-selected.json" \
   >"${temporary}/config/actions-selected.json"
 if "${temporary}/bin/validate" >/dev/null 2>&1; then
-  echo "error: accepted broader Rust action access beside the exact pin" >&2
+  echo "error: accepted broader Rust action access beside the exact action" >&2
   exit 1
 fi
 reset_policy

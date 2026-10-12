@@ -14,11 +14,14 @@ source_root=${root}
 # Retain the original Classic rollout/recovery scenarios as a bounded fixture.
 root=${temporary}/classic-policy
 mkdir -p "${root}/bin"
-cp "${source_root}/bin/publish" "${source_root}/bin/validate" "${root}/bin/"
+cp "${source_root}/bin/publish" "${source_root}/bin/validate" \
+  "${source_root}/bin/security-readiness" "${root}/bin/"
+cp -R "${source_root}/lib" "${root}/lib"
 cp -R "${source_root}/config" "${source_root}/community-health" "${source_root}/.github" "${root}/"
 jq '.repositories |= map(select(.name == "classic"))' \
   "${source_root}/config/immutable-releases.json" >"${root}/config/immutable-releases.json"
 mkdir "${temporary}/bin"
+export GH_SELECTED_ACTIONS_POLICY=${root}/config/actions-selected.json
 
 cat >"${temporary}/bin/gh" <<'EOF'
 #!/usr/bin/env bash
@@ -295,6 +298,15 @@ if [[ ${method} != GET ]]; then
 fi
 
 case "${endpoint}|${jq_filter}" in
+repos/atrinik/*/actions/permissions/workflow\|*)
+  printf '{"default_workflow_permissions":"read","can_approve_pull_request_reviews":false}\n'
+  ;;
+"orgs/atrinik/actions/permissions/selected-actions|")
+  cat "${GH_SELECTED_ACTIONS_POLICY}"
+  ;;
+"orgs/atrinik/actions/permissions|")
+  printf '{"enabled_repositories":"all","allowed_actions":"selected","sha_pinning_required":false}\n'
+  ;;
 "orgs/atrinik|")
   if [[ ${GH_ORGANIZATION_SCENARIO:-converged} == drifted ]]; then
     jq -n '{
@@ -361,8 +373,11 @@ case "${endpoint}|${jq_filter}" in
 "repos/atrinik/metaserver-worker/code-security-configuration|"* | "repos/atrinik/protocol/code-security-configuration|"* | "repos/atrinik/renderer/code-security-configuration|"* | "repos/atrinik/content-toolkit/code-security-configuration|"*)
   printf '{"status":"enforced","configuration":{"id":265376}}\n'
   ;;
-"repos/atrinik/metaserver-worker/code-scanning/default-setup|"* | "repos/atrinik/protocol/code-scanning/default-setup|"* | "repos/atrinik/renderer/code-scanning/default-setup|"* | "repos/atrinik/content-toolkit/code-scanning/default-setup|"*)
-  printf '{"state":"configured","query_suite":"default"}\n'
+"repos/atrinik/metaserver-worker/code-scanning/default-setup|"*)
+  printf '{"state":"configured","query_suite":"default","languages":["javascript-typescript","python","actions"]}\n'
+  ;;
+"repos/atrinik/protocol/code-scanning/default-setup|"* | "repos/atrinik/renderer/code-scanning/default-setup|"* | "repos/atrinik/content-toolkit/code-scanning/default-setup|"*)
+  printf '{"state":"configured","query_suite":"default","languages":["rust"]}\n'
   ;;
 "repos/atrinik/classic/immutable-releases|"*)
   if [[ ${GH_IMMUTABLE_VERIFY_FAILURE:-false} == true ]]; then
@@ -504,17 +519,17 @@ repos/atrinik/*/environments/crates-io-release/variables\?per_page=100\&page=1\|
   if [[ ${security_scenario} == drifted ||
     ${security_scenario} == create ||
     ${GH_EMPTY_ADVANCED_INVENTORY:-false} == true ]]; then
-    printf '{"state":"configured","query_suite":"default"}\n'
+    printf '{"state":"configured","query_suite":"default","languages":["c-cpp"]}\n'
   else
-    printf '{"state":"not-configured","query_suite":"default"}\n'
+    printf '{"state":"not-configured","query_suite":"default","languages":null}\n'
   fi
   ;;
 "repos/atrinik/content/code-scanning/default-setup|"*)
   if [[ ${security_scenario} == drifted ||
     ${security_scenario} == create ]]; then
-    printf '{"state":"not-configured"}\n'
+    printf '{"state":"not-configured","languages":null}\n'
   else
-    printf '{"state":"configured","query_suite":"default"}\n'
+    printf '{"state":"configured","query_suite":"default","languages":["python"]}\n'
   fi
   ;;
 "repos/atrinik/nawerhals|.archived")
@@ -1244,8 +1259,9 @@ assert_idempotent_organization_security() {
 
 advisory_active_root=${temporary}/advisory-window-active
 mkdir -p "${advisory_active_root}/bin"
-cp "${root}/bin/publish" "${root}/bin/validate" \
+cp "${root}/bin/publish" "${root}/bin/validate" "${root}/bin/security-readiness" \
   "${advisory_active_root}/bin/"
+cp -R "${root}/lib" "${advisory_active_root}/lib"
 cp -R "${root}/config" "${advisory_active_root}/config"
 cp -R "${root}/community-health" \
   "${advisory_active_root}/community-health"
@@ -1398,12 +1414,13 @@ assert_codeql_default_setup "${creation_log}"
 
 rollback_root=${temporary}/empty-inventory
 mkdir -p "${rollback_root}/bin"
-cp "${root}/bin/publish" "${root}/bin/validate" "${rollback_root}/bin/"
+cp "${root}/bin/publish" "${root}/bin/validate" "${root}/bin/security-readiness" "${rollback_root}/bin/"
+cp -R "${root}/lib" "${rollback_root}/lib"
 cp -R "${root}/config" "${rollback_root}/config"
 cp -R "${root}/community-health" "${rollback_root}/community-health"
 mkdir -p "${rollback_root}/.github"
 cp -R "${root}/.github/workflows" "${rollback_root}/.github/workflows"
-jq '.repositories = []' \
+jq '.repositories = [] | .required_partitions = {}' \
   "${root}/config/codeql-advanced-setup.json" \
   >"${rollback_root}/config/codeql-advanced-setup.json"
 rollback_log=${temporary}/empty-inventory.jsonl
@@ -1487,8 +1504,9 @@ jq -s -e '
 
 advisory_rollback_root=${temporary}/advisory-window-rollback
 mkdir -p "${advisory_rollback_root}/bin"
-cp "${root}/bin/publish" "${root}/bin/validate" \
+cp "${root}/bin/publish" "${root}/bin/validate" "${root}/bin/security-readiness" \
   "${advisory_rollback_root}/bin/"
+cp -R "${root}/lib" "${advisory_rollback_root}/lib"
 cp -R "${root}/config" "${advisory_rollback_root}/config"
 cp -R "${root}/community-health" \
   "${advisory_rollback_root}/community-health"
@@ -1717,8 +1735,9 @@ crate_setup_root() {
 
   mkdir -p "${destination}/bin" "${destination}/lib" "${destination}/tests"
   cp "${source_root}/bin/publish" "${source_root}/bin/validate" \
-    "${source_root}/bin/verify-manual-settings" "${destination}/bin/"
-  cp "${source_root}/lib/verify_crate_workflow.py" "${destination}/lib/"
+    "${source_root}/bin/verify-manual-settings" "${source_root}/bin/security-readiness" "${destination}/bin/"
+  cp "${source_root}/lib/verify_crate_workflow.py" "${source_root}/lib/security_readiness.py" \
+    "${destination}/lib/"
   cp -R "${source_root}/config" "${source_root}/community-health" \
     "${source_root}/.github" "${destination}/"
   cp -R "${source_root}/tests/fixtures" "${destination}/tests/"
@@ -1829,7 +1848,8 @@ for mode in selected all; do
     GH_CRATE_IMMUTABLE_INVENTORY=true GH_CRATE_FIXTURE_ROOT=${source_root} \
     PATH="${temporary}/bin:${PATH}" ATRINIK_POLICY_SCOPE=organization \
     "${pending_setup_root}/bin/publish" --apply >"${temporary}/crate-${mode}-already-selected.out"
-  jq -s -e 'all(.[]; (.endpoint | contains("/contents/.github/workflows/") | not) and
+  jq -s -e 'all(.[];
+    (.endpoint | test("/contents/\\.github/workflows/(publish-crate|release)\\.yml") | not) and
     (.endpoint | contains("/environments/crates-io-release") | not))' "${mode_log}" >/dev/null
 done
 

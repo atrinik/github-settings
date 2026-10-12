@@ -129,6 +129,68 @@ after apply and again before separately authorized exact branch deletion;
 never combine either operation with tag, release, asset, default-branch, or
 unrelated policy changes.
 
+Security merge controls use repository-level rules in both publisher scopes.
+Keep `config/security-merge-protection.json` aligned with `required_ci` and
+preserve ordinary aggregates. New dependency gates require the reviewed
+workflow on the default branch and a successful corresponding PR run; CodeQL
+gates require successful current-head analyses, including required languages.
+Record successful initial qualification in the policy PR and promote the gate's
+`activation` entry from `pending` to `enforced` through source review before its
+first live installation. Pending publication only probes readiness. Enforced
+intent survives missing rules and later producer failures, allowing restoration
+without fresh initial proof; it does not claim live installation success. Remove
+activation entries with retired targets, preserving exact owned-rule rollback.
+Re-read the exact security-rule payload after the repository metadata fence
+immediately before deletion, retaining concurrent modifications. Audit retained
+named security rules on non-target repositories as drift regardless of their
+enforcement or ref applicability.
+For an existing repository-owned `03 - Required CI` rule, also record exact repository
+and ruleset IDs and its prior contexts in `config/retired-required-ci.json`.
+Validate retained/modified/foreign rules and fresh identity checks; keep records
+for idempotent retirement. Missing provenance must retain the rule.
+Tests must cover missing/failed producers, unreadable evidence, archived targets, language unions, both scopes,
+and zero security mutations on a converged rerun. SHA enforcement must remain
+pending until an ordinary action-update canary proves successful PR-bound
+current-head CI without an allowlist edit and the persistent rollout source is
+promoted to `enforced` with that accepted PR. Later disabled enforcement is drift,
+not pending rollout; ordinary publication revalidates the recorded proof before
+restoring it. Test rule retirement, effective default-branch applicability, and
+repository workflow permission overrides. Action allowances use owner/action wildcards;
+full commit pins belong in workflows, not redundant version assertions.
+Canary legacy-check absence requires verified protection evidence; bare or
+ambiguous 404 responses fail closed. Publisher identity and absence decisions
+require a complete validated ruleset inventory across all pages, including
+retirement and ordinary repository/organization rules.
+
+Advanced CodeQL readiness must validate executable YAML wiring from classifier
+invocation and outputs through the dynamic analysis matrix, scoped generated
+configuration, official full-SHA CodeQL actions, and the unconditional aggregate.
+Require the live default branch's ordinary pull-request trigger without path
+filters, including opened, synchronize and reopened events. Use the existing
+validation dependency with duplicate-key rejection. Test
+comments-only markers, disconnected inputs, disabled or failure-suppressed steps,
+checkout revision drift, and ambiguous YAML; preserve full-SHA updates, formatting
+changes, additional partitions, and category renames. Classification path
+semantics remain in trusted producer helpers; do not add a central source-path or
+action-version catalog or claim resistance to malicious repository writers.
+
+Security gate updates must re-read and validate ownership and the recognized
+payload immediately before PUT, preserving concurrent modifications. Bind the
+final metadata default branch to the branch used for pending-gate qualification
+or existing effective-gate proof; a changed branch must not activate a gate.
+Pending existing-gate proof requires unchanged enforcement and ref applicability
+in the final rule read; enforced intent retains recognized restoration. Audit
+legacy protection on active default and maintenance branches as drift under the
+canonical ruleset contract; distinguish verified unprotected responses from
+unreadable evidence, and never remove protection during audit. Compare the
+complete effective default and maintenance branch policy with declared allowed
+rule types and parameters; additional
+undeclared integrity or restriction types are drift. The exact
+repository-disabled REST response may use the fixed read-only GraphQL fallback;
+require matching repository identity and branch, active state and an explicit
+null legacy-rule association. Errors and missing or conflicting fields fail
+closed; preserve unrelated historical rules.
+
 Crates.io publication contracts bind exact repository/workflow/environment and
 official auth-action identities with full immutable workflow SHA references;
 preserve the reviewed `rust-lang/crates-io-auth-action@*` allowance for normal

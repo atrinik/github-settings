@@ -1,5 +1,29 @@
 {
   "repositories": [
     "classic"
-  ]
+  ],
+  "required_partitions": {
+    "classic": [
+      {
+        "scope": "client",
+        "language": "c-cpp"
+      },
+      {
+        "scope": "server",
+        "language": "c-cpp"
+      },
+      {
+        "scope": "core-cpp",
+        "language": "c-cpp"
+      },
+      {
+        "scope": "python",
+        "language": "python"
+      },
+      {
+        "scope": "actions",
+        "language": "actions"
+      }
+    ]
+  }
 }

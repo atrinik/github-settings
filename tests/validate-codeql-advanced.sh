@@ -10,6 +10,8 @@ mkdir -p "${temporary}/bin"
 cp "${root}/bin/validate" "${temporary}/bin/validate"
 cp -R "${root}/config" "${temporary}/config"
 cp -R "${root}/community-health" "${temporary}/community-health"
+cp -R "${root}/.github" "${temporary}/.github"
+"${temporary}/bin/validate" >/dev/null
 
 assert_invalid() {
   local description=$1
@@ -39,6 +41,27 @@ cp "${root}/config/codeql-advanced-setup.json" \
 rewrite_json '.repositories = ["legacy-client"]' \
   "${temporary}/config/codeql-advanced-setup.json"
 assert_invalid 'an archived advanced CodeQL inventory repository'
+cp "${root}/config/codeql-advanced-setup.json" \
+  "${temporary}/config/codeql-advanced-setup.json"
+
+for filter in \
+  'del(.required_partitions)' \
+  '.required_partitions = {}' \
+  '.required_partitions.classic = []' \
+  '.required_partitions.classic = {}' \
+  '.required_partitions.classic[0].scope = null' \
+  'del(.required_partitions.classic[0].language)' \
+  '.required_partitions.classic += [.required_partitions.classic[0]]' \
+  '.required_partitions.other = .required_partitions.classic'; do
+  rewrite_json "${filter}" "${temporary}/config/codeql-advanced-setup.json"
+  assert_invalid "malformed or mismatched advanced partition policy: ${filter}"
+  cp "${root}/config/codeql-advanced-setup.json" \
+    "${temporary}/config/codeql-advanced-setup.json"
+done
+
+rewrite_json '.repositories = [] | .required_partitions = {}' \
+  "${temporary}/config/codeql-advanced-setup.json"
+"${temporary}/bin/validate" >/dev/null
 cp "${root}/config/codeql-advanced-setup.json" \
   "${temporary}/config/codeql-advanced-setup.json"
 

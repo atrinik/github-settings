@@ -8,12 +8,21 @@ api_version=2026-03-10
 apply=false
 retire_maintenance=
 qualified_metaserver_source_sha=
+sha_pinning_canary=
 
 while (($#)); do
   case $1 in
   --apply)
     apply=true
     shift
+    ;;
+  --sha-pinning-canary)
+    if (($# < 2)) || [[ -z $2 ]]; then
+      echo "error: --sha-pinning-canary requires OWNER/REPOSITORY/PR" >&2
+      exit 2
+    fi
+    sha_pinning_canary=$2
+    shift 2
     ;;
   --retire-maintenance)
     if (($# < 2)) || [[ -z $2 ]]; then
@@ -24,7 +33,7 @@ while (($#)); do
     shift 2
     ;;
   *)
-    echo "usage: $0 [--apply] [--retire-maintenance REPOSITORY/BRANCH]" >&2
+    echo "usage: $0 [--apply] [--retire-maintenance REPOSITORY/BRANCH] [--sha-pinning-canary OWNER/REPOSITORY/PR]" >&2
     exit 2
     ;;
   esac
@@ -38,7 +47,7 @@ auto | organization | repository) ;;
   ;;
 esac
 
-for command in gh git jq sort; do
+for command in gh git jq sort python3; do
   if ! command -v "${command}" >/dev/null 2>&1; then
     echo "error: ${command} is required" >&2
     exit 1
@@ -52,6 +61,11 @@ advisory_merge_windows_config=${root}/config/advisory-merge-windows.json
 codeql_advanced_config=${root}/config/codeql-advanced-setup.json
 immutable_releases_config=${root}/config/immutable-releases.json
 retired_maintenance_config=${root}/config/retired-maintenance-branches.json
+security_merge_config=${root}/config/security-merge-protection.json
+if [[ -n ${sha_pinning_canary} && ${sha_pinning_canary} != "${organization}/"* ]]; then
+  echo "error: SHA canary must belong to ${organization}" >&2
+  exit 2
+fi
 temporary_files=()
 trap 'rm -f "${temporary_files[@]}"' EXIT
 
@@ -59,6 +73,31 @@ trap 'rm -f "${temporary_files[@]}"' EXIT
 
 github_api() {
   gh api -H "X-GitHub-Api-Version: ${api_version}" "$@"
+}
+
+# Capture every page before any caller treats a ruleset as present or absent.
+# gh 2.46 emits one JSON array per page; --slurp is unavailable on that host.
+list_rulesets() {
+  local endpoint=$1 pages
+  pages=$(github_api "${endpoint}" --paginate) || {
+    echo "error: cannot read complete ruleset inventory: ${endpoint}" >&2
+    return 1
+  }
+  jq -ecs '
+    if length > 0 and all(.[];
+      type == "array" and all(.[];
+        type == "object" and
+        (.id | type == "number" and . > 0 and floor == .) and
+        (.name | type == "string" and length > 0))) then
+      add |
+      if (map(.id) | length == (unique | length)) and
+         (map(.name) | length == (unique | length)) then .
+      else error("duplicate ruleset identity or name") end
+    else error("invalid ruleset page") end
+  ' <<<"${pages}" || {
+    echo "error: invalid or ambiguous complete ruleset inventory: ${endpoint}" >&2
+    return 1
+  }
 }
 
 run_api() {
@@ -164,7 +203,7 @@ retire_maintenance_branch_ruleset() {
     exit 1
   fi
 
-  rulesets=$(github_api "orgs/${organization}/rulesets")
+  rulesets=$(list_rulesets "orgs/${organization}/rulesets") || return 1
   while IFS=$'\t' read -r preserved_id preserved_name; do
     if ! jq -e --argjson id "${preserved_id}" --arg name "${preserved_name}" '
       any(.[]; .id == $id and .name == $name and .enforcement == "active")
@@ -237,7 +276,7 @@ retire_maintenance_branch_ruleset() {
   run_api DELETE "orgs/${organization}/rulesets/${ruleset_id}"
 
   if ${apply}; then
-    rulesets=$(github_api "orgs/${organization}/rulesets")
+    rulesets=$(list_rulesets "orgs/${organization}/rulesets") || return 1
     if jq -e --argjson id "${ruleset_id}" 'any(.[]; .id == $id)' \
       <<<"${rulesets}" >/dev/null; then
       echo "error: retirement ruleset still exists after apply" >&2
@@ -333,13 +372,11 @@ is_temporary_security_advisory_repository() {
 upsert_repository_ruleset() {
   local repository=$1
   local input=$2
-  local name id
+  local name id rulesets
 
   name=$(jq -r '.name' "${input}")
-  id=$(
-    github_api "repos/${organization}/${repository}/rulesets?includes_parents=false" |
-      jq -r --arg name "${name}" 'map(select(.name == $name))[0].id // empty'
-  )
+  rulesets=$(list_rulesets "repos/${organization}/${repository}/rulesets?includes_parents=false") || return 1
+  id=$(jq -r --arg name "${name}" 'map(select(.name == $name))[0].id // empty' <<<"${rulesets}")
 
   if [[ -n ${id} ]]; then
     run_api PUT "repos/${organization}/${repository}/rulesets/${id}" "${input}"
@@ -350,13 +387,11 @@ upsert_repository_ruleset() {
 
 upsert_organization_ruleset() {
   local input=$1
-  local name id
+  local name id rulesets
 
   name=$(jq -r '.name' "${input}")
-  id=$(
-    github_api "orgs/${organization}/rulesets" |
-      jq -r --arg name "${name}" 'map(select(.name == $name))[0].id // empty'
-  )
+  rulesets=$(list_rulesets "orgs/${organization}/rulesets") || return 1
+  id=$(jq -r --arg name "${name}" 'map(select(.name == $name))[0].id // empty' <<<"${rulesets}")
 
   if [[ -n ${id} ]]; then
     run_api PUT "orgs/${organization}/rulesets/${id}" "${input}"
@@ -462,9 +497,10 @@ maintenance_ruleset_is_desired() {
 }
 
 delete_stale_repository_maintenance_rulesets() {
-  local repository ruleset name id
+  local repository ruleset name id rulesets
 
   for repository in "${active_repositories[@]}"; do
+    rulesets=$(list_rulesets "repos/${organization}/${repository}/rulesets?includes_parents=false") || return 1
     while IFS= read -r ruleset; do
       name=$(jq -r '.name' <<<"${ruleset}")
       id=$(jq -r '.id' <<<"${ruleset}")
@@ -472,24 +508,21 @@ delete_stale_repository_maintenance_rulesets() {
         continue
       fi
       if ! maintenance_ruleset_is_desired "${repository}" "${name}"; then
-        run_api DELETE "repos/${organization}/${repository}/rulesets/${id}"
+        run_api DELETE "repos/${organization}/${repository}/rulesets/${id}" || return 1
       fi
-    done < <(
-      github_api \
-        "repos/${organization}/${repository}/rulesets?includes_parents=false" |
-        jq -c '.[]'
-    )
+    done < <(jq -c '.[]' <<<"${rulesets}")
   done
 }
 
 delete_stale_repository_advisory_rulesets() {
-  local repository ruleset name id window_active
+  local repository ruleset name id window_active rulesets
 
   while IFS= read -r repository; do
     window_active=false
     if repository_has_advisory_merge_window "${repository}"; then
       window_active=true
     fi
+    rulesets=$(list_rulesets "repos/${organization}/${repository}/rulesets?includes_parents=false") || return 1
     while IFS= read -r ruleset; do
       name=$(jq -r '.name' <<<"${ruleset}")
       id=$(jq -r '.id' <<<"${ruleset}")
@@ -499,7 +532,7 @@ delete_stale_repository_advisory_rulesets() {
           "01 - Default branch linear history" | \
           "02 - Changes through pull requests")
           run_api DELETE \
-            "repos/${organization}/${repository}/rulesets/${id}"
+            "repos/${organization}/${repository}/rulesets/${id}" || return 1
           ;;
         esac
       else
@@ -508,22 +541,19 @@ delete_stale_repository_advisory_rulesets() {
           "01 - Default branch linear history - ${repository}" | \
           "02 - Changes through pull requests - ${repository}")
           run_api DELETE \
-            "repos/${organization}/${repository}/rulesets/${id}"
+            "repos/${organization}/${repository}/rulesets/${id}" || return 1
           ;;
         esac
       fi
-    done < <(
-      github_api \
-        "repos/${organization}/${repository}/rulesets?includes_parents=false" |
-        jq -c '.[]'
-    )
+    done < <(jq -c '.[]' <<<"${rulesets}")
   done < <(jq -r '.pull_request_gate[]' "${repositories_config}")
 }
 
 delete_managed_repository_rulesets() {
   local repository=$1
-  local ruleset name id
+  local ruleset name id rulesets
 
+  rulesets=$(list_rulesets "repos/${organization}/${repository}/rulesets?includes_parents=false") || return 1
   while IFS= read -r ruleset; do
     name=$(jq -r '.name' <<<"${ruleset}")
     id=$(jq -r '.id' <<<"${ruleset}")
@@ -537,18 +567,16 @@ delete_managed_repository_rulesets() {
       "03 - Required CI" | \
       "04 - Immutable release tags" | \
       "05 - Maintenance branch - "*)
-      run_api DELETE "repos/${organization}/${repository}/rulesets/${id}"
+      run_api DELETE "repos/${organization}/${repository}/rulesets/${id}" || return 1
       ;;
     esac
-  done < <(
-    github_api "repos/${organization}/${repository}/rulesets?includes_parents=false" |
-      jq -c '.[]'
-  )
+  done < <(jq -c '.[]' <<<"${rulesets}")
 }
 
 delete_managed_organization_rulesets() {
-  local ruleset name id
+  local ruleset name id rulesets
 
+  rulesets=$(list_rulesets "orgs/${organization}/rulesets") || return 1
   while IFS= read -r ruleset; do
     name=$(jq -r '.name' <<<"${ruleset}")
     id=$(jq -r '.id' <<<"${ruleset}")
@@ -562,10 +590,69 @@ delete_managed_organization_rulesets() {
       "04 - Immutable release tags" | \
       "03 - Required CI - "* | \
       "05 - Maintenance branch - "*)
-      run_api DELETE "orgs/${organization}/rulesets/${id}"
+      run_api DELETE "orgs/${organization}/rulesets/${id}" || return 1
       ;;
     esac
-  done < <(github_api "orgs/${organization}/rulesets" | jq -c '.[]')
+  done < <(jq -c '.[]' <<<"${rulesets}")
+}
+
+retired_required_ci_matches() {
+  local repository=$1 id=$2 template=$3 current=$4
+  jq -e --argjson id "${id}" --arg source "${organization}/${repository}" '
+    .id == $id and .source_type == "Repository" and .source == $source
+  ' <<<"${current}" >/dev/null && security_ruleset_matches "${template}" "${current}"
+}
+
+delete_retired_repository_required_ci() {
+  local repository listed record id template current metadata fresh
+  for repository in "${active_repositories[@]}"; do
+    [[ -v active_repository_ids["${repository}"] ]] || continue
+    if jq -e --arg repository "${repository}" '.required_ci | has($repository)' \
+      "${repositories_config}" >/dev/null; then
+      continue
+    fi
+    listed=$(list_rulesets "repos/${organization}/${repository}/rulesets?includes_parents=false") || return 1
+    listed=$(jq -c '[.[] | select(.name == "03 - Required CI")]' <<<"${listed}")
+    [[ $(jq length <<<"${listed}") != 0 ]] || continue
+    record=$(jq -c --arg repository "${repository}" \
+      '[.retirements[] | select(.repository == $repository)]' "${root}/config/retired-required-ci.json")
+    if [[ $(jq length <<<"${listed}") != 1 || $(jq length <<<"${record}") != 1 ]]; then
+      echo "SKIP ${organization}/${repository} 03 - Required CI: retained; requires one reviewed config/retired-required-ci.json record and unique live rule"
+      continue
+    fi
+    record=$(jq -c '.[0]' <<<"${record}")
+    id=$(jq -r '.ruleset_id' <<<"${record}")
+    if ! jq -e --argjson id "${id}" '.[0].id == $id' <<<"${listed}" >/dev/null; then
+      echo "SKIP ${organization}/${repository} 03 - Required CI: recorded ruleset identity differs; retained"
+      continue
+    fi
+    template=$(mktemp)
+    temporary_files+=("${template}")
+    jq --argjson record "${record}" '
+      .rules[0].parameters.required_status_checks =
+        ($record.required_ci | map({context: ., integration_id: 15368}))
+    ' "${root}/config/rulesets/required-ci.json" >"${template}"
+    current=$(github_api "repos/${organization}/${repository}/rulesets/${id}") || return 1
+    if ! retired_required_ci_matches "${repository}" "${id}" "${template}" "${current}"; then
+      echo "SKIP ${organization}/${repository} 03 - Required CI: modified or foreign rule; retained"
+      continue
+    fi
+    metadata=$(github_api "repos/${organization}/${repository}") || return 1
+    if ! jq -e --argjson record "${record}" --argjson enumerated "${active_repository_ids["${repository}"]}" \
+      --arg full_name "${organization}/${repository}" '
+      .id == $record.repository_id and .id == $enumerated and
+      .full_name == $full_name and .archived == false
+    ' <<<"${metadata}" >/dev/null; then
+      echo "SKIP ${organization}/${repository} 03 - Required CI: repository identity or archive state changed; retained"
+      continue
+    fi
+    fresh=$(github_api "repos/${organization}/${repository}/rulesets/${id}") || return 1
+    if ! retired_required_ci_matches "${repository}" "${id}" "${template}" "${fresh}"; then
+      echo "SKIP ${organization}/${repository} 03 - Required CI: rule changed during retirement preflight; retained"
+      continue
+    fi
+    run_api DELETE "repos/${organization}/${repository}/rulesets/${id}" || return 1
+  done
 }
 
 publish_repository_rulesets() {
@@ -579,7 +666,7 @@ publish_repository_rulesets() {
       ruleset_config=${root}/config/rulesets/default-branch-linear-history-classic.json
     fi
     upsert_repository_ruleset "${repository}" \
-      "${ruleset_config}"
+      "${ruleset_config}" || return 1
   done
 
   for repository in "${active_repositories[@]}"; do
@@ -588,7 +675,7 @@ publish_repository_rulesets() {
       ruleset_config=${root}/config/rulesets/default-branch-integrity-classic.json
     fi
     upsert_repository_ruleset "${repository}" \
-      "${ruleset_config}"
+      "${ruleset_config}" || return 1
   done
 
   while IFS= read -r repository; do
@@ -597,7 +684,7 @@ publish_repository_rulesets() {
       ruleset_config=${root}/config/rulesets/pull-request-gate-classic.json
     fi
     upsert_repository_ruleset "${repository}" \
-      "${ruleset_config}"
+      "${ruleset_config}" || return 1
   done < <(jq -r '.pull_request_gate[]' "${repositories_config}")
 
   while IFS= read -r repository; do
@@ -618,12 +705,12 @@ publish_repository_rulesets() {
           ($repositories[0].required_ci[$repository] |
            map({context: ., integration_id: $app_id}))
       ' "${root}/config/rulesets/required-ci.json" >"${ci_payload}"
-    upsert_repository_ruleset "${repository}" "${ci_payload}"
+    upsert_repository_ruleset "${repository}" "${ci_payload}" || return 1
   done < <(jq -r '.required_ci | keys[]' "${repositories_config}")
 
   while IFS= read -r repository; do
     upsert_repository_ruleset "${repository}" \
-      "${root}/config/rulesets/immutable-release-tags.json"
+      "${root}/config/rulesets/immutable-release-tags.json" || return 1
   done < <(jq -r '.release_tags[]' "${repositories_config}")
 
   while IFS= read -r maintenance; do
@@ -633,21 +720,22 @@ publish_repository_rulesets() {
     input=$(make_maintenance_ruleset \
       "${repository}" "${branch}" "${required_ci}" repository)
     temporary_files+=("${input}")
-    upsert_repository_ruleset "${repository}" "${input}"
+    upsert_repository_ruleset "${repository}" "${input}" || return 1
   done < <(jq -c '.maintenance_branches[]' "${repositories_config}")
 
-  delete_stale_repository_maintenance_rulesets
-  delete_stale_repository_advisory_rulesets
+  delete_retired_repository_required_ci || return 1
+  delete_stale_repository_maintenance_rulesets || return 1
+  delete_stale_repository_advisory_rulesets || return 1
 
   if [[ ${organization_plan} != free ]]; then
-    delete_managed_organization_rulesets
+    delete_managed_organization_rulesets || return 1
   fi
 }
 
 publish_organization_rulesets() {
   local input repository ci_payload maintenance branch required_ci
   local -a desired_rulesets
-  local repositories ruleset name id desired
+  local repositories ruleset name id desired rulesets
 
   desired_rulesets=(
     "01 - Default branch integrity"
@@ -668,12 +756,12 @@ publish_organization_rulesets() {
       "${root}/config/rulesets/default-branch-integrity-classic.json" \
       "01 - Default branch integrity - classic" '["classic"]')
     temporary_files+=("${input}")
-    upsert_organization_ruleset "${input}"
+    upsert_organization_ruleset "${input}" || return 1
     input=$(make_organization_ruleset \
       "${root}/config/rulesets/default-branch-linear-history-classic.json" \
       "01 - Default branch linear history - classic" '["classic"]')
     temporary_files+=("${input}")
-    upsert_organization_ruleset "${input}"
+    upsert_organization_ruleset "${input}" || return 1
   fi
 
   repositories=$(jq -c '.repositories' "${advisory_merge_windows_config}")
@@ -682,13 +770,13 @@ publish_organization_rulesets() {
     "${root}/config/rulesets/default-branch-linear-history.json" \
     "01 - Default branch linear history" '["~ALL"]' "${repositories}")
   temporary_files+=("${input}")
-  upsert_organization_ruleset "${input}"
+  upsert_organization_ruleset "${input}" || return 1
 
   input=$(make_organization_ruleset \
     "${root}/config/rulesets/default-branch-integrity.json" \
     "01 - Default branch integrity" '["~ALL"]' "${repositories}")
   temporary_files+=("${input}")
-  upsert_organization_ruleset "${input}"
+  upsert_organization_ruleset "${input}" || return 1
 
   # Establish the Classic-specific policy before excluding it from the shared
   # pull-request policy.
@@ -697,7 +785,7 @@ publish_organization_rulesets() {
       "${root}/config/rulesets/pull-request-gate-classic.json" \
       "02 - Changes through pull requests - classic" '["classic"]')
     temporary_files+=("${input}")
-    upsert_organization_ruleset "${input}"
+    upsert_organization_ruleset "${input}" || return 1
   fi
 
   repositories=$(jq -c \
@@ -708,14 +796,14 @@ publish_organization_rulesets() {
     "${root}/config/rulesets/pull-request-gate.json" \
     "02 - Changes through pull requests" "${repositories}")
   temporary_files+=("${input}")
-  upsert_organization_ruleset "${input}"
+  upsert_organization_ruleset "${input}" || return 1
 
   repositories=$(jq -c '.release_tags' "${repositories_config}")
   input=$(make_organization_ruleset \
     "${root}/config/rulesets/immutable-release-tags.json" \
     "04 - Immutable release tags" "${repositories}")
   temporary_files+=("${input}")
-  upsert_organization_ruleset "${input}"
+  upsert_organization_ruleset "${input}" || return 1
 
   while IFS= read -r repository; do
     name="03 - Required CI - ${repository}"
@@ -744,7 +832,7 @@ publish_organization_rulesets() {
           ($repositories[0].required_ci[$repository] |
            map({context: ., integration_id: $app_id}))
       ' "${root}/config/rulesets/required-ci.json" >"${ci_payload}"
-    upsert_organization_ruleset "${ci_payload}"
+    upsert_organization_ruleset "${ci_payload}" || return 1
   done < <(jq -r '.required_ci | keys[]' "${repositories_config}")
 
   while IFS= read -r maintenance; do
@@ -756,9 +844,10 @@ publish_organization_rulesets() {
     input=$(make_maintenance_ruleset \
       "${repository}" "${branch}" "${required_ci}" organization)
     temporary_files+=("${input}")
-    upsert_organization_ruleset "${input}"
+    upsert_organization_ruleset "${input}" || return 1
   done < <(jq -c '.maintenance_branches[]' "${repositories_config}")
 
+  rulesets=$(list_rulesets "orgs/${organization}/rulesets") || return 1
   while IFS= read -r ruleset; do
     name=$(jq -r '.name' <<<"${ruleset}")
     id=$(jq -r '.id' <<<"${ruleset}")
@@ -780,12 +869,12 @@ publish_organization_rulesets() {
       fi
     done
     if ! ${desired}; then
-      run_api DELETE "orgs/${organization}/rulesets/${id}"
+      run_api DELETE "orgs/${organization}/rulesets/${id}" || return 1
     fi
-  done < <(github_api "orgs/${organization}/rulesets" | jq -c '.[]')
+  done < <(jq -c '.[]' <<<"${rulesets}")
 
   for repository in "${active_repositories[@]}"; do
-    delete_managed_repository_rulesets "${repository}"
+    delete_managed_repository_rulesets "${repository}" || return 1
   done
 }
 
@@ -1001,32 +1090,430 @@ wait_for_code_security_configuration() {
 }
 
 converge_codeql_default_setup() {
-  local repository input desired_state desired_query current
-  local current_state current_query
+  local repository input desired_state desired_query current required_languages
+  local current_state current_query language_match
 
   for repository in "${active_repositories[@]}"; do
     input=${root}/config/codeql-default-setup.json
     if repository_uses_advanced_codeql "${repository}"; then
       input=${root}/config/codeql-default-setup-advanced.json
     fi
-
+    required_languages=$(jq -c --arg repository "${repository}" \
+      '.codeql_required_languages[$repository] // []' "${security_merge_config}")
     desired_state=$(jq -r '.state' "${input}")
     desired_query=$(jq -r '.query_suite // empty' "${input}")
+    current='{}'
     if current=$(github_api \
       "repos/${organization}/${repository}/code-scanning/default-setup" \
       2>/dev/null); then
       current_state=$(jq -r '.state // empty' <<<"${current}")
+      if ! jq -e '
+        (.state == "not-configured" and .languages == null) or
+        (.languages | type == "array" and all(.[]; type == "string" and length > 0))
+      ' <<<"${current}" >/dev/null; then
+        echo "error: invalid existing CodeQL languages for ${repository}" >&2
+        return 1
+      fi
       current_query=$(jq -r '.query_suite // empty' <<<"${current}")
-      if [[ ${current_state} == "${desired_state}" ]] &&
+      language_match=$(jq --argjson required "${required_languages}" \
+        '($required - (.languages // [])) == []' <<<"${current}")
+      if [[ ${current_state} == "${desired_state}" && ${language_match} == true ]] &&
         { [[ -z ${desired_query} ]] || [[ ${current_query} == "${desired_query}" ]]; }; then
         echo "KEEP /repos/${organization}/${repository}/code-scanning/default-setup is ${desired_state}"
         continue
       fi
+    else
+      # A failed read is unknown state, including repositories with no policy
+      # language minimum or with advanced setup. Never publish from that state.
+      echo "error: cannot read existing CodeQL languages for ${repository}" >&2
+      return 1
     fi
-
+    if [[ ${required_languages} != '[]' ]]; then
+      local language_payload
+      language_payload=$(mktemp)
+      temporary_files+=("${language_payload}")
+      jq --argjson current "${current}" --argjson required "${required_languages}" \
+        '.languages = (($current.languages // []) + $required |
+          map(if . == "javascript" or . == "typescript" then
+            "javascript-typescript" else . end) | unique)' \
+        "${input}" >"${language_payload}"
+      input=${language_payload}
+    fi
     run_api PATCH \
       "repos/${organization}/${repository}/code-scanning/default-setup" \
       "${input}"
+  done
+}
+
+security_ruleset_matches() {
+  local template=$1 current=$2
+  jq -e --slurpfile desired "${template}" '
+    # GitHub returns the organization-owner sentinel with a null ID.
+    def normalize:
+      .bypass_actors |= (map(
+        if .actor_type == "OrganizationAdmin" and .actor_id == null then
+          .actor_id = 1
+        else . end) | sort_by(.actor_type, .actor_id, .bypass_mode)) |
+      # GitHub expands this omitted request parameter to false. Keep true,
+      # null and unknown parameters visible so modified gates are not retired.
+      .rules |= map(if .type == "required_status_checks" then
+          .parameters |= (
+            if .do_not_enforce_on_create == false then del(.do_not_enforce_on_create) else . end |
+            .required_status_checks |= sort_by(.context, .integration_id))
+        else . end);
+    normalize as $current |
+    all($desired[0] | normalize | to_entries[]; $current[.key] == .value)
+  ' <<<"${current}" >/dev/null
+}
+
+security_ruleset_restoration_allowed() {
+  local repository=$1 id=$2 template=$3 current=$4
+  jq -e --argjson id "${id}" --slurpfile desired "${template}" \
+    --arg source "${organization}/${repository}" '
+    .id == $id and .name == $desired[0].name and
+    .source_type == "Repository" and .source == $source and
+    (.enforcement | IN("active", "disabled", "evaluate"))
+  ' <<<"${current}" >/dev/null &&
+    security_ruleset_matches "${template}" "$(jq --slurpfile desired "${template}" '
+      .enforcement = $desired[0].enforcement |
+      .conditions.ref_name.include = $desired[0].conditions.ref_name.include |
+      .conditions.ref_name.exclude = $desired[0].conditions.ref_name.exclude
+    ' <<<"${current}")"
+}
+
+security_gate_applies_to_default_branch() {
+  local repository=$1 kind=$2 id=$3 metadata branch effective
+  metadata=$(github_api "repos/${organization}/${repository}") || return 1
+  jq -e --argjson id "${active_repository_ids["${repository}"]}" '
+    .id == $id and .archived == false and
+    (.default_branch | type == "string" and length > 0)
+  ' <<<"${metadata}" >/dev/null || return 1
+  branch=$(jq -r '.default_branch | @uri' <<<"${metadata}")
+  effective=$(github_api "repos/${organization}/${repository}/rules/branches/${branch}") || return 1
+  jq -e --argjson id "${id}" --arg kind "${kind}" '
+    any(.[]; .ruleset_id == $id and
+      if $kind == "code_scanning" then
+        .type == "code_scanning" and
+        any(.parameters.code_scanning_tools[]?; .tool == "CodeQL")
+      else
+        .type == "required_status_checks" and
+        any(.parameters.required_status_checks[]?;
+          .context == "Dependency review" and .integration_id == 15368)
+      end)
+  ' <<<"${effective}" >/dev/null || return 1
+  printf '%s\n' "${branch}"
+}
+
+owned_security_ruleset_matches() {
+  local repository=$1 id=$2 template=$3 current=$4
+  jq -e --argjson id "${id}" --arg source "${organization}/${repository}" '
+    .id == $id and .source_type == "Repository" and .source == $source
+  ' <<<"${current}" >/dev/null && security_ruleset_matches "${template}" "${current}"
+}
+
+delete_removed_security_merge_rulesets() {
+  local repository kind template name existing rule id current metadata
+  for repository in "${active_repositories[@]}"; do
+    [[ -v active_repository_ids["${repository}"] ]] || continue
+    # The complete live inventory was checked against governed repositories
+    # before this function; archived repositories never enter this collection.
+    for kind in code_scanning dependency_review; do
+      if jq -e --arg kind "${kind}" --arg repository "${repository}" \
+        '.[$kind] | index($repository) != null' "${security_merge_config}" >/dev/null; then
+        continue
+      fi
+      if [[ ${kind} == code_scanning ]]; then
+        template=${root}/config/rulesets/code-scanning.json
+      else
+        template=${root}/config/rulesets/dependency-review.json
+      fi
+      name=$(jq -r '.name' "${template}")
+      existing=$(list_rulesets "repos/${organization}/${repository}/rulesets?includes_parents=false") || return 1
+      while IFS= read -r rule; do
+        id=$(jq -r '.id' <<<"${rule}")
+        current=$(github_api "repos/${organization}/${repository}/rulesets/${id}") || return 1
+        if owned_security_ruleset_matches "${repository}" "${id}" "${template}" "${current}"; then
+          metadata=$(github_api "repos/${organization}/${repository}") || return 1
+          if jq -e --argjson id "${active_repository_ids["${repository}"]}" \
+            --arg full_name "${organization}/${repository}" '
+            .id == $id and .full_name == $full_name and .archived == false
+          ' <<<"${metadata}" >/dev/null; then
+            current=$(github_api "repos/${organization}/${repository}/rulesets/${id}") || {
+              echo "error: security gate final retirement read failed; retained: ${repository} ${name}" >&2
+              return 1
+            }
+            if ! owned_security_ruleset_matches "${repository}" "${id}" "${template}" "${current}"; then
+              echo "SKIP ${organization}/${repository} ${name}: rule changed during retirement preflight; retained"
+              continue
+            fi
+            run_api DELETE "repos/${organization}/${repository}/rulesets/${id}" || return 1
+          else
+            echo "SKIP ${organization}/${repository} ${name}: repository identity or archive state changed; retained"
+          fi
+        else
+          echo "SKIP ${organization}/${repository} ${name}: unrecognized ownership or payload; retained"
+        fi
+      done < <(jq -c --arg name "${name}" '.[] | select(.name == $name)' <<<"${existing}")
+    done
+  done
+}
+
+# These repository rules remain repository-owned even in organization scope:
+# GitHub Team does not support organization-level code-scanning rules.
+publish_security_merge_rulesets() {
+  local repository kind template name existing id current reason status readiness_mode phase metadata effective_branch proven_current
+  delete_removed_security_merge_rulesets || return 1
+  for kind in code_scanning dependency_review; do
+    if [[ ${kind} == code_scanning ]]; then
+      template=${root}/config/rulesets/code-scanning.json
+      readiness_mode=codeql
+    else
+      template=${root}/config/rulesets/dependency-review.json
+      readiness_mode=dependency
+    fi
+    name=$(jq -r '.name' "${template}")
+    while IFS= read -r repository; do
+      if [[ ! -v active_repository_ids["${repository}"] ]]; then
+        echo "SKIP ${organization}/${repository} is not active; ${name}"
+        continue
+      fi
+      phase=$(jq -er --arg kind "${kind}" --arg repository "${repository}" \
+        '.activation[$kind][$repository] | select(. == "pending" or . == "enforced")' \
+        "${security_merge_config}") || {
+        echo "error: invalid security gate activation intent: ${repository} ${kind}" >&2
+        return 1
+      }
+      existing=$(list_rulesets \
+        "repos/${organization}/${repository}/rulesets?includes_parents=false") || return 1
+      if ! jq -e --arg name "${name}" \
+        '[.[] | select(.name == $name)] | length <= 1' <<<"${existing}" >/dev/null; then
+        echo "error: ambiguous managed ruleset ${name} on ${repository}" >&2
+        return 1
+      fi
+      id=$(jq -r --arg name "${name}" \
+        '.[] | select(.name == $name) | .id' <<<"${existing}")
+      current='{}'
+      if [[ -n ${id} ]]; then
+        current=$(github_api "repos/${organization}/${repository}/rulesets/${id}")
+        if ! security_ruleset_restoration_allowed "${repository}" "${id}" "${template}" "${current}"; then
+          echo "error: security gate ownership or managed rule identity changed; retained: ${repository} ${name}" >&2
+          return 1
+        fi
+        if security_ruleset_matches "${template}" "${current}"; then
+          echo "KEEP /repos/${organization}/${repository}/rulesets/${id} ${name}"
+          continue
+        fi
+      fi
+      # Pending qualification cannot create protection before reviewed intent is
+      # persisted. Existing effective gates still survive producer failures.
+      effective_branch=
+      proven_current=${current}
+      if [[ ${phase} == pending ]] && { [[ -z ${id} ]] ||
+        ! effective_branch=$(security_gate_applies_to_default_branch "${repository}" "${kind}" "${id}"); }; then
+        status=0
+        reason=$("${root}/bin/security-readiness" "${readiness_mode}" \
+          "${organization}/${repository}") || status=$?
+        if ((status == 0)); then
+          echo "READY ${organization}/${repository} ${name}: promote reviewed activation intent before installation"
+        else
+          echo "PENDING ${organization}/${repository} ${name}: ${reason}"
+        fi
+        continue
+      fi
+      # Enforced source is durable intent, not a claim about current producer
+      # health. Restore it only on the same active repository and owned gate.
+      metadata=$(github_api "repos/${organization}/${repository}") || return 1
+      if ! jq -e --argjson id "${active_repository_ids["${repository}"]}" \
+        --arg name "${organization}/${repository}" '
+        .id == $id and .full_name == $name and .archived == false and
+        (.default_branch | type == "string" and length > 0)
+      ' <<<"${metadata}" >/dev/null; then
+        echo "error: security gate repository identity or archive state changed: ${repository}" >&2
+        return 1
+      fi
+      if [[ ${phase} == pending ]] &&
+        [[ $(jq -r '.default_branch | @uri' <<<"${metadata}") != "${effective_branch}" ]]; then
+        echo "error: default branch changed after existing security gate proof; retained: ${repository} ${name}" >&2
+        return 1
+      fi
+      if [[ -n ${id} ]]; then
+        # Re-read after producer and repository checks: a concurrent policy edit
+        # must not be overwritten with the earlier restoration decision.
+        current=$(github_api "repos/${organization}/${repository}/rulesets/${id}") || {
+          echo "error: security gate final read failed; retained: ${repository} ${name}" >&2
+          return 1
+        }
+        if ! security_ruleset_restoration_allowed "${repository}" "${id}" "${template}" "${current}"; then
+          echo "error: security gate changed during restoration preflight; retained: ${repository} ${name}" >&2
+          return 1
+        fi
+        # Pending intent may preserve a proven effective gate, but cannot
+        # restore protection revoked after that proof. Only enforced intent
+        # authorizes enforcement or ref-scope restoration without qualification.
+        if [[ ${phase} == pending ]] && ! jq -e --argjson proven "${proven_current}" '
+          def protection:
+            {enforcement, ref_name: (.conditions.ref_name |
+              .include |= sort | .exclude |= sort)};
+          protection == ($proven | protection)
+        ' <<<"${current}" >/dev/null; then
+          echo "error: existing security gate protection changed after effective proof; retained: ${repository} ${name}" >&2
+          return 1
+        fi
+        if security_ruleset_matches "${template}" "${current}"; then
+          echo "KEEP /repos/${organization}/${repository}/rulesets/${id} ${name}"
+          continue
+        fi
+        run_api PUT "repos/${organization}/${repository}/rulesets/${id}" "${template}"
+      else
+        run_api POST "repos/${organization}/${repository}/rulesets" "${template}"
+      fi
+    done < <(jq -r --arg kind "${kind}" '.[$kind][]' "${security_merge_config}")
+  done
+}
+
+validate_sha_canary_target() {
+  local canary=$1 owner repository number metadata
+  IFS=/ read -r owner repository number <<<"${canary}"
+  if [[ ${owner} != "${organization}" || ! ${number} =~ ^[1-9][0-9]*$ ||
+    ! ${repository} =~ ^[A-Za-z0-9_.-]+$ ]] ||
+    [[ ! -v active_repository_ids["${repository}"] ]]; then
+    echo "error: SHA canary must identify an active governed repository in ${organization}" >&2
+    return 1
+  fi
+  metadata=$(github_api "repos/${organization}/${repository}")
+  if ! jq -e --argjson id "${active_repository_ids["${repository}"]}" \
+    --arg name "${organization}/${repository}" '
+      .id == $id and .full_name == $name and .archived == false
+    ' <<<"${metadata}" >/dev/null; then
+    echo "error: SHA canary repository identity or archive state changed" >&2
+    return 1
+  fi
+}
+
+converge_actions_permissions() {
+  local current selected input reason phase canary staging_needed=false
+  local permissions_filter='type == "object" and
+    (.enabled_repositories | IN("all", "none", "selected")) and
+    (.allowed_actions | IN("all", "local_only", "selected")) and
+    (.sha_pinning_required == null or (.sha_pinning_required | type == "boolean"))'
+  current=$(github_api "orgs/${organization}/actions/permissions") || return 1
+  if ! jq -e "${permissions_filter}" <<<"${current}" >/dev/null; then
+    echo "error: cannot read current organization Actions permissions" >&2
+    return 1
+  fi
+  phase=$(jq -r '.phase' "${root}/config/actions-sha-pinning.json")
+  canary=$(jq -r '.canary // empty' "${root}/config/actions-sha-pinning.json")
+  if [[ ${phase} == pending && -n ${sha_pinning_canary} ]]; then
+    validate_sha_canary_target "${sha_pinning_canary}" || return 1
+  elif [[ ${phase} == enforced ]] &&
+    ! jq -e '.sha_pinning_required == true' <<<"${current}" >/dev/null; then
+    validate_sha_canary_target "${canary}" || return 1
+  fi
+
+  # GitHub requires selected mode before its selected-actions endpoint can be
+  # updated. Stage both conservative controls before proving SHA compatibility.
+  # Omit SHA entirely: this preserves an existing value without enabling it
+  # from a stale read if another actor changes the field during staging.
+  input=$(mktemp)
+  temporary_files+=("${input}")
+  jq 'del(.sha_pinning_required)' "${root}/config/actions-permissions.json" >"${input}"
+  if jq -e --slurpfile desired "${input}" '
+    . as $current | all($desired[0] | to_entries[]; $current[.key] == .value)
+  ' <<<"${current}" >/dev/null; then
+    echo "KEEP /orgs/${organization}/actions/permissions"
+  else
+    staging_needed=true
+    run_api PUT "orgs/${organization}/actions/permissions" "${input}" || return 1
+  fi
+  # This endpoint may require selected mode. A dry run with a mode change
+  # can plan its update, but cannot claim to have read the staged live policy.
+  if ! ${apply} && [[ $(jq -r '.allowed_actions' <<<"${current}") != selected ]]; then
+    selected=null
+  else
+    selected=$(github_api "orgs/${organization}/actions/permissions/selected-actions") || return 1
+    if ! jq -e '
+      (.github_owned_allowed | type == "boolean") and
+      (.verified_allowed | type == "boolean") and
+      (.patterns_allowed | type == "array" and all(.[]; type == "string"))
+    ' <<<"${selected}" >/dev/null; then
+      echo "error: cannot read current selected Actions policy" >&2
+      return 1
+    fi
+  fi
+  if jq -e --slurpfile desired "${root}/config/actions-selected.json" '
+    .github_owned_allowed == $desired[0].github_owned_allowed and
+    .verified_allowed == $desired[0].verified_allowed and
+    (.patterns_allowed | sort) == ($desired[0].patterns_allowed | sort)
+  ' <<<"${selected}" >/dev/null; then
+    echo "KEEP /orgs/${organization}/actions/permissions/selected-actions"
+  else
+    staging_needed=true
+    run_api PUT "orgs/${organization}/actions/permissions/selected-actions" \
+      "${root}/config/actions-selected.json" || return 1
+  fi
+  if ${apply}; then
+    # Base the SHA decision on live post-staging state: another writer may
+    # disable it while conservative mode or pattern updates are in flight.
+    current=$(github_api "orgs/${organization}/actions/permissions") || return 1
+    if ! jq -e "${permissions_filter}" <<<"${current}" >/dev/null ||
+      ! jq -e --slurpfile desired "${input}" '
+        . as $current | all($desired[0] | to_entries[]; $current[.key] == .value)
+      ' <<<"${current}" >/dev/null; then
+      echo "error: organization Actions permissions unreadable or changed during staging" >&2
+      return 1
+    fi
+  fi
+  # An explicitly requested pending-phase probe is read-only and independent
+  # of whether SHA pinning is already enabled. Do not let preservation skip it.
+  if [[ ${phase} == pending && -n ${sha_pinning_canary} ]]; then
+    validate_sha_canary_target "${sha_pinning_canary}" || return 1
+    if reason=$("${root}/bin/security-readiness" sha "${sha_pinning_canary}"); then
+      echo "READY canary evidence: ${reason}; source rollout phase remains pending"
+    else
+      echo "PENDING canary evidence: ${reason}"
+    fi
+  fi
+  if jq -e '.sha_pinning_required == true' <<<"${current}" >/dev/null; then
+    return 0
+  fi
+  if [[ ${phase} == enforced ]]; then
+    if ! ${apply} && ${staging_needed}; then
+      echo "PLAN SHA pinning proof and restoration after Actions policy staging is applied"
+      return 0
+    fi
+    validate_sha_canary_target "${canary}" || return 1
+    if ! reason=$("${root}/bin/security-readiness" sha "${canary}"); then
+      echo "error: enforced SHA pinning cannot be restored: ${reason}" >&2
+      return 1
+    fi
+    echo "READY enforced SHA pinning: ${reason}"
+    run_api PUT "orgs/${organization}/actions/permissions" \
+      "${root}/config/actions-permissions.json" || return 1
+  else
+    echo "PENDING SHA pinning: promote the reviewed source rollout phase and accepted canary after readiness"
+  fi
+}
+
+converge_repository_workflow_permissions() {
+  local repository current
+  for repository in "${active_repositories[@]}"; do
+    [[ -v active_repository_ids["${repository}"] ]] || continue
+    current=$(github_api "repos/${organization}/${repository}/actions/permissions/workflow")
+    if ! jq -e 'type == "object" and
+      (.default_workflow_permissions | IN("read", "write")) and
+      (.can_approve_pull_request_reviews | type == "boolean")
+    ' <<<"${current}" >/dev/null; then
+      echo "error: cannot read repository workflow permissions: ${repository}" >&2
+      return 1
+    fi
+    if jq -e --slurpfile desired "${root}/config/actions-workflow.json" '
+      . as $current | all($desired[0] | to_entries[]; $current[.key] == .value)
+    ' <<<"${current}" >/dev/null; then
+      echo "KEEP /repos/${organization}/${repository}/actions/permissions/workflow"
+    else
+      run_api PUT "repos/${organization}/${repository}/actions/permissions/workflow" \
+        "${root}/config/actions-workflow.json"
+    fi
   done
 }
 
@@ -1424,10 +1911,7 @@ preflight_new_crate_immutable_selection
 converge_immutable_release_policy
 
 converge_organization_settings "${organization_metadata}"
-run_api PUT "orgs/${organization}/actions/permissions" \
-  "${root}/config/actions-permissions.json"
-run_api PUT "orgs/${organization}/actions/permissions/selected-actions" \
-  "${root}/config/actions-selected.json"
+converge_actions_permissions
 run_api PUT "orgs/${organization}/actions/permissions/workflow" \
   "${root}/config/actions-workflow.json"
 
@@ -1436,6 +1920,8 @@ for repository in "${active_repositories[@]}"; do
     "${root}/config/repository-defaults.json"
 done
 
+converge_repository_workflow_permissions
+
 if [[ ${policy_scope} == organization ]]; then
   publish_organization_rulesets
   publish_organization_security
@@ -1443,6 +1929,8 @@ else
   publish_repository_rulesets
   publish_repository_security
 fi
+
+publish_security_merge_rulesets
 
 while IFS= read -r repository; do
   if ! repository_archived=$(

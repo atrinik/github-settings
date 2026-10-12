@@ -51,6 +51,62 @@ jq -e '
   }
 ' "${organization_config}" >/dev/null
 
+jq -e --slurpfile repositories "${repositories_config}" \
+  --slurpfile advanced "${advanced_codeql_config}" '
+  . as $policy |
+  (keys == ["activation", "code_scanning", "codeql_required_languages", "dependency_review"]) and
+  (.activation | type == "object" and keys == ["code_scanning", "dependency_review"]) and
+  all(["code_scanning", "dependency_review"][]; . as $kind |
+    ($policy.activation[$kind] | type == "object" and keys == $policy[$kind]) and
+    all($policy.activation[$kind][]; IN("pending", "enforced"))) and
+  .dependency_review == ($repositories[0].required_ci | keys) and
+  .code_scanning == .dependency_review and
+  (.codeql_required_languages | type == "object") and
+  all(.codeql_required_languages | to_entries[];
+    .key as $repository |
+    ($repositories[0].required_ci | has($repository)) and
+    ($advanced[0].repositories | index($repository)) == null and
+    (.value | type == "array" and length > 0 and . == (sort | unique)) and
+    all(.value[]; IN("c-cpp", "csharp", "go", "java-kotlin",
+      "javascript-typescript", "python", "ruby", "rust", "swift"))) and
+  .codeql_required_languages["content-toolkit"] == ["rust"]
+' "${root}/config/security-merge-protection.json" >/dev/null
+
+jq -e '.sha_pinning_required == true' \
+  "${root}/config/actions-permissions.json" >/dev/null
+
+jq -e --slurpfile repositories "${repositories_config}" '
+  (keys == ["canary", "phase"]) and
+  if .phase == "pending" then .canary == null
+  elif .phase == "enforced" then
+    (.canary | type == "string" and test("^atrinik/[A-Za-z0-9_.-]+/[1-9][0-9]*$")) and
+    ((.canary | split("/")[1]) as $repository |
+      ($repositories[0].required_ci | has($repository)))
+  else false end
+' "${root}/config/actions-sha-pinning.json" >/dev/null
+
+for security_ruleset in code-scanning dependency-review; do
+  jq -e '
+    .target == "branch" and .enforcement == "active" and
+    .conditions == {ref_name: {include: ["~DEFAULT_BRANCH"], exclude: []}} and
+    .bypass_actors == [{actor_id: 1, actor_type: "OrganizationAdmin",
+      bypass_mode: "pull_request"}]
+  ' "${root}/config/rulesets/${security_ruleset}.json" >/dev/null
+done
+jq -e '
+  .name == "06 - CodeQL security" and
+  .rules == [{type: "code_scanning", parameters: {code_scanning_tools: [{
+    tool: "CodeQL", security_alerts_threshold: "high_or_higher", alerts_threshold: "none"
+  }]}}]
+' "${root}/config/rulesets/code-scanning.json" >/dev/null
+jq -e '
+  .name == "07 - Dependency review" and
+  .rules == [{type: "required_status_checks", parameters: {
+    required_status_checks: [{context: "Dependency review", integration_id: 15368}],
+    strict_required_status_checks_policy: true
+  }}]
+' "${root}/config/rulesets/dependency-review.json" >/dev/null
+
 jq -e '
   .bypass_actors == [] and
   [.rules[].type] == ["deletion", "non_fast_forward"]
@@ -160,6 +216,26 @@ jq -e '
     ($branches | length) == ($branches | unique | length))
 ' "${repositories_config}" >/dev/null
 
+jq -e --slurpfile repositories "${repositories_config}" '
+  (keys == ["retirements"]) and (.retirements | type == "array") and
+  all(.retirements[];
+    (keys == ["repository", "repository_id", "required_ci", "ruleset_id"]) and
+    (.repository | type == "string" and length > 0) and
+    (.repository_id | type == "number" and floor == . and . > 0) and
+    (.ruleset_id | type == "number" and floor == . and . > 0) and
+    (.required_ci | type == "array" and length > 0) and
+    all(.required_ci[]; type == "string" and test("[^[:space:]]")) and
+    ((.required_ci | length) == (.required_ci | unique | length)) and
+    (.repository as $repository |
+      ($repositories[0].required_ci | has($repository) | not) and
+      ($repositories[0].pull_request_gate | index($repository)) != null and
+      ($repositories[0].archive | index($repository)) == null)
+  ) and
+  ((.retirements | map(.repository) | length) == (.retirements | map(.repository) | unique | length)) and
+  ((.retirements | map(.repository_id) | length) == (.retirements | map(.repository_id) | unique | length)) and
+  ((.retirements | map(.ruleset_id) | length) == (.retirements | map(.ruleset_id) | unique | length))
+' "${root}/config/retired-required-ci.json" >/dev/null
+
 jq -e \
   --slurpfile repositories "${repositories_config}" '
     (keys == ["retirements"]) and
@@ -221,7 +297,18 @@ jq -e \
 
 jq -e \
   --slurpfile repositories "${repositories_config}" '
-    (keys == ["repositories"]) and
+    (keys == ["repositories", "required_partitions"]) and
+    (.required_partitions | type == "object") and
+    ((.required_partitions | keys) == (.repositories | sort)) and
+    all(.required_partitions[];
+      type == "array" and length > 0 and
+      all(.[];
+        (keys == ["language", "scope"]) and
+        (.scope | type == "string" and test("^[a-z][a-z0-9+-]*$")) and
+        (.language | type == "string" and test("^[a-z][a-z0-9+-]*$"))
+      ) and
+      ((map([.scope, .language]) | length) == (map([.scope, .language]) | unique | length))
+    ) and
     (.repositories | type == "array") and
     ((.repositories | length) == (.repositories | unique | length)) and
     all(
@@ -857,12 +944,8 @@ jq -e \
     .bootstrap_policy == "owner-local-api-token-once-then-oidc-only" and
     (.authentication_action | type == "string" and
       test("^rust-lang/crates-io-auth-action@[0-9a-f]{40}$")) and
-    (.authentication_action as $action |
-      ($actions[0].patterns_allowed | map(select(startswith("rust-lang/")))) as $patterns |
-      ($patterns | length) > 0 and
-      all($patterns[]; test("^rust-lang/crates-io-auth-action@([0-9a-f]{40}|\\*)$")) and
-      (($patterns | index($action)) != null or
-       ($patterns | index("rust-lang/crates-io-auth-action@*")) != null)) and
+    (($actions[0].patterns_allowed | map(select(startswith("rust-lang/")))) ==
+      ["rust-lang/crates-io-auth-action@*"]) and
     .provider == "github" and
     $actions[0].github_owned_allowed == true and
     ($repositories[0].pull_request_gate | index($name)) != null and
