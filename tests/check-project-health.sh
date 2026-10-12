@@ -466,7 +466,7 @@ run_health() {
     ATRINIK_SETTINGS_TOKEN=settings-token \
     ATRINIK_PROJECT_HEALTH_NOW=2026-08-10T05:00:00Z \
     ATRINIK_PROJECT_HEALTH_SYNC_COMMAND="${temporary}/bin/sync-plan" \
-    ATRINIK_VALIDATION_TODAY=2026-10-11 \
+    ATRINIK_VALIDATION_TODAY=2026-10-12 \
     GITHUB_STEP_SUMMARY="${temporary}/step-summary" \
     "${root}/bin/check-project-health" "$@"
 }
@@ -675,7 +675,7 @@ if PATH="${temporary}/bin:${PATH}" \
   GH_TOKEN=health-token ATRINIK_SETTINGS_TOKEN='' \
   ATRINIK_PROJECT_HEALTH_NOW=2026-08-10T05:00:00Z \
   ATRINIK_PROJECT_HEALTH_SYNC_COMMAND="${temporary}/bin/sync-plan" \
-  ATRINIK_VALIDATION_TODAY=2026-10-11 \
+  ATRINIK_VALIDATION_TODAY=2026-10-12 \
   "${root}/bin/check-project-health" --apply \
   >"${temporary}/missing.out" 2>"${temporary}/missing.err"; then
   echo "error: health check accepted a missing settings credential" >&2
@@ -750,7 +750,7 @@ if PATH="${temporary}/bin:${PATH}" \
   GH_TOKEN=health-token ATRINIK_SETTINGS_TOKEN='' \
   ATRINIK_PROJECT_HEALTH_NOW=2026-08-10T05:00:00Z \
   ATRINIK_PROJECT_HEALTH_SYNC_COMMAND="${temporary}/bin/sync-plan" \
-  ATRINIK_VALIDATION_TODAY=2026-10-11 \
+  ATRINIK_VALIDATION_TODAY=2026-10-12 \
   "${root}/bin/check-project-health" --apply \
   >"${temporary}/reopen.out" 2>"${temporary}/reopen.err"; then
   echo "error: health check accepted a missing credential during recurrence" >&2

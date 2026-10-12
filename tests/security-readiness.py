@@ -617,17 +617,18 @@ class ReadinessTests(unittest.TestCase):
         document = readiness.workflow_yaml(
             (ROOT / ".github/workflows/dependency-review.yml").read_bytes(), "advisory")
         self.assertEqual(document["permissions"], {"contents": "read", "pull-requests": "write"})
-        self.assertEqual(set(document["on"]), {"pull_request", "merge_group"})
+        self.assertEqual(set(document["on"]), {"pull_request"})
         self.assertEqual(document["on"]["pull_request"], {
             "types": ["opened", "synchronize", "reopened", "edited"]})
-        self.assertEqual(document["on"]["merge_group"], {"types": ["checks_requested"]})
         job = document["jobs"]["dependency-review"]
         self.assertEqual(document["concurrency"], {
             "group": "dependency-review-${{ github.event.pull_request.number || github.ref }}",
             "cancel-in-progress": "true"})
+        self.assertEqual(job["timeout-minutes"], 10)
         self.assertEqual(len(job["steps"]), 2)
         step = job["steps"][0]
         self.assertEqual(step["id"], "dependency_review")
+        self.assertEqual(step["timeout-minutes"], 5)
         self.assertRegex(step["uses"], r"^actions/dependency-review-action@[0-9a-f]{40}$")
         self.assertEqual(step["continue-on-error"], "true")
         self.assertEqual(step["with"]["warn-only"], "true")
@@ -651,20 +652,29 @@ class ReadinessTests(unittest.TestCase):
             self.assertEqual(notice["if"], "always() && steps.dependency_review.outcome == 'failure'")
             self.assertEqual(notice["continue-on-error"], "true")
             self.assertNotIn("uses", notice)
+            self.assertEqual(notice["shell"], "python")
+            self.assertEqual(notice["timeout-minutes"], 2)
+            self.assertEqual(notice["env"], {
+                "GITHUB_TOKEN": "${{ github.token }}",
+                "PR_NUMBER": "${{ github.event.pull_request.number }}",
+                "PR_HEAD_SHA": "${{ github.event.pull_request.head.sha }}"})
             summary = self.root / "failure-summary.md"
             summary.write_text("Existing vulnerability and license report.\n")
-            env = {**os.environ, "GITHUB_STEP_SUMMARY": str(summary)}
-            result = subprocess.run(["bash", "-e", "-c", notice["run"]],
+            # Invalid API context exercises the local fallback before any network access.
+            env = {"PATH": os.environ["PATH"], "GITHUB_STEP_SUMMARY": str(summary),
+                   "GITHUB_REPOSITORY": "atrinik/example", "PR_NUMBER": "42",
+                   "PR_HEAD_SHA": HEAD, "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1",
+                   "GITHUB_API_URL": "https://invalid.example", "GITHUB_SERVER_URL": "https://github.com",
+                   "GITHUB_EVENT_NAME": "pull_request"}
+            result = subprocess.run([sys.executable, "-c", notice["run"]],
                                     capture_output=True, text=True, env=env, check=False)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("::warning::", result.stdout)
             report = summary.read_text()
             self.assertTrue(report.startswith("Existing vulnerability and license report.\n"))
             self.assertIn("Dependency review needs attention", report)
-            self.assertIn("if report absent vulnerability/license results unknown", report)
-            self.assertIn("remains advisory", report)
-        # Optional action step naming is the only executable-source difference.
-        documents[1]["jobs"]["dependency-review"]["steps"][0].pop("name", None)
+            self.assertIn("An absent report means the result is unknown, not clean.", report)
+            self.assertIn("Invalid reporting context; PR comment was not refreshed.", report)
         self.assertEqual(documents[0], documents[1])
 
     def test_production_advisory_never_qualifies_required_gate(self):

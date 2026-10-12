@@ -31,7 +31,8 @@ reset_manual_settings() {
     .crate_dependency_update_app |= (.status="planned" | .app_id=null | .installation_id=null |
       .key_created_on=null | .last_verified_on=null | .rotate_by=null |
       .repository_scope_verification="pending-owner-ui" | .observed_on=null | .evidence_location=null |
-      .credential_state="pending-name-metadata")' \
+      .credential_state="pending-name-metadata" |
+  .workflow_activation={state:"pending-reviewed-workflows", observed_on:null, evidence_location:null})' \
     "${root}/config/manual-settings.json" >"${temporary}/config/manual-settings.json"
 }
 
