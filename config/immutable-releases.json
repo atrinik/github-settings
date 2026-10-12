@@ -10,6 +10,14 @@
       "name": "content-toolkit"
     },
     {
+      "id": 1324297032,
+      "name": "metaserver-worker",
+      "activation_variable": {
+        "name": "ATRINIK_RELEASE_IMMUTABILITY_ACTIVE",
+        "scope": "repository"
+      }
+    },
+    {
       "id": 1327106950,
       "name": "protocol"
     },

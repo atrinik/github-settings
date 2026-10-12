@@ -57,7 +57,7 @@ rewrite_manual_settings() {
 }
 
 jq -e '
-  (.github_actions_environments | length) == 3 and
+  (.github_actions_environments | length) == 4 and
   any(.github_actions_environments[]; . == {
       deployment_branch_policy: {
         custom_branch_policies: true,
@@ -108,6 +108,20 @@ jq -e '
         "CLOUDFLARE_API_TOKEN"
       ],
       variable_names: ["ATRINIK_PRODUCTION_WRITER_FENCE_POLICY"]
+    }) and
+  any(.github_actions_environments[]; . == {
+      deployment_branch_policy: {custom_branch_policies: false, patterns: [], protected_branches: true},
+      environment: "production",
+      repository: "atrinik/metaserver-worker",
+      repository_id: 1324297032,
+      required_reviewers: [],
+      secret_names: [
+        "ATRINIK_DELIVERY_RESOURCE_POLICY", "ATRINIK_DELIVERY_RESOURCE_READ_TOKEN",
+        "ATRINIK_PRODUCTION_BUILDS_READ_TOKEN", "ATRINIK_PRODUCTION_CORE_CONFIG",
+        "ATRINIK_PRODUCTION_PUBLISHER_CONFIG", "ATRINIK_PRODUCTION_RENDEZVOUS_CONFIG",
+        "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN"
+      ],
+      variable_names: ["ATRINIK_PRODUCTION_RECOVERY_PUBLIC_KEY", "ATRINIK_PRODUCTION_WRITER_FENCE_POLICY"]
     }) and
   .github_pages_sites == [{
     activation_marker: "actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e",
