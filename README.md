@@ -154,47 +154,69 @@ available.
 ## Staged security merge protection
 
 `config/security-merge-protection.json` targets the 21 repositories in
-`required_ci`, including `service-updater`; `.github` and `web-platform` are
-excluded. Its `activation` map records each target gate's reviewed `pending` or
-`enforced` intent. `enforced` means protection is required, including when the
-live rule is missing; it is not evidence of a successful installation. Existing
-aggregate checks and zero required approvals remain intact.
-The existing publisher restores `service-updater`'s already inventoried PR,
-`Updater validation`/title CI, and release-tag protections.
+`required_ci` for CodeQL, including `service-updater`; `.github` and
+`web-platform` are excluded from that CodeQL cohort. Its CodeQL `activation`
+map records each target's reviewed `pending` or `enforced` intent. `enforced`
+means protection is required, including when the live rule is missing; it is
+not evidence of a successful installation. Existing aggregate checks and zero
+required approvals remain intact. The publisher also restores
+`service-updater`'s inventoried PR, `Updater validation`/title CI, and release-tag
+protections.
 
 Both policy scopes install repository-owned `06 - CodeQL security` rules:
 GitHub Team does not support organization code-scanning rules. CodeQL blocks
 high and critical security findings (`high_or_higher`), with ordinary quality
-alerts disabled (`none`). A separate repository-owned `07 - Dependency review`
-requires the GitHub Actions `Dependency review` job. Both permit only
-organization owners to bypass through a pull request; bypass can merge findings
-and must be a deliberate owner decision. Direct pushes gain no exception.
+alerts disabled (`none`). Only organization owners may bypass through a pull
+request; direct pushes gain no exception.
 
-The dependency workflow runs on pull requests to `main` when opened, updated,
-reopened, or edited, including a base-branch retarget to `main`. It also runs
-for merge queue groups when checks are requested. The action reads each event's
-base and head revisions directly, with read-only contents permission and no
-checkout. It rejects new high/critical
-vulnerable runtime, development, or unknown-scope dependencies and fails on
-review errors.
-It relies on GitHub's dependency graph and submitted snapshots; unsupported or
-missing manifests cannot provide comprehensive dependency coverage. This is
-separate from Dependabot's scheduled update and alert capabilities.
+Dependency review is advisory across all active Atrinik repositories, including
+those outside the CodeQL cohort. Its required-gate inventory is empty:
+`dependency_review: []` and `activation.dependency_review: {}`. The publisher
+will not install `07 - Dependency review`. A separately authorized settings
+apply can retire only an exact recognized repository-owned old `07` rule, with
+the existing identity, archive, payload and final-read fences. Modified or
+foreign rules are retained for review; a source merge alone does not remove
+live protection.
 
-Dependency review uses ordinary pull-request CI and trusts repository writers.
-The required check context and GitHub Actions app binding do not attest immutable
-workflow bytes. A writer can modify the producer within the same PR, including
-replacing its review with a successful no-op. The high/critical gate remains in
-place for ordinary introduced vulnerabilities in supported dependency data;
-it does not defend against malicious repository writers or an owner using the
-pull-request bypass. This policy adds no human approval requirement.
+The dependency workflow reports on eligible ordinary pull-request runs when
+opened, updated, reopened, or edited, including a base-branch retarget. It has
+no target-branch filter, but the workflow must exist on the relevant PR/merge
+revision; adding it on main does not automatically cover historical branches.
+It does not run on merge queue groups. Reporting visibility does not declare a branch
+supported or maintained or authorize backports or recreating retired branches.
+The pinned official action reads event revisions without checkout, contributor
+code execution, secrets, or `pull_request_target`. It requests contents read
+and pull-request write solely for its report. It reports low through critical
+vulnerabilities in runtime, development, and unknown scopes with `warn-only:
+true`, keeps license findings advisory, and always attempts a PR summary comment.
+License metadata is not a compatibility certification; existing repository
+license compatibility rules still apply.
+Fork and Dependabot tokens may deny comment writes; the action warns and keeps
+its job summary. Operational errors remain visible in logs but step-level
+`continue-on-error: true` keeps this advisory job nonblocking. A following
+failure-report step warns and adds a job-summary notice without claiming the
+action produced no analysis; absent reports mean vulnerability and license
+results are unknown. It also attempts to refresh the uniquely identified action
+comment with the current head and run link; denied or uncertain comment writes
+retain the summary fallback. The action has a five-minute timeout and reporting
+a separate two-minute timeout within the ten-minute job. Per-PR/ref concurrency
+cancels superseded review runs.
 
-GitHub's [Dependabot alert limitations](https://docs.github.com/en/code-security/concepts/supply-chain-security/dependabot-alerts#limitations)
+Implementing agents must read the latest dependency-review run and job summary
+for the current PR head before merging, even when an older bot comment exists.
+Fix actionable findings, or record a maintainer's explicit acceptance of the
+remaining risk. A missing report is not a clean vulnerability result;
+inspect the log and explain the reporting failure. This review process adds
+no required human approval and no vulnerability CI barrier. Ordinary PR CI
+trusts repository writers, who can change a workflow in the same PR; neither
+its check context nor the GitHub Actions app attests immutable workflow bytes.
+
+Dependency review relies on GitHub's dependency graph and submitted snapshots;
+unsupported or missing manifests cannot provide comprehensive coverage. GitHub's
+[Dependabot alert limitations](https://docs.github.com/en/code-security/concepts/supply-chain-security/dependabot-alerts#limitations)
 exclude advisory alerts for Actions referenced by commit SHA. SHA pinning and
-a passing dependency review therefore do not prove that an Action commit is
-free of known vulnerabilities; review upstream advisories when updating pins.
-The high/critical dependency gate remains enabled for vulnerabilities GitHub
-reports through its supported dependency data.
+a clean advisory report therefore do not prove an Action commit is free of
+known vulnerabilities; review upstream advisories when updating pins.
 
 Default CodeQL setup similarly analyzes supported languages and its detected build
 coverage; enabling it alone does not prove a successful analysis. Rust in
@@ -205,8 +227,8 @@ Read failures never replace that live language set with an incomplete set.
 
 GitHub's [code-scanning merge-protection limitations](https://docs.github.com/en/code-security/concepts/code-scanning/merge-protection)
 exclude Dependabot pull requests analyzed by default setup and merge queue
-groups. Dependency review runs for queue groups and remains a required check
-for those Dependabot PRs; it does not inherit those CodeQL exceptions. CodeQL merge protection also depends
+groups. Advisory dependency review reports on eligible Dependabot pull requests
+where its workflow is present. CodeQL merge protection also depends
 on the alert's affected lines appearing in the PR diff. Ordinary quality alerts
 remain excluded by `alerts_threshold: none`.
 
@@ -223,17 +245,15 @@ classifier or aggregate code behaves honestly. It adds no approval requirement.
 
 Rollout is owned by an organization administrator:
 
-1. Merge the dependency workflow PRs and let ordinary pull requests prove their
-   `Dependency review` jobs. Merge this policy and review `bin/publish`'s plan.
+1. Merge the advisory workflow and policy PRs, inspect their dependency reports,
+   and review `bin/publish`'s plan. Dependency findings do not block CI; CodeQL
+   retains its separate staged protection.
 2. Apply only with separate live-settings authorization. Existing governance,
    the wildcard action allowance, and the Rust language correction can converge
    while security gates remain `PENDING`. Pending gates only probe
    `bin/security-readiness`; even a successful probe cannot activate protection
-   or silently promote source intent. Dependency readiness
-   requires the reviewed workflow contract on the default branch, a successful
-   latest PR run/job, and the same workflow at the check suite's executed
-   revision. Synthetic merge revisions must bind the associated PR's base and
-   head. CodeQL requires current-head coverage for every configured default-setup
+   or silently promote source intent. The retained generic dependency readiness
+   helper rejects advisory producers as required-gate evidence. CodeQL requires current-head coverage for every configured default-setup
    language plus policy minima. Classic instead requires its successful full
    advanced producer and all current source-derived analysis partitions. The
    advanced inventory independently requires Classic’s client, server, and core
@@ -258,8 +278,9 @@ Rollout is owned by an organization administrator:
    Existing-rule repair accepts only recognized enforcement and ref-scope drift
    on the exact repository-owned rule. Changed bypass, tool, context, severity,
    or unknown policy fields are retained and reported for explicit review.
-   Retiring a target removes its required-CI, security target, and activation
-   entries together through source review. The publisher removes only matching
+   Retiring a CodeQL target removes its required-CI, CodeQL target, and activation
+   entries together through source review. Dependency advice does not require
+   removing ordinary CI. The publisher removes only matching
    repository-owned security rules from active retired targets, preserving foreign or modified same-name
    rules for explicit review and leaving archived repositories untouched. It re-reads
    the exact rule payload after the repository metadata fence immediately before
@@ -281,9 +302,11 @@ Rollout is owned by an organization administrator:
    This records the accepted PR, with no duplicate action-version inventory.
    The verifier checks the active conservative organization Actions mode,
    repository enablement, exact PR changes, and successful PR-bound current-head
-   checks. These include configured CI, desired Dependency review for targeted
-   repositories, and all effective ruleset and legacy branch-protection status
-   contexts, with trusted app identities. Legacy-check absence requires verified
+   checks. These include configured CI and all effective ruleset and legacy
+   branch-protection status
+   contexts, with trusted app identities. Advisory dependency review is not a
+   desired required context; an old effective gate remains part of the live
+   proof until separately retired. Legacy-check absence requires verified
    protection evidence; bare or ambiguous 404 responses fail closed. This proves current policy and PR-run
    evidence; it does not attest historical organization settings.
    Ordinary subsequent publication uses that stored canary. It first converges

@@ -85,7 +85,13 @@ run_audit() {
         >"${temporary}/${fixture}/config/actions-sha-pinning.json"
       ;;
   esac
-  cp "${root}/config/security-merge-protection.json" "${temporary}/${fixture}/config/security-merge-protection.json"
+  # Preserve required-gate audit scenarios independently of advisory production.
+  if [[ ${scenario} == production-advisory ]]; then
+    cp "${root}/config/security-merge-protection.json" "${temporary}/${fixture}/config/security-merge-protection.json"
+  else
+  jq '.dependency_review = .code_scanning | .activation.dependency_review = .activation.code_scanning' \
+    "${root}/config/security-merge-protection.json" >"${temporary}/${fixture}/config/security-merge-protection.json"
+  fi
   case ${scenario} in
     retired-*)
       jq '.dependency_review -= ["observatory"] | .code_scanning -= ["observatory"] |
@@ -113,6 +119,12 @@ run_audit() {
     "${temporary}/${fixture}/bin/audit"
 }
 
+output=$(run_audit production-advisory full)
+grep -Fxq 'Governance audit passed: 23 active repositories checked.' <<<"${output}"
+if grep -Fq 'Dependency review merge protection' <<<"${output}"; then
+  echo 'advisory production must not require dependency merge protection' >&2
+  exit 1
+fi
 output=$(run_audit pass full)
 grep -Fxq 'Governance audit passed: 23 active repositories checked.' <<<"${output}"
 output=$(run_audit temporary full)

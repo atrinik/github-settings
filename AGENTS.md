@@ -231,19 +231,40 @@
 - Update this `AGENTS.md` in the same change when major rework alters governance
   ownership, policy scope, publisher behavior, required checks, or validation.
 
-- `config/security-merge-protection.json` owns the dependency-review and CodeQL
-  target sets, per-gate `pending`/`enforced` activation intent, and default-setup
-  required language minima. Keep both sets and activation keys equal to the
-  required-CI inventory. Union required languages with live default-setup
-  languages, fail on unreadable language state, and patch only real drift.
-- Keep `06 - CodeQL security` and `07 - Dependency review` repository-owned in
-  both policy scopes; Team has no organization code-scanning rule support.
-  Pending gates only probe readiness. Promote intent through source review after
-  read-only `bin/security-readiness` proves landed successful producers, before
-  the first authorized live installation. Enforced gates remain required when
-  deleted or producers fail; audit fails on absence and publication restores
-  protection without fresh initial qualification. Keep
-  aggregate checks, zero approvals, and owner pull-request-only bypass intact.
+- `config/security-merge-protection.json` owns CodeQL targets, per-gate
+  `pending`/`enforced` intent, and required default-setup language minima.
+  Keep CodeQL targets/activation equal to required CI. Dependency review is
+  advisory across all active repositories: keep `dependency_review: []` and
+  `activation.dependency_review: {}`. Never require its context as a desired
+  vulnerability CI barrier. Preserve ordinary CI and zero required approvals.
+- Keep repository-owned `06 - CodeQL security` in both scopes; Team has no
+  organization code-scanning rules. Pending CodeQL gates only probe readiness;
+  promote intent through source review after landed successful producer proof.
+  Enforced gates remain required when deleted or producers fail. Keep language
+  unions, owner pull-request-only bypass, and existing configuration attachment
+  behavior. The retained generic `07` tooling must reject advisory producer
+  evidence and retire only recognized owned old gates with fresh identity and
+  payload fences; source changes never authorize live settings apply.
+- Dependency review uses ordinary PR events without branch/path filters, with
+  no checkout, secrets, contributor execution, or merge-group trigger. Reporting
+  requires the workflow on the relevant PR/merge revision; adding it on main
+  does not cover historical branches automatically or authorize backports, retired-branch
+  recreation, or additional supported maintenance lines. Keep its official
+  immutable action, low severity reporting, all scopes, `warn-only: true`, `license-check: true`,
+  `comment-summary-in-pr: always`, and step `continue-on-error: true` so findings
+  and operational failures do not block CI. Retain license findings as advice;
+  license metadata is not compatibility certification, and existing repository
+  license compatibility rules still apply.
+  Per-PR/ref concurrency cancels superseded runs; a failure-report step warns and
+  adds a job-summary notice using the action's raw outcome. Preserve available
+  reports and state that vulnerability/license results are unknown if absent.
+  Contents read and PR write support reporting; fork/Dependabot comment denials
+  warn and fall back to job summaries.
+  Implementing agents must read the latest run and job summary for the current
+  PR head before merge, even when an older bot comment exists. Fix actionable
+  findings, or record explicit maintainer-accepted risk. Inspect
+  missing-report errors rather than treating them as a clean scan. Do not add
+  advisory allowlists, human approval requirements, or a duplicate pin catalog.
 - Advanced CodeQL readiness parses executable YAML with the declared validation
   dependency: bind classification outputs, matrix, scoped config, official
   full-SHA init/analyze actions, and the always-running aggregate. Reject

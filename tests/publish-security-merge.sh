@@ -289,7 +289,9 @@ reset_case() {
   effective_state=covering
   repository_state='{"id":123,"full_name":"atrinik/content-toolkit","archived":false,"default_branch":"main"}'
   workflow_state='{"default_workflow_permissions":"write","can_approve_pull_request_reviews":true}'
-  cp "${source_root}/config/security-merge-protection.json" "${security_merge_config}"
+  # Exercise dormant required-gate tooling with explicit test-owned intent.
+  jq '.dependency_review = .code_scanning | .activation.dependency_review = .activation.code_scanning' \
+    "${source_root}/config/security-merge-protection.json" >"${security_merge_config}"
   cp "${source_root}/config/codeql-advanced-setup.json" "${codeql_advanced_config}"
   echo '{"phase":"pending","canary":null}' >"${actions_sha_pinning_config}"
   actions_state='{"enabled_repositories":"selected","allowed_actions":"all","sha_pinning_required":false}'
@@ -303,6 +305,26 @@ reset_case() {
 assert_no_writes() {
   jq -se 'all(.[]; .method == "GET")' "${api_log}" >/dev/null
 }
+
+# Production dependency advice cannot install a required gate in either scope;
+# old exact owned gates retire without changing the existing CodeQL gate.
+for policy_scope in organization repository; do
+  for state in missing exact api-default-false api-default-true; do
+    reset_case
+    cp "${source_root}/config/security-merge-protection.json" "${security_merge_config}"
+    ruleset_state=${state}
+    publish_security_merge_rulesets >"${temporary}/production-advisory.txt"
+    if [[ ${state} == exact || ${state} == api-default-false ]]; then
+      jq -se '[.[] | select(.method != "GET")] | length == 1 and
+        .[0].method == "DELETE" and .[0].endpoint == "repos/atrinik/content-toolkit/rulesets/7"' "${api_log}" >/dev/null
+    else
+      assert_no_writes
+    fi
+    if [[ -s ${readiness_log} ]]; then
+      jq -se 'all(.[]; .mode != "dependency")' "${readiness_log}" >/dev/null
+    fi
+  done
+done
 
 reset_case
 converge_codeql_default_setup >"${temporary}/languages.txt"

@@ -129,12 +129,36 @@ after apply and again before separately authorized exact branch deletion;
 never combine either operation with tag, release, asset, default-branch, or
 unrelated policy changes.
 
-Security merge controls use repository-level rules in both publisher scopes.
-Keep `config/security-merge-protection.json` aligned with `required_ci` and
-preserve ordinary aggregates. New dependency gates require the reviewed
-workflow on the default branch and a successful corresponding PR run; CodeQL
-gates require successful current-head analyses, including required languages.
-Record successful initial qualification in the policy PR and promote the gate's
+Dependency review is advisory across all active repositories. Keep
+`dependency_review: []` and `activation.dependency_review: {}` in
+`config/security-merge-protection.json`; do not add a required dependency-review
+context. Report on eligible ordinary pull-request runs without target-branch
+filters or a merge-group trigger. The workflow must exist on the relevant
+PR/merge revision; adding it on main does not automatically cover historical
+branches or authorize backports, retired-branch recreation, or additional
+supported maintenance lines.
+Keep low-through-critical vulnerability and license findings advisory, all
+dependency scopes, `warn-only: true`, `license-check: true`, summary comments,
+and step-level `continue-on-error: true`. License metadata is not compatibility
+certification; existing repository license compatibility rules still apply.
+Preserve per-PR/ref concurrency and the failure-report step. Operational errors remain nonblocking and visible;
+retain available reports, and state that vulnerability/license results are
+unknown when a report is absent. Fork/Dependabot comment denials warn and fall
+back to job summaries. Implementing agents must read the latest run and job
+summary for the current PR head before merge, even when an older bot comment
+exists. Fix actionable findings, or record explicit maintainer-accepted risk;
+inspect logs and explain missing reports rather than claiming a clean scan. This process adds no required human approvals or vulnerability CI
+barrier. Preserve ordinary required CI, CodeQL, SHA policy, and standard lock
+files without adding advisory or action-version catalogs. Retained generic
+hard-gate tooling must reject advisory producer evidence; it may retire only
+recognized owned old dependency gates through the existing fenced process.
+
+CodeQL merge controls use repository-level rules in both publisher scopes.
+Keep CodeQL targets and activation entries in
+`config/security-merge-protection.json` aligned with `required_ci` and preserve
+ordinary aggregates. New CodeQL gates require successful current-head analyses,
+including required languages. Record successful initial qualification in the
+policy PR and promote the CodeQL gate's
 `activation` entry from `pending` to `enforced` through source review before its
 first live installation. Pending publication only probes readiness. Enforced
 intent survives missing rules and later producer failures, allowing restoration

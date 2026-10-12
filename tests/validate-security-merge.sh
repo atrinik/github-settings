@@ -54,8 +54,9 @@ jq '.phase = "enforced" | .canary = "atrinik/github-settings/99"' \
 "${temporary}/bin/validate" >/dev/null
 cp "${root}/config/actions-sha-pinning.json" "${temporary}/config/actions-sha-pinning.json"
 
-# Source review can promote gates independently without a version catalog.
-jq '.activation.code_scanning.classic = "enforced" | .activation.dependency_review.atrinik = "enforced"' \
+# Source review can promote CodeQL without making dependency advice a gate.
+reject security-merge-protection.json '.dependency_review = ["atrinik"] | .activation.dependency_review.atrinik = "enforced"'
+jq '.activation.code_scanning.classic = "enforced"' \
   "${root}/config/security-merge-protection.json" >"${temporary}/config/security-merge-protection.json"
 "${temporary}/bin/validate" >/dev/null
 cp "${root}/config/security-merge-protection.json" "${temporary}/config/security-merge-protection.json"
