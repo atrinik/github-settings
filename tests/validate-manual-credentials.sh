@@ -196,7 +196,7 @@ jq -e '
 ' "${root}/config/manual-settings.json" >/dev/null
 
 jq -e '
-  [.github_actions_credentials[] | select(.secret_scope == "environment")] as $credentials |
+  [.github_actions_credentials[] | select(.environment == "development")] as $credentials |
   ($credentials | length) == 3 and
   all($credentials[];
     .repository == "atrinik/metaserver-worker" and .repository_id == 1324297032 and
@@ -209,8 +209,26 @@ jq -e '
   ]
 ' "${root}/config/manual-settings.json" >/dev/null
 
+jq -e '
+  [.github_actions_credentials[] | select(.environment == "production")] as $credentials |
+  ($credentials | length) == 3 and
+  all($credentials[];
+    .repository == "atrinik/metaserver-worker" and .repository_id == 1324297032 and
+    .consumers == [".github/workflows/promote-production.yml"] and
+    .runbook == "README.md#metaserver-production-credentials" and
+    .rotation_cadence_days == 90 and .owner == "Zoey Seraphina Rose (Atrinik organization owner)" and
+    (if .secret_name == "CLOUDFLARE_API_TOKEN" then
+      .last_verified_on == "2026-10-12" and .rotate_by == "2027-01-10"
+    else .last_verified_on == "2026-10-11" and .rotate_by == "2027-01-09" end)
+  ) and
+  ([$credentials[].secret_name] | sort) == [
+    "ATRINIK_DELIVERY_RESOURCE_READ_TOKEN", "ATRINIK_PRODUCTION_BUILDS_READ_TOKEN", "CLOUDFLARE_API_TOKEN"
+  ]
+' "${root}/config/manual-settings.json" >/dev/null
+
 # Fixture records exercise the schema; they do not declare live PROD credentials.
-jq '.github_actions_credentials += [
+jq '.github_actions_credentials |= map(select(.environment != "production")) |
+  .github_actions_credentials += [
   .github_actions_credentials[] | select(.secret_scope == "environment") |
   .environment = "production" |
   .consumers = [".github/workflows/promote-production.yml"] |
