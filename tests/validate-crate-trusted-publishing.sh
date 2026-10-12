@@ -4,6 +4,7 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 temporary=$(mktemp -d)
 trap 'rm -rf "${temporary}"' EXIT
+export ATRINIK_VALIDATION_TODAY=2026-10-12
 mkdir -p "${temporary}/bin"
 cp "${root}/bin/validate" "${temporary}/bin/validate"
 cp -R "${root}/config" "${root}/community-health" "${root}/.github" "${temporary}/"
@@ -38,7 +39,7 @@ for filter in \
   '.crates_io_trusted_publishing[0].workflow_trigger = "push"' \
   '.crates_io_trusted_publishing[0].environment_state = "active"' \
   '.crates_io_trusted_publishing[0].publisher_registration.state = "active"' \
-  '.crates_io_trusted_publishing[1].publisher_registration.evidence_location = "invented"' \
+  '.crates_io_trusted_publishing[1].publisher_registration = {state:"pending-owner-registration", observed_on:null, evidence_location:"invented"}' \
   '.crates_io_trusted_publishing[1].bootstrap_crates += ["atrinik-render"]' \
   '.crates_io_trusted_publishing[2].bootstrap_crates += ["atrinik-content"]' \
   '.crates_io_trusted_publishing[0].bootstrap_crates = ["atrinik-protocol"]' \
@@ -113,7 +114,8 @@ for filter in \
 done
 jq '.crate_dependency_update_app |= (.status="owner-observed" | .app_id=85500002 |
   .installation_id=154000002 | .repository_scope_verification="organization_owner_ui" |
-  .observed_on="2026-08-31" | .evidence_location="atrinik/github-settings#owner-app")' \
+  .observed_on="2026-08-31" | .evidence_location="atrinik/github-settings#owner-app" |
+  .workflow_activation={state:"pending-reviewed-workflows", observed_on:null, evidence_location:null})' \
   "${root}/config/manual-settings.json" >"${temporary}/config/manual-settings.json"
 "${temporary}/bin/validate" >/dev/null
 reset_policy
@@ -138,8 +140,8 @@ for filter in \
   '.crate_dependency_update_app.pull_request_policy = "auto-merge"' \
   '.crate_dependency_update_app.status = "active"' \
   '.crate_dependency_update_app.workflow_activation.state = "active"' \
-  '.crate_dependency_update_app.workflow_activation.state = "observed-successful-owned-pr"' \
-  '.crate_dependency_update_app.workflow_activation.evidence_location = "invented"' \
+  '.crate_dependency_update_app.workflow_activation = {state:"observed-successful-owned-pr", observed_on:null, evidence_location:null}' \
+  '.crate_dependency_update_app.workflow_activation = {state:"pending-reviewed-workflows", observed_on:null, evidence_location:"invented"}' \
   '.crate_dependency_update_app.app_id = null' \
   '.crate_dependency_update_app.observed_on = null'; do
   assert_rejected "${filter}"

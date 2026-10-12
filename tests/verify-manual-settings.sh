@@ -801,7 +801,7 @@ run_verify() {
     FAKE_GH_SCENARIO="${scenario}" \
     FAKE_CRATE_FIXTURES="${root}/tests/fixtures" \
     GITHUB_ACTIONS=true GH_TOKEN=test-token \
-    ATRINIK_VALIDATION_TODAY=2026-10-11 \
+    ATRINIK_VALIDATION_TODAY=2026-10-12 \
     "${verification_root}/bin/verify-manual-settings"
 }
 
@@ -861,19 +861,23 @@ cp -R "${root}/config" "${root}/community-health" "${root}/.github" "${planned_u
 jq '.crate_dependency_update_app |= (.status="planned" | .app_id=null | .installation_id=null |
       .key_created_on=null | .last_verified_on=null | .rotate_by=null |
   .repository_scope_verification="pending-owner-ui" | .observed_on=null | .evidence_location=null |
-  .credential_state="pending-name-metadata")' "${fixture_root}/config/manual-settings.json" \
+  .credential_state="pending-name-metadata" |
+  .workflow_activation={state:"pending-reviewed-workflows", observed_on:null, evidence_location:null})' "${fixture_root}/config/manual-settings.json" \
   >"${planned_updater_root}/config/manual-settings.json"
+ATRINIK_VALIDATION_TODAY=2026-10-12 "${planned_updater_root}/bin/validate" >/dev/null
 if run_verify updater-present "${planned_updater_root}" >"${temporary}/updater-planned.out" 2>"${temporary}/updater-planned.err"; then
   echo "error: pending App accepted an unrecorded live installation" >&2
   exit 1
 fi
+grep -Fq 'planned crate dependency App has a live installation' "${temporary}/updater-planned.err"
 updater_root=${temporary}/observed-updater
 mkdir -p "${updater_root}/bin"
 cp "${root}/bin/validate" "${fixture_root}/bin/verify-manual-settings" "${updater_root}/bin/"
 cp -R "${root}/config" "${root}/community-health" "${root}/.github" "${updater_root}/"
 jq '.crate_dependency_update_app |= (.status="owner-observed" | .app_id=5276152 |
   .installation_id=170332148 | .repository_scope_verification="organization_owner_ui" |
-  .observed_on="2026-08-31" | .evidence_location="atrinik/github-settings#owner-app")' \
+  .observed_on="2026-08-31" | .evidence_location="atrinik/github-settings#owner-app" |
+  .workflow_activation={state:"pending-reviewed-workflows", observed_on:null, evidence_location:null})' \
   "${fixture_root}/config/manual-settings.json" >"${updater_root}/config/manual-settings.json"
 updater_output=$(run_verify updater-present "${updater_root}")
 grep -Fq 'KEEP atrinik/client crate dependency App credential name metadata' <<<"${updater_output}"
@@ -968,7 +972,7 @@ output=$(PATH="${temporary}/bin:${PATH}" \
   FAKE_GH_LOG="${temporary}/gh.log" \
   FAKE_GH_SCENARIO=environment-page2 \
   GITHUB_ACTIONS=true GH_TOKEN=test-token \
-  ATRINIK_VALIDATION_TODAY=2026-10-11 \
+  ATRINIK_VALIDATION_TODAY=2026-10-12 \
   "${environment_page_root}/bin/verify-manual-settings")
 grep -Fq 'KEEP atrinik/classic environment discord-release metadata' <<<"${output}"
 grep -Fq 'deployment-branch-policies?per_page=100&page=2' "${temporary}/gh.log"
@@ -992,7 +996,7 @@ output=$(PATH="${temporary}/bin:${PATH}" \
   FAKE_GH_LOG="${temporary}/gh.log" \
   FAKE_GH_SCENARIO=shared-repository \
   GITHUB_ACTIONS=true GH_TOKEN=test-token \
-  ATRINIK_VALIDATION_TODAY=2026-10-11 \
+  ATRINIK_VALIDATION_TODAY=2026-10-12 \
   "${shared_root}/bin/verify-manual-settings")
 grep -Fq 'SECOND_SETTINGS_TOKEN' <<<"${output}"
 [[ $(grep -Fc 'repos/atrinik/github-settings' "${temporary}/gh.log") == 2 ]]
@@ -1208,7 +1212,7 @@ fi
 : >"${temporary}/gh.log"
 if PATH="${temporary}/bin:${PATH}" \
   FAKE_GH_LOG="${temporary}/gh.log" FAKE_GH_SCENARIO=present \
-  GITHUB_ACTIONS=true GH_TOKEN='' ATRINIK_VALIDATION_TODAY=2026-10-11 \
+  GITHUB_ACTIONS=true GH_TOKEN='' ATRINIK_VALIDATION_TODAY=2026-10-12 \
   "${fixture_root}/bin/verify-manual-settings" \
   >"${temporary}/empty.out" 2>"${temporary}/empty.err"; then
   echo "error: manual-settings verifier accepted an empty workflow credential" >&2
