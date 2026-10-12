@@ -729,7 +729,7 @@ jq -e \
   .github_actions_credentials as $credentials |
   ($credentials | type == "array" and length > 0) and
   (
-    [$credentials[] | [.repository, .secret_scope, .secret_name]] |
+    [$credentials[] | [.repository, .secret_scope, (.environment // null), .secret_name]] |
     length == (unique | length)
   ) and
   all(
@@ -755,10 +755,14 @@ jq -e \
         .secret_scope == "repository" and (has("environment") | not) and
         .required_scopes == ["admin:org", "project", "repo"]
       else
-        .secret_scope == "environment" and .environment == "development" and
+        .secret_scope == "environment" and
         .repository == "atrinik/metaserver-worker" and .repository_id == 1324297032 and
-        .consumers == [".github/workflows/deploy-development.yml"] and
-        .runbook == "README.md#metaserver-development-credentials" and
+        ((.environment == "development" and
+          .consumers == [".github/workflows/deploy-development.yml"] and
+          .runbook == "README.md#metaserver-development-credentials") or
+         (.environment == "production" and
+          .consumers == [".github/workflows/promote-production.yml"] and
+          .runbook == "README.md#metaserver-production-credentials")) and
         (if .secret_name == "CLOUDFLARE_API_TOKEN" then
           .credential_type == "cloudflare_account_token" and
           .required_scopes == ["D1 Read", "Workers Scripts Edit"]

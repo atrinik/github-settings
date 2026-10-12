@@ -1127,6 +1127,36 @@ identity without reading values; it derives an empty custom-policy list in
 protected-branch mode. Publishers never create this environment or dispatch
 promotion. Stop until the owner approves the exact future tag and operation.
 
+## Metaserver production credentials
+
+Production lifecycle records bind `atrinik/metaserver-worker`, stable repository
+ID `1324297032`, environment `production`, consumer
+`.github/workflows/promote-production.yml` and this runbook. The schema permits
+these exact bindings alongside the existing DEV records; it does not assert
+that a production credential has been created, verified or installed.
+Environment names distinguish lifecycle entries for otherwise identical secret
+names. Duplicate names within one environment remain invalid.
+
+Use a dedicated account-owned production deployment token with only
+`Workers Scripts Edit` and `D1 Read` for the exact reviewed account. These
+account-wide permissions can edit either cohort; the reviewed workflow and
+resource fences enforce the deployment target. Do not copy the DEV deployment
+token. Qualified read-only control-plane credentials may serve both environments
+only with separately reviewed production placement and lifecycle evidence;
+they are distinct from Worker runtime secrets, which remain disjoint.
+
+Capture requires only the token through a hidden local prompt. Record dates from
+actual qualification and an internal rotation deadline within 90 days, capped
+by any observed provider expiry. Missing creation or expiry metadata does not
+block capture; never invent it. Preserve any observed date or timestamp precision.
+Token verification may prove active status and expose expiry; it does not prove
+effective permissions. Retain available permission and account evidence privately
+and run bounded read-only Worker and D1 metadata checks. State any unverified
+permission or expiry explicitly. Write permission remains unproven until the
+owning workflow succeeds. GitHub secret-name metadata proves
+placement only. Keep token values, provider token identifiers and private
+qualification evidence out of this inventory, commits and logs.
+
 ## Enabling immutable source releases
 
 The desired organization-level `selected` inventory preserves Classic
