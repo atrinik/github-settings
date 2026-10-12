@@ -861,8 +861,10 @@ cp -R "${root}/config" "${root}/community-health" "${root}/.github" "${planned_u
 jq '.crate_dependency_update_app |= (.status="planned" | .app_id=null | .installation_id=null |
       .key_created_on=null | .last_verified_on=null | .rotate_by=null |
   .repository_scope_verification="pending-owner-ui" | .observed_on=null | .evidence_location=null |
-  .credential_state="pending-name-metadata")' "${fixture_root}/config/manual-settings.json" \
+  .credential_state="pending-name-metadata" |
+  .workflow_activation={state:"pending-reviewed-workflows", observed_on:null, evidence_location:null})' "${fixture_root}/config/manual-settings.json" \
   >"${planned_updater_root}/config/manual-settings.json"
+ATRINIK_VALIDATION_TODAY=2026-10-12 "${planned_updater_root}/bin/validate" >/dev/null
 if run_verify updater-present "${planned_updater_root}" >"${temporary}/updater-planned.out" 2>"${temporary}/updater-planned.err"; then
   echo "error: pending App accepted an unrecorded live installation" >&2
   exit 1
