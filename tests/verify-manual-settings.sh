@@ -801,7 +801,7 @@ run_verify() {
     FAKE_GH_SCENARIO="${scenario}" \
     FAKE_CRATE_FIXTURES="${root}/tests/fixtures" \
     GITHUB_ACTIONS=true GH_TOKEN=test-token \
-    ATRINIK_VALIDATION_TODAY=2026-10-11 \
+    ATRINIK_VALIDATION_TODAY=2026-10-12 \
     "${verification_root}/bin/verify-manual-settings"
 }
 
@@ -968,7 +968,7 @@ output=$(PATH="${temporary}/bin:${PATH}" \
   FAKE_GH_LOG="${temporary}/gh.log" \
   FAKE_GH_SCENARIO=environment-page2 \
   GITHUB_ACTIONS=true GH_TOKEN=test-token \
-  ATRINIK_VALIDATION_TODAY=2026-10-11 \
+  ATRINIK_VALIDATION_TODAY=2026-10-12 \
   "${environment_page_root}/bin/verify-manual-settings")
 grep -Fq 'KEEP atrinik/classic environment discord-release metadata' <<<"${output}"
 grep -Fq 'deployment-branch-policies?per_page=100&page=2' "${temporary}/gh.log"
@@ -992,7 +992,7 @@ output=$(PATH="${temporary}/bin:${PATH}" \
   FAKE_GH_LOG="${temporary}/gh.log" \
   FAKE_GH_SCENARIO=shared-repository \
   GITHUB_ACTIONS=true GH_TOKEN=test-token \
-  ATRINIK_VALIDATION_TODAY=2026-10-11 \
+  ATRINIK_VALIDATION_TODAY=2026-10-12 \
   "${shared_root}/bin/verify-manual-settings")
 grep -Fq 'SECOND_SETTINGS_TOKEN' <<<"${output}"
 [[ $(grep -Fc 'repos/atrinik/github-settings' "${temporary}/gh.log") == 2 ]]
@@ -1208,7 +1208,7 @@ fi
 : >"${temporary}/gh.log"
 if PATH="${temporary}/bin:${PATH}" \
   FAKE_GH_LOG="${temporary}/gh.log" FAKE_GH_SCENARIO=present \
-  GITHUB_ACTIONS=true GH_TOKEN='' ATRINIK_VALIDATION_TODAY=2026-10-11 \
+  GITHUB_ACTIONS=true GH_TOKEN='' ATRINIK_VALIDATION_TODAY=2026-10-12 \
   "${fixture_root}/bin/verify-manual-settings" \
   >"${temporary}/empty.out" 2>"${temporary}/empty.err"; then
   echo "error: manual-settings verifier accepted an empty workflow credential" >&2
