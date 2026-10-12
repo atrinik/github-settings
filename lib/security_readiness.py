@@ -258,10 +258,65 @@ def verify_recovered_associations(coordinate, recovered):
                 "merged PR association changed during preflight")
 
 
+def workflow_yaml(source, label):
+    """Read executable YAML without duplicate keys or implicit boolean keys."""
+    try:
+        import yaml
+    except ImportError as exc:
+        raise EvidenceError("install requirements-validation.txt for workflow verification") from exc
+
+    class UniqueLoader(yaml.SafeLoader):
+        # Actions uses `on` as a mapping key. Preserve scalar booleans as text,
+        # as in the existing publication verifier, and validate them explicitly.
+        yaml_implicit_resolvers = {
+            key: [(tag, regex) for tag, regex in values if tag != "tag:yaml.org,2002:bool"]
+            for key, values in yaml.SafeLoader.yaml_implicit_resolvers.items()
+        }
+
+    def unique_mapping(loader, node, deep=False):
+        result = {}
+        for key_node, value_node in node.value:
+            key = loader.construct_object(key_node, deep=deep)
+            if key in result:
+                raise ValueError(f"duplicate YAML key: {key}")
+            result[key] = loader.construct_object(value_node, deep=deep)
+        return result
+
+    UniqueLoader.add_constructor("tag:yaml.org,2002:map", unique_mapping)
+    try:
+        workflow = yaml.load(source, Loader=UniqueLoader)
+    except (yaml.YAMLError, ValueError, TypeError) as exc:
+        raise EvidenceError(f"{label} workflow YAML malformed or ambiguous") from exc
+
+    return workflow
+
+
+def dependency_enforces_findings(source):
+    workflow = workflow_yaml(source, "dependency-review")
+    jobs = workflow.get("jobs", {}) if isinstance(workflow, dict) else {}
+    job = jobs.get("dependency-review", {}) if isinstance(jobs, dict) else {}
+    require(isinstance(job, dict) and "uses" not in job and "if" not in job
+            and job.get("continue-on-error", "false") == "false",
+            "advisory or conditional dependency job cannot qualify a required gate")
+    steps = job.get("steps", [])
+    require(isinstance(steps, list), "dependency-review steps unreadable")
+    matches = [step for step in steps if isinstance(step, dict)
+               and isinstance(step.get("uses"), str)
+               and step["uses"].startswith("actions/dependency-review-action@")]
+    require(len(matches) == 1, "required gate needs one dependency-review action")
+    step = matches[0]
+    inputs = step.get("with", {})
+    require("if" not in step and step.get("continue-on-error", "false") == "false"
+            and isinstance(inputs, dict) and inputs.get("warn-only", "false") == "false",
+            "advisory or failure-suppressed dependency action cannot qualify a required gate")
+
+
 def dependency(coordinate):
-    metadata = repository(coordinate)
     path = ".github/workflows/dependency-review.yml"
-    desired = dependency_contract((ROOT / path).read_bytes())
+    desired_source = (ROOT / path).read_bytes()
+    dependency_enforces_findings(desired_source)
+    metadata = repository(coordinate)
+    desired = dependency_contract(desired_source)
     landed = contents(coordinate, path, metadata["default_branch"])
     require(dependency_contract(landed) == desired,
             "dependency-review workflow not landed with desired enforcement contract")
@@ -880,33 +935,7 @@ def advanced_workflow_wiring(source, default_branch):
     The supported ordinary-job shape is deliberately bounded. Producer-owned
     action SHAs and classifier path/category declarations are not central pins.
     """
-    try:
-        import yaml
-    except ImportError as exc:
-        raise EvidenceError("install requirements-validation.txt for CodeQL workflow verification") from exc
-
-    class UniqueLoader(yaml.SafeLoader):
-        # Actions uses `on` as a mapping key. Preserve scalar booleans as text,
-        # as in the existing publication verifier, and validate them explicitly.
-        yaml_implicit_resolvers = {
-            key: [(tag, regex) for tag, regex in values if tag != "tag:yaml.org,2002:bool"]
-            for key, values in yaml.SafeLoader.yaml_implicit_resolvers.items()
-        }
-
-    def unique_mapping(loader, node, deep=False):
-        result = {}
-        for key_node, value_node in node.value:
-            key = loader.construct_object(key_node, deep=deep)
-            if key in result:
-                raise ValueError(f"duplicate YAML key: {key}")
-            result[key] = loader.construct_object(value_node, deep=deep)
-        return result
-
-    UniqueLoader.add_constructor("tag:yaml.org,2002:map", unique_mapping)
-    try:
-        workflow = yaml.load(source, Loader=UniqueLoader)
-    except (yaml.YAMLError, ValueError, TypeError) as exc:
-        raise EvidenceError("advanced CodeQL workflow YAML malformed or ambiguous") from exc
+    workflow = workflow_yaml(source, "advanced CodeQL")
 
     def check(condition, detail):
         require(condition, "advanced CodeQL executable workflow contract: " + detail)

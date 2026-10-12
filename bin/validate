@@ -59,8 +59,8 @@ jq -e --slurpfile repositories "${repositories_config}" \
   all(["code_scanning", "dependency_review"][]; . as $kind |
     ($policy.activation[$kind] | type == "object" and keys == $policy[$kind]) and
     all($policy.activation[$kind][]; IN("pending", "enforced"))) and
-  .dependency_review == ($repositories[0].required_ci | keys) and
-  .code_scanning == .dependency_review and
+  .dependency_review == [] and
+  .code_scanning == ($repositories[0].required_ci | keys) and
   (.codeql_required_languages | type == "object") and
   all(.codeql_required_languages | to_entries[];
     .key as $repository |

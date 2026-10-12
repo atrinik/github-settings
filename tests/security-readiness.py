@@ -584,21 +584,76 @@ class ReadinessTests(unittest.TestCase):
         self.assert_deferred("dependency", "latest dependency-review PR run not successful")
 
     def test_actual_component_workflow_key_order_matches_central_contract(self):
-        central = (ROOT / ".github/workflows/dependency-review.yml").read_bytes()
+        # Retain the historical hard-gate contract as a test-owned fixture;
+        # the production root workflow is now deliberately advisory.
+        central = COMPONENT_WORKFLOW.replace(
+            b"    types: [opened, synchronize, reopened, edited]\n    branches:\n      - main",
+            b"    branches: [main]\n    types: [opened, synchronize, reopened, edited]")
         self.assertEqual(readiness.dependency_contract(COMPONENT_WORKFLOW),
                          readiness.dependency_contract(central))
 
     def test_actual_component_key_order_preserves_branch_restriction(self):
-        central = (ROOT / ".github/workflows/dependency-review.yml").read_bytes()
+        # Retain the historical hard-gate contract as a test-owned fixture;
+        # the production root workflow is now deliberately advisory.
+        central = COMPONENT_WORKFLOW.replace(
+            b"    types: [opened, synchronize, reopened, edited]\n    branches:\n      - main",
+            b"    branches: [main]\n    types: [opened, synchronize, reopened, edited]")
         changed = COMPONENT_WORKFLOW.replace(b"      - main", b"      - other")
         self.assertNotEqual(readiness.dependency_contract(changed),
                             readiness.dependency_contract(central))
 
     def test_actual_component_key_order_preserves_activity_restriction(self):
-        central = (ROOT / ".github/workflows/dependency-review.yml").read_bytes()
+        # Retain the historical hard-gate contract as a test-owned fixture;
+        # the production root workflow is now deliberately advisory.
+        central = COMPONENT_WORKFLOW.replace(
+            b"    types: [opened, synchronize, reopened, edited]\n    branches:\n      - main",
+            b"    branches: [main]\n    types: [opened, synchronize, reopened, edited]")
         changed = COMPONENT_WORKFLOW.replace(b", edited]", b"]")
         self.assertNotEqual(readiness.dependency_contract(changed),
                             readiness.dependency_contract(central))
+
+    def test_production_advisory_reports_without_vulnerability_ci_barrier(self):
+        document = readiness.workflow_yaml(
+            (ROOT / ".github/workflows/dependency-review.yml").read_bytes(), "advisory")
+        self.assertEqual(document["permissions"], {"contents": "read", "pull-requests": "write"})
+        self.assertEqual(set(document["on"]), {"pull_request", "merge_group"})
+        job = document["jobs"]["dependency-review"]
+        self.assertEqual(len(job["steps"]), 1)
+        step = job["steps"][0]
+        self.assertRegex(step["uses"], r"^actions/dependency-review-action@[0-9a-f]{40}$")
+        self.assertEqual(step["continue-on-error"], "true")
+        self.assertEqual(step["with"]["warn-only"], "true")
+        self.assertEqual(step["with"]["fail-on-severity"], "low")
+        self.assertEqual(step["with"]["fail-on-scopes"], "runtime,development,unknown")
+        self.assertEqual(step["with"]["license-check"], "false")
+        self.assertEqual(step["with"]["comment-summary-in-pr"], "always")
+        self.assertNotIn("if", job)
+        self.assertNotIn("if", step)
+        self.assertNotIn("run", step)
+        self.assertNotIn("secrets", job)
+        self.assertNotIn("allow-ghsas", step["with"])
+
+    def test_production_advisory_never_qualifies_required_gate(self):
+        source = (ROOT / ".github/workflows/dependency-review.yml").read_bytes()
+        (self.root / ".github/workflows/dependency-review.yml").write_bytes(source)
+        self.fixture.default_workflow = source
+        self.fixture.run_workflow = source
+        self.fixture.executed_workflow = source
+        self.assert_deferred("dependency", "advisory")
+
+    def test_advisory_inputs_and_failure_suppression_cannot_qualify(self):
+        for source in [WORKFLOW.replace(b"warn-only: false", b"warn-only: true"),
+                       WORKFLOW.replace(b"        with:", b"        continue-on-error: true\n        with:"),
+                       WORKFLOW.replace(b"    runs-on:", b"    continue-on-error: true\n    runs-on:"),
+                       WORKFLOW.replace(b"        with:", b"        if: false\n        with:")]:
+            with self.subTest(source=source):
+                (self.root / ".github/workflows/dependency-review.yml").write_bytes(source)
+                self.fixture.default_workflow = source
+                self.assert_deferred("dependency", "cannot qualify")
+
+    def test_advisory_dependency_failure_is_not_a_desired_sha_gate(self):
+        self.fixture.checks[HEAD].append(check("Dependency review", identifier=30, conclusion="failure"))
+        self.assertEqual(self.invoke("sha")[0], 0)
 
     def test_dependency_not_landed(self):
         self.fixture.default_workflow = WORKFLOW.replace(b"fail-on-severity: high", b"fail-on-severity: low")
@@ -1440,13 +1495,15 @@ class ReadinessTests(unittest.TestCase):
         import yaml
         self.set_codeql_workflow(yaml.safe_dump(document, sort_keys=False).encode())
 
-    def test_codeql_yaml_dependency_missing_fails_closed_without_affecting_other_modes(self):
+    def test_yaml_dependency_missing_fails_closed_for_workflow_verification(self):
         self.enable_advanced()
         with patch.dict(sys.modules, {"yaml": None}):
             result, message = self.invoke("codeql")
             self.assertEqual(result, 2, message)
             self.assertIn("install requirements-validation.txt", message)
-            self.assertEqual(self.invoke("dependency")[0], 0)
+            result, message = self.invoke("dependency")
+            self.assertEqual(result, 2, message)
+            self.assertIn("install requirements-validation.txt", message)
 
     def test_codeql_advanced_full_run_cannot_replace_pull_request_trigger(self):
         for event in ('push', 'schedule', 'workflow_dispatch'):

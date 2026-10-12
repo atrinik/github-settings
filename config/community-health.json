@@ -47,6 +47,10 @@
     {
       "source": ".github/ISSUE_TEMPLATE/config.yml",
       "target": ".github/ISSUE_TEMPLATE/config.yml"
+    },
+    {
+      "source": "workflows/dependency-review.yml",
+      "target": ".github/workflows/dependency-review.yml"
     }
   ]
 }

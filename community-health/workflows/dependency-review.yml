@@ -1,0 +1,34 @@
+name: Dependency review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+    branches: [main]
+  merge_group:
+    types: [checks_requested]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  dependency-review:
+    name: Dependency review
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      # Findings are advisory, not a merge barrier. Codex fixes reported
+      # vulnerabilities before merge. Forks with a read-only token retain
+      # findings in the job summary when a pull-request comment cannot be posted.
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294
+        continue-on-error: true
+        with:
+          fail-on-severity: low
+          fail-on-scopes: runtime,development,unknown
+          warn-only: true
+          license-check: false
+          comment-summary-in-pr: always
+          show-openssf-scorecard: false
+          retry-on-snapshot-warnings: true
+          retry-on-snapshot-warnings-timeout: 120
