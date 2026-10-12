@@ -877,12 +877,14 @@ check. Produce a new reviewed stable release after enablement and retain its
 exact immutable tag/SHA, successful main validation, completed assets and
 provenance for the promotion review.
 
-The names-only `production` environment inventory matches the merged
-`.github/workflows/promote-production.yml`: protected branches enabled,
+The names-only `production` environment inventory declares the reviewed
+production-promotion contract: protected branches enabled,
 custom policies disabled, no custom patterns and no required reviewers. Solo
 owner dispatch of the exact reviewed inputs remains the approval boundary.
 The eight secret names and two variable names are desired state, not proof that
-the environment or effective credentials exist. Provision through supported
+the environment or effective credentials exist. The recovery public-key input
+remains pending the owning workflow merge; provision it only after that reviewed
+consumer is merged. Provision through supported
 GitHub environment operations only after source review and separately granted
 setup authority. `ATRINIK_PRODUCTION_RECOVERY_PUBLIC_KEY` contains only the
 owner's public RSA SPKI PEM (at least 3072 bits). It selects the recipient for
