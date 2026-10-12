@@ -225,3 +225,68 @@
   `release_policy: none` and are omitted from `release_tags`.
 - Update this `AGENTS.md` in the same change when major rework alters governance
   ownership, policy scope, publisher behavior, required checks, or validation.
+
+- `config/security-merge-protection.json` owns the dependency-review and CodeQL
+  target sets, per-gate `pending`/`enforced` activation intent, and default-setup
+  required language minima. Keep both sets and activation keys equal to the
+  required-CI inventory. Union required languages with live default-setup
+  languages, fail on unreadable language state, and patch only real drift.
+- Keep `06 - CodeQL security` and `07 - Dependency review` repository-owned in
+  both policy scopes; Team has no organization code-scanning rule support.
+  Pending gates only probe readiness. Promote intent through source review after
+  read-only `bin/security-readiness` proves landed successful producers, before
+  the first authorized live installation. Enforced gates remain required when
+  deleted or producers fail; audit fails on absence and publication restores
+  protection without fresh initial qualification. Keep
+  aggregate checks, zero approvals, and owner pull-request-only bypass intact.
+- Advanced CodeQL readiness parses executable YAML with the declared validation
+  dependency: bind classification outputs, matrix, scoped config, official
+  full-SHA init/analyze actions, and the always-running aggregate. Reject
+  duplicate keys, disconnected or disabled steps, and failure suppression.
+  Require ordinary pull-request triggers covering the live default branch and
+  opened/synchronize/reopened events without path filters.
+  Producer helpers remain trusted; preserve owner-controlled action updates,
+  category names and paths without a duplicate version/path catalog.
+- `config/actions-sha-pinning.json` persists SHA rollout as `pending` with no
+  canary or `enforced` with an accepted PR coordinate. Promote it through normal
+  source review only after ordinary PR-bound action-update evidence passes.
+  Pending command-line canaries only probe readiness; they never enable SHA
+  enforcement. Enforced policy uses its stored proof to restore drift and fails
+  if proof cannot be revalidated; audit reports disabled enforced policy as
+  drift. Preserve existing true settings. Allow action names with `@*`; keep
+  full SHAs in producer workflows instead of duplicate pin catalogs. Canary
+  legacy-check absence requires verified protection evidence; a bare or
+  ambiguous 404 is unreadable. Enumerate and validate every ruleset page before
+  publisher identity, absence, update or retirement decisions.
+- Adoption of existing security gates into enforced source intent requires the
+  effective default-branch API to prove the repository-owned ruleset and desired
+  tool/context. Never infer activation from target membership or silently change
+  source intent. Retire target and activation entries together. Retired targets
+  lose only exact repository-owned managed security rules;
+  preserve archived, foreign, and modified same-name rules. Re-read and validate
+  the exact rule payload after the repository metadata fence immediately before
+  deletion. Audit retained named security rules on non-target repositories as
+  drift even when disabled, modified or scoped to another ref. Keep repository
+  workflow overrides read-only and unable to approve PRs, with delta-aware writes.
+- Repository-scope `03 - Required CI` retirement requires reviewed exact prior
+  repository/ruleset IDs and contexts in `config/retired-required-ci.json`.
+  Delete only the unchanged Actions-bound template after fresh identity/archive
+  and payload checks. Preserve modified/foreign rules and missing-provenance
+  rules with actionable `SKIP`; retain records for idempotent reruns.
+
+- Before updating an existing security gate, re-read and revalidate its identity
+  and recognized payload, retaining concurrent modifications. Bind the final
+  metadata default branch to the branch used for pending-gate qualification
+  or existing effective-gate proof; changed branches must not activate a gate.
+  Pending existing-gate proof also requires unchanged enforcement and ref
+  applicability in the final rule read. Enforced intent retains recognized
+  restoration. Audit full legacy
+  protection on active default and declared maintenance branches; any presence
+  is drift under the canonical ruleset contract. Only verified unprotected
+  responses count as absent; unreadable evidence fails closed and audit never
+  removes protections. Compare the complete effective default and maintenance branch policy with
+  declared allowed rule types and parameters; undeclared integrity or restriction types are drift,
+  even when every desired rule is present. Only the exact repository-disabled REST response may
+  fall back to a fixed read-only GraphQL query with matching repository/branch
+  identity, active state and explicit null legacy-rule association. Missing or
+  conflicting evidence fails closed; preserve historical rules on other refs.

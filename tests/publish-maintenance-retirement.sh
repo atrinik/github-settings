@@ -21,6 +21,9 @@ while (($#)); do
   -H | --header)
     shift 2
     ;;
+  --paginate)
+    shift
+    ;;
   --method)
     method=$2
     shift 2

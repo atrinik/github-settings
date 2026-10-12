@@ -103,7 +103,10 @@ read-only and are skipped on later runs.
   remain outside GitHub and this repository.
 - GitHub Actions defaults to read-only, cannot approve pull requests, and may
   use only Atrinik, GitHub, Codecov coverage, explicitly allowed Docker
-  actions, and the exact reviewed crates.io authentication action commit.
+  actions, and `rust-lang/crates-io-auth-action@*`. Workflow references remain
+  full commit SHAs; the action allowlist permits routine pin updates. The
+  publisher also restores per-repository workflow permission overrides to
+  read-only with PR approvals disabled, applying only real drift.
 - Historical repositories listed in `config/repositories.json` are archived.
   The five former standalone classic component repositories are already
   archived read-only after their history, active work, issues, and release
@@ -147,10 +150,202 @@ separate checked procedure below. Codecov must be installed for the listed
 repositories so their OIDC-authenticated coverage uploads and badges remain
 available.
 
+## Staged security merge protection
+
+`config/security-merge-protection.json` targets the 21 repositories in
+`required_ci`, including `service-updater`; `.github` and `web-platform` are
+excluded. Its `activation` map records each target gate's reviewed `pending` or
+`enforced` intent. `enforced` means protection is required, including when the
+live rule is missing; it is not evidence of a successful installation. Existing
+aggregate checks and zero required approvals remain intact.
+The existing publisher restores `service-updater`'s already inventoried PR,
+`Updater validation`/title CI, and release-tag protections.
+
+Both policy scopes install repository-owned `06 - CodeQL security` rules:
+GitHub Team does not support organization code-scanning rules. CodeQL blocks
+high and critical security findings (`high_or_higher`), with ordinary quality
+alerts disabled (`none`). A separate repository-owned `07 - Dependency review`
+requires the GitHub Actions `Dependency review` job. Both permit only
+organization owners to bypass through a pull request; bypass can merge findings
+and must be a deliberate owner decision. Direct pushes gain no exception.
+
+The dependency workflow runs on pull requests to `main` when opened, updated,
+reopened, or edited, including a base-branch retarget to `main`. It also runs
+for merge queue groups when checks are requested. The action reads each event's
+base and head revisions directly, with read-only contents permission and no
+checkout. It rejects new high/critical
+vulnerable runtime, development, or unknown-scope dependencies and fails on
+review errors.
+It relies on GitHub's dependency graph and submitted snapshots; unsupported or
+missing manifests cannot provide comprehensive dependency coverage. This is
+separate from Dependabot's scheduled update and alert capabilities.
+
+Dependency review uses ordinary pull-request CI and trusts repository writers.
+The required check context and GitHub Actions app binding do not attest immutable
+workflow bytes. A writer can modify the producer within the same PR, including
+replacing its review with a successful no-op. The high/critical gate remains in
+place for ordinary introduced vulnerabilities in supported dependency data;
+it does not defend against malicious repository writers or an owner using the
+pull-request bypass. This policy adds no human approval requirement.
+
+GitHub's [Dependabot alert limitations](https://docs.github.com/en/code-security/concepts/supply-chain-security/dependabot-alerts#limitations)
+exclude advisory alerts for Actions referenced by commit SHA. SHA pinning and
+a passing dependency review therefore do not prove that an Action commit is
+free of known vulnerabilities; review upstream advisories when updating pins.
+The high/critical dependency gate remains enabled for vulnerabilities GitHub
+reports through its supported dependency data.
+
+Default CodeQL setup similarly analyzes supported languages and its detected build
+coverage; enabling it alone does not prove a successful analysis. Rust in
+`content-toolkit` is an explicit minimum, unioned with its existing languages.
+Legacy `javascript`/`typescript` aliases use `javascript-typescript` in the
+PATCH payload, preserving that coverage and other live language entries.
+Read failures never replace that live language set with an incomplete set.
+
+GitHub's [code-scanning merge-protection limitations](https://docs.github.com/en/code-security/concepts/code-scanning/merge-protection)
+exclude Dependabot pull requests analyzed by default setup and merge queue
+groups. Dependency review runs for queue groups and remains a required check
+for those Dependabot PRs; it does not inherit those CodeQL exceptions. CodeQL merge protection also depends
+on the alert's affected lines appearing in the PR diff. Ordinary quality alerts
+remain excluded by `alerts_threshold: none`.
+
+Classic readiness parses the executable workflow with the declared PyYAML
+validation dependency. It binds classification outputs to the analysis matrix,
+regenerates each selected scope's configuration, and follows that output into
+the official CodeQL initialization and analysis steps and the always-running
+validation aggregate. Disabled steps, failure suppression, disconnected inputs,
+and ambiguous YAML fail closed. The current producer uses `build-mode: none`;
+full-SHA action updates remain producer-owned, and classifier source owns path
+selection and category names. This structural check trusts repository writers
+and their Python helpers; it does not attest that arbitrary writer-controlled
+classifier or aggregate code behaves honestly. It adds no approval requirement.
+
+Rollout is owned by an organization administrator:
+
+1. Merge the dependency workflow PRs and let ordinary pull requests prove their
+   `Dependency review` jobs. Merge this policy and review `bin/publish`'s plan.
+2. Apply only with separate live-settings authorization. Existing governance,
+   the wildcard action allowance, and the Rust language correction can converge
+   while security gates remain `PENDING`. Pending gates only probe
+   `bin/security-readiness`; even a successful probe cannot activate protection
+   or silently promote source intent. Dependency readiness
+   requires the reviewed workflow contract on the default branch, a successful
+   latest PR run/job, and the same workflow at the check suite's executed
+   revision. Synthetic merge revisions must bind the associated PR's base and
+   head. CodeQL requires current-head coverage for every configured default-setup
+   language plus policy minima. Classic instead requires its successful full
+   advanced producer and all current source-derived analysis partitions. The
+   advanced inventory independently requires Classic’s client, server, and core
+   C/C++, Python, and GitHub Actions scope/language pairs, so reducing producer
+   declarations or executed jobs cannot silently reduce required coverage;
+   changed-path PR subsets cannot establish readiness. The bounded newest-first
+   query stops once current coverage is proven; retired categories and old
+   analysis history do not require manual cleanup.
+3. After successful initial producer qualification, promote that gate's
+   `activation` entry to `enforced` through source review and merge, retaining
+   the qualification evidence in the policy PR. Adoption of existing protection
+   instead requires read-only evidence of an active, repository-owned gate with
+   the intended tool/context applying to the live default branch. Desired target
+   membership alone never proves activation. Review the next plan and apply only
+   with live-settings authorization. Persisted intent precedes the first write,
+   so interrupted installation or later deletion cannot revert to pending.
+   The publisher creates or restores enforced protection without requiring a
+   currently healthy producer; audit reports missing or modified protection as
+   drift even when producer evidence fails or cannot be read. Scope migrations
+   preserve these repository-owned gates. A converged security gate or language
+   configuration causes no mutation or security-configuration reattachment.
+   Existing-rule repair accepts only recognized enforcement and ref-scope drift
+   on the exact repository-owned rule. Changed bypass, tool, context, severity,
+   or unknown policy fields are retained and reported for explicit review.
+   Retiring a target removes its required-CI, security target, and activation
+   entries together through source review. The publisher removes only matching
+   repository-owned security rules from active retired targets, preserving foreign or modified same-name
+   rules for explicit review and leaving archived repositories untouched. It re-reads
+   the exact rule payload after the repository metadata fence immediately before
+   deletion to retain concurrent modifications. Audit reports retained named
+   security rules on non-target repositories as drift even when disabled,
+   modified or scoped to another ref.
+4. Desired organization `sha_pinning_required` is true. Its durable rollout
+   contract is `config/actions-sha-pinning.json`: the initial `pending` phase
+   has no accepted canary and never enables the field. Verify an ordinary
+   action-pin update PR with `bin/security-readiness sha OWNER/REPOSITORY/PR`.
+   Qualifying changes update action pins only. Reusable workflow references are
+   [excluded from GitHub's action SHA enforcement](https://docs.github.com/en/organizations/managing-organization-settings/disabling-or-limiting-github-actions-for-your-organization), so changing one cannot qualify
+   a canary, even alongside an action update. Unchanged reusable references and
+   real action subpaths remain supported.
+   The optional publisher `--sha-pinning-canary` argument only reports readiness
+   while pending. After successful PR evidence, promote the source to
+   `{"phase":"enforced","canary":"OWNER/REPOSITORY/PR"}` through the normal
+   review and merge process before the first separately authorized live apply.
+   This records the accepted PR, with no duplicate action-version inventory.
+   The verifier checks the active conservative organization Actions mode,
+   repository enablement, exact PR changes, and successful PR-bound current-head
+   checks. These include configured CI, desired Dependency review for targeted
+   repositories, and all effective ruleset and legacy branch-protection status
+   contexts, with trusted app identities. Legacy-check absence requires verified
+   protection evidence; bare or ambiguous 404 responses fail closed. This proves current policy and PR-run
+   evidence; it does not attest historical organization settings.
+   Ordinary subsequent publication uses that stored canary. It first converges
+   selected mode, then allowed-action patterns, then revalidates the canary
+   before restoring a disabled SHA setting. A dry run reports the required
+   staging without claiming that planned settings are active. Unreadable or
+   failed proof blocks SHA restoration while retaining conservative policy
+   repairs; the audit reports disabled enforced policy
+   as drift, never as initial rollout pending. A live true setting is always
+   preserved. Full SHA pinning does not prove an allowed action is trustworthy.
+
+Advanced CodeQL qualification also requires ordinary pull-request triggers
+covering the live default branch and opened, synchronize and reopened events,
+without workflow path filters. Successful manual or scheduled analysis cannot
+qualify a missing or retargeted pull-request producer. Before updating an
+existing security gate, publication rechecks its ownership and recognized
+payload immediately before the write, retaining concurrent policy changes.
+Pending-gate qualification and existing effective-gate proof bind the same
+default branch as the final metadata fence; a changed branch cannot activate
+a gate using proof from the earlier branch. Pending existing-gate proof also
+requires unchanged enforcement and ref applicability in the final rule read;
+concurrent disabling or retargeting invalidates that proof. Enforced intent
+retains its recognized restoration behavior.
+
+Rulesets are the canonical branch protection contract. Audit also reads legacy
+protection on every active default branch and declared maintenance branch. Any
+legacy protection is drift requiring separate reviewed manual remediation;
+unreadable responses fail closed. Only a verified unprotected-branch response
+counts as absent. For the exact repository-disabled REST response, a fixed
+read-only GraphQL query may instead prove that the identified active repository
+and exact existing branch have an explicitly null legacy-rule association.
+Missing, conflicting or unreadable evidence remains drift. Historical rules on
+other branches remain untouched. Audit compares the complete effective default and maintenance branch
+policy with declared allowed rule types and parameters; extra integrity or restriction types remain
+drift even when every desired rule is present. The audit never removes branch protections.
+
+Publisher identity, absence, update and retirement decisions use the complete
+validated ruleset inventory across all pages, including ordinary organization
+and repository rules. Unreadable pages cannot count as absent rules.
+
+Repository-scope retirement of an existing `03 - Required CI` rule also needs a
+reviewed `config/retired-required-ci.json` record with its exact repository and
+ruleset IDs and previous required contexts. Remove the repository from
+`required_ci` and both security target/activation inventories in the same source
+change. Publication deletes only the unchanged GitHub Actions-bound template
+after fresh repository identity, archive-state and rule-payload checks. Missing
+provenance or modified/foreign rules are retained with an actionable `SKIP`;
+keep retirement records for idempotent reruns. This does not delete branches or
+ordinary branch protections.
+
+Read-only preflight failures and unfinished producers are explicit pending
+controls, never successful rollout evidence. The audit reports pending controls
+separately and rejects unreadable evidence. No paid subscription is introduced.
+Rollback requires reviewed desired-state changes and separately authorized
+apply; reverting a producer while its required gate remains active can prevent
+merges. Do not remove a gate merely because a vulnerable PR fails it.
+
 ## Usage
 
-Requirements: `git`, `gh`, `jq`, and an authenticated organization-owner
-account.
+Requirements: `git`, `gh`, `jq`, `python3`, the packages in
+`requirements-validation.txt`, and an authenticated organization-owner account.
+Install the declared validation dependencies before local publisher, audit, or
+advanced CodeQL readiness checks; the owning workflows install them too.
 
 ```sh
 gh auth refresh -h github.com -s admin:org,project,repo
@@ -323,9 +518,9 @@ to update the automation branch, also authorizes Git-reference and release API
 operations. GitHub likewise has no separate create-or-update-PR permission that
 excludes review APIs: `pull requests: write` covers both. The App credential
 therefore cannot by itself prove that tag, release, or review calls are
-technically impossible. Because the App owns its generated pull request, it
-cannot provide the distinct human approval required by the ordinary gate, and
-it has no bypass. The consumer must never review, approve, merge, tag, publish,
+technically impossible. Ordinary pull requests require zero human approvals;
+required checks and the pull-request process still apply, and the App has no
+bypass. The consumer must never review, approve, merge, tag, publish,
 dispatch a release, write the default branch, or change repository settings.
 Its reviewed code, exact branch and changed-path checks, ordinary pull-request
 gate, protected release-tag rules, workflow contract tests, and audit trail
@@ -348,10 +543,11 @@ Provision or rotate the key as an Atrinik organization owner:
    `update-content.yml` and require one App-authored disposable pull request to
    receive ordinary `Classic validation`, `CodeQL validation`, and
    `Conventional PR title` checks.
-4. Confirm the App-authored pull request cannot satisfy its own human approval
-   or merge gate, close the disposable pull request, remove its branch, and
-   only then delete the previous private key. A later scheduled run must also
-   succeed before rotation is considered complete.
+4. Confirm the App-authored pull request receives the required checks, the App
+   has no bypass, and the consumer does not approve or merge the pull request.
+   Close the disposable pull request, remove its branch, and only then delete
+   the previous private key. A later scheduled run must also succeed before
+   rotation is considered complete.
 
 For suspected disclosure or misuse, disable the Classic updater workflow,
 suspend installation `153045686`, delete the repository secret, and revoke the
@@ -715,7 +911,14 @@ publisher fails closed if a live repository ID differs from the inventory.
 Do not add a repository to `config/codeql-advanced-setup.json` merely because
 default setup needs tuning. The inventory is reserved for a reviewed advanced
 CodeQL workflow that needs repository-specific build, component, or path
-coverage. Both security configurations must remain identical except for their
+coverage. Its `required_partitions` records semantic scope/language minima,
+while the current producer owns display names and upload categories. Readiness
+reads literal partition declarations without executing repository Python and
+requires a distinct successful job and matching upload for every declaration,
+including additions. Changing action versions needs no coverage-inventory edit.
+Remove the matching minima when removing an advanced repository; an empty
+inventory with an empty minima object is valid. Both security configurations
+must remain identical except for their
 name, description, and `code_scanning_options.allow_advanced` value.
 
 Moving a repository to `archive` is an executable policy change: the next
@@ -1436,7 +1639,8 @@ credential-free preparation verifies exact released versions and registry
 checksums, resolves dependencies, updates Cargo locks, and runs aggregate
 validation before requesting an App token in the isolated PR-writing job. They
 maintain only their owned `automation/released-crate-dependencies` branch and
-pull request; ordinary required checks and human review still govern merging.
+pull request; ordinary required checks and the pull-request process still govern
+merging, with zero required human approvals.
 Missing registry readiness produces no migration PR. They never upload crates,
 approve a pull request, merge it, or loosen branch protection. Prove initial
 App permissions with a disposable/owned PR and current ordinary checks, without
