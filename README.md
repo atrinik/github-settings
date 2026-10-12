@@ -1430,15 +1430,17 @@ All three source contracts are `observed-reviewed-workflow`, and their
 environments are `observed`: supported live readback qualified both workflow
 files at the same protected-main revision, exact repository identities, and
 main-only environments with no reviewers, wait, administrator bypass, secrets,
-or variables. Their source-release workflows remain temporarily paused for the
-narrow immutable-policy activation window.
+or variables. The narrow immutable-policy activation window is complete;
+reviewed source workflows produced the signed immutable releases used for the
+initial library publications.
 Protocol registration was owner-observed on 2026-10-11 and its manual 0.2 upload
 succeeded in [run 38156755961](https://github.com/atrinik/protocol/actions/runs/38156755961).
-That registration does not imply the future automatic source workflow or
-zero-review environment or future release is ready on its own. The owner has
-now applied the reviewed zero-review environment configuration, while source
-release restoration and immutable-policy activation remain pending. This change does not register a crates.io publisher, provision an
-Actions environment, upload a crate, or install a GitHub App.
+The fourteen renderer/toolkit names have now been bootstrapped and their exact
+Trusted Publisher registrations are owner-observed. Their automatic jobs passed
+OIDC authentication and reconciliation of the existing published coordinates;
+[the onboarding evidence below](#initial-library-onboarding-evidence) records
+that scope. A source inventory update records these observations; it does not
+perform external registration or publication.
 
 | Repository | Stable repository ID | Published libraries |
 | --- | --- | --- |
@@ -1518,6 +1520,37 @@ are the supported provisioning references. Activation proceeds in this order:
    registry version/checksum visibility and release evidence before downstream
    migration. Later eligible releases reconcile automatically after merge.
 
+### Initial library onboarding evidence
+
+On 2026-10-12 (UTC), the owner confirmed Trusted Publisher registration for all
+fourteen renderer/toolkit names in the table above, with their respective exact
+repository, `publish-crate.yml` and `crates-io-release` environment. Registration
+is external owner evidence; the GitHub metadata API does not enumerate it.
+
+The initial renderer libraries are bound to the signed immutable
+[v1.8.0 source release](https://github.com/atrinik/renderer/releases/tag/v1.8.0)
+at `de7fe1c3f178937c1fb1e655587a169eff9468cd`; toolkit libraries are bound to
+[v2.11.0](https://github.com/atrinik/content-toolkit/releases/tag/v2.11.0) at
+`e5889d2fe3afcd1ee7b3db45e8924792753136cf`. All fourteen initial 0.1.0 registry
+versions were verified against the signed source archives, public version API,
+sparse-index checksums and canonical CDN bytes, with owner `zoeyrose` (ID
+`437663`) and their permanent upload intents. Later source releases with empty
+crate manifests do not replace these initial archive bindings. The inventory's
+`bootstrap_crates` lists remain the exact one-time first-publication scope,
+not a request to bootstrap those existing coordinates again.
+
+[Renderer run 38192681802](https://github.com/atrinik/renderer/actions/runs/38192681802)
+and [toolkit run 38192866448](https://github.com/atrinik/content-toolkit/actions/runs/38192866448)
+succeeded through the guarded automatic jobs: the official action exchanged
+OIDC for the temporary registry credential, the helper skipped already published
+coordinates and confirmation passed. Subsequent registry/owner/intent checks
+matched the prior evidence. These runs prove authentication and reconciliation
+of all seven known coordinates per repository. They made no new-coordinate
+registry PUT; the first future eligible upload still depends on its reviewed
+source/version, actual immutable release, runtime provenance and fresh intent.
+Revoke the one-use bootstrap credential after confirmation and use OIDC only
+for future publication.
+
 `bin/publish` reports this manual setup but never performs it.
 `bin/verify-manual-settings` always checks actual repository identity, exact
 main ref, and protected main. Pending source/environment/registration states
@@ -1582,15 +1615,20 @@ The automatic contract above replaces the former planned per-release
 maintainer-review policy. Protocol 0.2 keeps its approved manual release path;
 future reviewed source/version merges use the automatic path after observed
 onboarding. Protocol registration is owner-observed with the successful manual 0.2 run;
-its automatic source/environment setup is observed, while automatic release
-activation remains pending. Renderer/toolkit registration remains pending owner
-actions; the dependency
-App is provisioned with workflow activation still pending.
+its automatic source/environment setup is observed. Renderer/toolkit initial
+publication and owner registration are complete, with the known-coordinate OIDC
+proofs above. The dependency App is provisioned; effective PR-writing activation
+remains pending until a successful owned bot PR and its ordinary checks are observed.
 
 ## Crate dependency update App
 
 `crate_dependency_update_app` records owner-observed App setup on 2026-10-11,
-while owning workflow activation remains `pending-reviewed-workflows`.
+while effective PR-writing activation remains `pending-reviewed-workflows`.
+Both reviewed updater workflows have merged. Client
+[run 38192029425](https://github.com/atrinik/client/actions/runs/38192029425)
+completed preparation as a no-op and skipped the isolated PR-writing job; it does
+not prove App writer credentials. Editor migration validation and the actual
+owned bot PR with ordinary checks remain the separate acceptance boundary.
 The live App is `atrinik-crate-dependency-update`, App ID `5276152`, installation
 ID `170332148`, with **selected repositories** exactly `atrinik/client` (ID
 `1327106844`) and `atrinik/editor` (ID `1327106902`). App-authenticated supported
