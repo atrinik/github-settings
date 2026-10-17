@@ -336,7 +336,7 @@ jq -e \
       else true end) and
       (.id | type == "number" and floor == . and . > 0) and
       (.name | type == "string" and length > 0) and
-      ({classic: 1327289971, protocol: 1327106950, renderer: 1327106998,
+      ({classic: 1327289971, protocol: 1327106950,
         "content-toolkit": 1327107043, "metaserver-worker": 1324297032}[.name] as $id |
         $id == null or .id == $id) and
       (.name as $repository |
@@ -891,8 +891,7 @@ jq -e --arg today "${validation_today}" '
       .package_name == "linux-build" and .package_id == 14205615 and
       .preserve_visibility == "private" and
       .source_repository == "atrinik/devcontainer" and .source_repository_id == 1322185908 and
-      ((.actions_repository == "atrinik/client" and .actions_repository_id == 1327106844) or
-       (.actions_repository == "atrinik/editor" and .actions_repository_id == 1327106902)) and
+      (.actions_repository == "atrinik/client" and .actions_repository_id == 1327106844) and
       (if .grant_state == "pending-owner-ui-read-grant" then
         .observed_on == null and .evidence_location == null
       elif .grant_state == "owner-observed-read-grant" then
@@ -924,16 +923,13 @@ jq -e \
     else false end);
   {
     protocol: {id: 1327106950, crates: ["atrinik-protocol"], bootstrap: []},
-    renderer: {id: 1327106998, crates: ["atrinik-render-api", "atrinik-render-resources",
-      "atrinik-render-sdl3", "atrinik-render-testkit", "atrinik-render-ui",
-      "atrinik-render-wgpu", "atrinik-scene"], bootstrap: true},
     "content-toolkit": {id: 1327107043, crates: ["atrinik-artifact", "atrinik-catalog",
       "atrinik-diagnostics", "atrinik-schema", "atrinik-source", "atrinik-testkit",
       "atrinik-transaction"], bootstrap: true}
   } as $inventory |
   .github_actions_environments as $environments |
   .crates_io_trusted_publishing as $publishers |
-  ($publishers | type == "array" and length <= 3) and
+  ($publishers | type == "array" and length <= 2) and
   ([$publishers[].repository] | length == (unique | length)) and
   all($publishers[];
     (.repository | split("/")[1]) as $name |
@@ -998,13 +994,11 @@ jq -e --arg today "${validation_today}" '
   $app.permissions == {contents: "write", metadata: "read", pull_requests: "write"} and
   $app.events == [] and $app.owner == "Atrinik organization owners" and
   $app.rotation_owner == "Atrinik organization owners" and $app.rotation_cadence_days == 90 and
-  $app.repositories == [{repository: "atrinik/client", repository_id: 1327106844},
-    {repository: "atrinik/editor", repository_id: 1327106902}] and
+  $app.repositories == [{repository: "atrinik/client", repository_id: 1327106844}] and
   $app.secret_name == "CRATE_DEPENDENCY_UPDATE_APP_PRIVATE_KEY" and $app.secret_scope == "repository" and
   $app.variable_name == "CRATE_DEPENDENCY_UPDATE_APP_ID" and $app.variable_scope == "repository" and
   $app.workflow_filename == "released-dependencies.yml" and
-  $app.consumers == ["atrinik/client/.github/workflows/released-dependencies.yml",
-    "atrinik/editor/.github/workflows/released-dependencies.yml"] and
+  $app.consumers == ["atrinik/client/.github/workflows/released-dependencies.yml"] and
   $app.workflow_triggers == ["schedule-hourly", "workflow_dispatch"] and
   $app.readiness == "exact-released-crates-and-checksums-before-pr" and
   $app.pull_request_policy == "owned-branch-and-pr-only-no-auto-merge" and

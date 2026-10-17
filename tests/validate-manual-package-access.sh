@@ -33,7 +33,7 @@ rewrite_manual_settings() {
 
 jq -e '
   [.github_packages_actions_access[] | select(.package_name != "linux-build")] == [] and
-  [.github_packages_actions_access[].actions_repository] == ["atrinik/client", "atrinik/editor"] and
+  [.github_packages_actions_access[].actions_repository] == ["atrinik/client"] and
   all(.github_packages_actions_access[]; .package_id == 14205615 and .preserve_visibility == "private" and
     .source_repository == "atrinik/devcontainer" and .source_repository_id == 1322185908 and
     .role == "read" and .grant_state == "owner-observed-read-grant" and

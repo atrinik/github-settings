@@ -39,9 +39,7 @@
     "classic",
     "client",
     "content-toolkit",
-    "editor",
     "protocol",
-    "renderer",
     "server"
   ],
   "crates_io_trusted_publishing": [
@@ -80,65 +78,6 @@
       "provider": "github",
       "repository": "atrinik/protocol",
       "repository_id": 1327106950,
-      "runbook": "README.md#automatic-crate-trusted-publishing",
-      "source_evidence_policy": "github-attested-protected-main-manifest",
-      "source_state": "observed-reviewed-workflow",
-      "source_workflow_filename": "release.yml",
-      "upload_intent_policy": "create-only-global-git-ref-before-upload",
-      "workflow_filename": "publish-crate.yml",
-      "workflow_ref": "refs/heads/main",
-      "workflow_trigger": "workflow_dispatch",
-      "release_approval": "reviewed-source-and-version-merge"
-    },
-    {
-      "authentication_action": "rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18",
-      "bootstrap_crates": [
-        "atrinik-render-api",
-        "atrinik-render-resources",
-        "atrinik-render-sdl3",
-        "atrinik-render-testkit",
-        "atrinik-render-ui",
-        "atrinik-render-wgpu",
-        "atrinik-scene"
-      ],
-      "bootstrap_policy": "owner-local-api-token-once-then-oidc-only",
-      "crates": [
-        "atrinik-render-api",
-        "atrinik-render-resources",
-        "atrinik-render-sdl3",
-        "atrinik-render-testkit",
-        "atrinik-render-ui",
-        "atrinik-render-wgpu",
-        "atrinik-scene"
-      ],
-      "environment": {
-        "can_admins_bypass": false,
-        "deployment_branch_policy": {
-          "custom_branch_policies": true,
-          "patterns": [
-            {
-              "name": "main",
-              "type": "branch"
-            }
-          ],
-          "protected_branches": false
-        },
-        "name": "crates-io-release",
-        "prevent_self_review": false,
-        "required_reviewers": [],
-        "secret_names": [],
-        "variable_names": [],
-        "wait_timer_minutes": 0
-      },
-      "environment_state": "observed",
-      "publisher_registration": {
-        "state": "owner-observed-registration",
-        "observed_on": "2026-10-12",
-        "evidence_location": "README.md#initial-library-onboarding-evidence"
-      },
-      "provider": "github",
-      "repository": "atrinik/renderer",
-      "repository_id": 1327106998,
       "runbook": "README.md#automatic-crate-trusted-publishing",
       "source_evidence_policy": "github-attested-protected-main-manifest",
       "source_state": "observed-reviewed-workflow",
@@ -623,21 +562,6 @@
       "role": "read",
       "source_repository": "atrinik/devcontainer",
       "source_repository_id": 1322185908
-    },
-    {
-      "actions_repository": "atrinik/editor",
-      "actions_repository_id": 1327106902,
-      "evidence_location": "README.md#private-linux-updater-build-image",
-      "grant_state": "owner-observed-read-grant",
-      "observed_on": "2026-10-11",
-      "package_id": 14205615,
-      "package_name": "linux-build",
-      "package_owner": "atrinik",
-      "package_type": "container",
-      "preserve_visibility": "private",
-      "role": "read",
-      "source_repository": "atrinik/devcontainer",
-      "source_repository_id": 1322185908
     }
   ],
   "require_two_factor_authentication": true,
@@ -647,8 +571,7 @@
     "app_id": 5276152,
     "app_slug": "atrinik-crate-dependency-update",
     "consumers": [
-      "atrinik/client/.github/workflows/released-dependencies.yml",
-      "atrinik/editor/.github/workflows/released-dependencies.yml"
+      "atrinik/client/.github/workflows/released-dependencies.yml"
     ],
     "key_created_on": "2026-10-11",
     "last_verified_on": "2026-10-11",
@@ -670,10 +593,6 @@
       {
         "repository": "atrinik/client",
         "repository_id": 1327106844
-      },
-      {
-        "repository": "atrinik/editor",
-        "repository_id": 1327106902
       }
     ],
     "secret_name": "CRATE_DEPENDENCY_UPDATE_APP_PRIVATE_KEY",

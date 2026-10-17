@@ -8,14 +8,12 @@
     "content-toolkit",
     "deploy-control",
     "devcontainer",
-    "editor",
     "github-settings",
     "metaserver-worker",
     "observatory",
     "pathfinder",
     "playtester",
     "protocol",
-    "renderer",
     "resources",
     "server",
     "service-updater",
@@ -42,16 +40,8 @@
       "Content toolkit validation",
       "Conventional PR title"
     ],
-    "editor": [
-      "Editor validation",
-      "Conventional PR title"
-    ],
     "protocol": [
       "Protocol validation",
-      "Conventional PR title"
-    ],
-    "renderer": [
-      "Renderer validation",
       "Conventional PR title"
     ],
     "server": [
@@ -123,12 +113,10 @@
     "content",
     "content-toolkit",
     "devcontainer",
-    "editor",
     "github-settings",
     "metaserver-worker",
     "playtester",
     "protocol",
-    "renderer",
     "resources",
     "server",
     "service-updater",

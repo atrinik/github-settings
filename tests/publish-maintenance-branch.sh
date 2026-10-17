@@ -339,7 +339,6 @@ repos/atrinik/*/actions/permissions/workflow\|*)
   if [[ ${GH_CRATE_IMMUTABLE_INVENTORY:-false} == true ]]; then
     printf 'metaserver-worker\t1324297032\tfalse\tpublic\tfalse\tfalse\ttrue\ttrue\ttrue\n'
     printf 'protocol\t%s\tfalse\tpublic\tfalse\tfalse\ttrue\ttrue\ttrue\n' "${GH_PROTOCOL_REPOSITORY_ID:-1327106950}"
-    printf 'renderer\t1327106998\tfalse\tpublic\tfalse\tfalse\ttrue\ttrue\ttrue\n'
     printf 'content-toolkit\t1327107043\tfalse\tpublic\tfalse\tfalse\ttrue\ttrue\ttrue\n'
   fi
   printf 'classic-ghsa-8533-3vg8-r287\t999\ttrue\tprivate\tfalse\tfalse\tfalse\tfalse\tfalse\n'
@@ -1330,9 +1329,7 @@ while IFS=$'\t' read -r repository validation_context; do
 done <<'EOF'
 client	Client validation
 content-toolkit	Content toolkit validation
-editor	Editor validation
 protocol	Protocol validation
-renderer	Renderer validation
 server	Server validation
 website	Website validation
 EOF
@@ -1481,9 +1478,7 @@ while IFS=$'\t' read -r repository validation_context; do
 done <<'EOF'
 client	Client validation
 content-toolkit	Content toolkit validation
-editor	Editor validation
 protocol	Protocol validation
-renderer	Renderer validation
 server	Server validation
 website	Website validation
 EOF
@@ -1712,20 +1707,20 @@ GH_API_LOG=${crate_log} GH_IMMUTABLE_STATE=${crate_state} \
   GH_CRATE_IMMUTABLE_INVENTORY=true GH_SECURITY_SCENARIO=converged \
   GH_CRATE_FIXTURE_ROOT=${source_root} PATH="${temporary}/bin:${PATH}" ATRINIK_POLICY_SCOPE=organization \
   "${source_root}/bin/publish" --apply >"${temporary}/crate-immutable-apply.out"
-jq -e '. == {enforced_repositories:"selected",selected_repository_ids:[1324297032,1327106950,1327106998,1327107043,1327289971]}' "${crate_state}" >/dev/null
+jq -e '. == {enforced_repositories:"selected",selected_repository_ids:[1324297032,1327106950,1327107043,1327289971]}' "${crate_state}" >/dev/null
 jq -s -e '
   . as $calls |
   ([ $calls | to_entries[] |
      select(.value.method != "GET") | .key ] | first) as $first_mutation |
   all(
-    ["protocol", "renderer", "content-toolkit"][] as $repository |
+    ["protocol", "content-toolkit"][] as $repository |
     ([ $calls | to_entries[] |
        select(.value.endpoint == ("repos/atrinik/" + $repository + "/git/ref/heads/main")) |
        .key ] | last) < $first_mutation
   ) and
   all(.[]; (.endpoint | test("/(releases|attestations|actions/runs)(/|$)") | not))
 ' "${crate_log}" >/dev/null
-for repository in classic protocol renderer content-toolkit; do
+for repository in classic protocol content-toolkit; do
   jq -se --arg endpoint "repos/atrinik/${repository}/immutable-releases" \
     'any(.[]; .method == "GET" and .endpoint == $endpoint)' "${crate_log}" >/dev/null
 done
@@ -1840,7 +1835,7 @@ assert_setup_failed_before_mutation "${snapshot_drift_log}"
 for mode in selected all; do
   mode_log=${temporary}/crate-${mode}-already-selected.jsonl
   if [[ ${mode} == selected ]]; then
-    printf '%s\n' '{"enforced_repositories":"selected","selected_repository_ids":[1324297032,1327106950,1327106998,1327107043,1327289971]}' >"${crate_state}"
+    printf '%s\n' '{"enforced_repositories":"selected","selected_repository_ids":[1324297032,1327106950,1327107043,1327289971]}' >"${crate_state}"
   else
     printf '%s\n' '{"enforced_repositories":"all"}' >"${crate_state}"
   fi
