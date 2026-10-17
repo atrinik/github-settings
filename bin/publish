@@ -1805,7 +1805,7 @@ preflight_new_crate_immutable_selection() {
     # the scoped verifier rather than silently skipping qualification.
     "${root}/bin/verify-manual-settings" --crate-publication-setup "${organization}/${repository}"
   done < <(jq -r --argjson additions "${additions}" '
-    .repositories[] | select(.name | IN("protocol", "renderer", "content-toolkit")) |
+    .repositories[] | select(.name | IN("protocol", "content-toolkit")) |
     select(.id as $id | $additions | index($id) != null) | .name
   ' "${immutable_releases_config}")
   if [[ $(current_immutable_release_payload) != "${snapshot}" ]]; then
@@ -1973,5 +1973,5 @@ while IFS= read -r package_record; do
   echo "MANUAL ${repository} read-only package Actions access to ${package_name}: ${grant_state}; publisher never provisions grants"
 done < <(jq -c '.github_packages_actions_access[]' "${root}/config/manual-settings.json")
 app_state=$(jq -r '.crate_dependency_update_app | "identity=\(.status), credential_names=\(.credential_state), workflow=\(.workflow_activation.state)"' "${root}/config/manual-settings.json")
-echo "MANUAL atrinik-crate-dependency-update ${app_state} selected client/editor App and credential slots; publisher does not apply"
+echo "MANUAL atrinik-crate-dependency-update ${app_state} selected client App and credential slots; publisher does not apply"
 echo "Manual confirmation required for config/manual-settings.json."

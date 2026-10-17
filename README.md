@@ -1565,7 +1565,7 @@ and unrelated App credentials.
 ## Automatic crate Trusted Publishing
 
 `config/manual-settings.json` records the desired, value-free contracts below.
-All three source contracts are `observed-reviewed-workflow`, and their
+The remaining source contracts are `observed-reviewed-workflow`, and their
 environments are `observed`: supported live readback qualified both workflow
 files at the same protected-main revision, exact repository identities, and
 main-only environments with no reviewers, wait, administrator bypass, secrets,
@@ -1584,7 +1584,6 @@ perform external registration or publication.
 | Repository | Stable repository ID | Published libraries |
 | --- | --- | --- |
 | `atrinik/protocol` | `1327106950` | `atrinik-protocol` |
-| `atrinik/renderer` | `1327106998` | `atrinik-render-api`, `atrinik-render-resources`, `atrinik-render-sdl3`, `atrinik-render-testkit`, `atrinik-render-ui`, `atrinik-render-wgpu`, `atrinik-scene` |
 | `atrinik/content-toolkit` | `1327107043` | `atrinik-artifact`, `atrinik-catalog`, `atrinik-diagnostics`, `atrinik-schema`, `atrinik-source`, `atrinik-testkit`, `atrinik-transaction` |
 
 Every Trusted Publisher binds the exact repository, `publish-crate.yml`, and
@@ -1779,7 +1778,10 @@ observed successful-owned-PR record refers to editor acceptance; the client
 no-op does not prove that its writer job ran.
 The live App is `atrinik-crate-dependency-update`, App ID `5276152`, installation
 ID `170332148`, with **selected repositories** exactly `atrinik/client` (ID
-`1327106844`) and `atrinik/editor` (ID `1327106902`). App-authenticated supported
+`1327106844`). The editor repository left the organization on 2026-10-17 (see
+[Transferred repositories](#transferred-repositories)); the successful-owned-PR
+observation above was made there before the transfer, and the editor's copy of
+the App credential and variable were deleted from the transferred repository. App-authenticated supported
 API readback confirmed that complete selected set, exact contents write/pull
 requests write/metadata read permissions, no subscribed events, and the external
 homepage `https://www.atrinik.org`. Preserve every other App and installation,
@@ -1833,3 +1835,20 @@ App permissions with a disposable/owned PR and current ordinary checks, without
 exposing credentials. On retirement, stop these workflows and revoke the
 App/key and only the two named repository credential slots; preserve unrelated
 installations and secrets.
+
+## Transferred repositories
+
+On 2026-10-17 two repositories left the organization by GitHub transfer:
+
+| Former repository | Stable repository ID | New location |
+| --- | --- | --- |
+| `atrinik/editor` | `1327106902` | `seraphinastudios/tilewright-editor` |
+| `atrinik/renderer` | `1327106998` | `seraphinastudios/tilewright-renderer` |
+
+They are no longer governed here: they are removed from the repository,
+required-CI, release-tag, immutable-release, custom-property, CodeQL, Codecov,
+Trusted Publishing, package-access and crate dependency App inventories. The
+organization rulesets that named them stop matching anything; an authorized
+`bin/publish --apply` removes the obsolete `03 - Required CI` rulesets. Atrinik
+consumes both projects as external MIT dependencies. Historical evidence in the
+sections above that names them is preserved unchanged.

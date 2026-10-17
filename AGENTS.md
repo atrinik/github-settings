@@ -117,7 +117,7 @@
   the source association, verify anonymous digest access, and remove obsolete
   repository grants without altering foreign entries.
   The private linux-build package keeps its exact package/source identities;
-  record client/editor-only read grants separately from effective workflow pulls.
+  record client-only read grants separately from effective workflow pulls.
   Metadata verifies identity/source/visibility, not grants or effective pulls.
   Preserve all foreign grants and prove each owning authenticated workflow pulls
   its pinned manifest before claiming effective access; never widen visibility.
@@ -126,8 +126,8 @@
   branch policies and reviewer sets, and variable and secret names only. Never
   record credential values. Provision them only after the owning workflow is
   merged and reviewed, and do not imply that `bin/publish` applies them.
-- Crates.io Trusted Publishing is a value-free desired contract for protocol,
-  renderer, and content-toolkit. Bind exact stable repository IDs,
+- Crates.io Trusted Publishing is a value-free desired contract for protocol
+  and content-toolkit. Bind exact stable repository IDs,
   `publish-crate.yml`, protected `refs/heads/main`, `crates-io-release`, and the
   official auth action with a full immutable workflow SHA; allow the reviewed
   `rust-lang/crates-io-auth-action@*` pattern for Dependabot updates without a
@@ -151,8 +151,8 @@
   in the producer helper. Before registry PUT, atomically reserve the global
   crate/version Git-reference coordinate; existing/ambiguous reservations block
   absent-version retries and must never be automatically deleted or reset.
-  First owner-local API-token publication is limited to the fourteen declared
-  renderer/toolkit libraries; exclude CLIs, revoke bootstrap credentials, and
+  First owner-local API-token publication is limited to the seven declared
+  toolkit libraries; exclude CLIs, revoke bootstrap credentials, and
   use OIDC only afterward. Protocol 0.2 retains its approved manual path. Before
   any broad publisher apply mutation, qualify newly added live immutable
   producer selections through fresh scoped source/environment verification;
@@ -160,7 +160,7 @@
   qualification is separate from later immutable-release/runtime proof, and
   does not require a pre-existing immutable release.
 - Keep the crate dependency App separate from unrelated Apps. Select only
-  client/editor, exactly contents/PR write and metadata read, no events,
+  client, exactly contents/PR write and metadata read, no events,
   bypass or auto-merge; inventory names only for repository secret
   `CRATE_DEPENDENCY_UPDATE_APP_PRIVATE_KEY` and variable
   `CRATE_DEPENDENCY_UPDATE_APP_ID`. Record observed installation and name-only
@@ -228,6 +228,10 @@
   `release_policy: semantic-release` are released by semantic-release; active
   services without a release contract remain pull-request governed with
   `release_policy: none` and are omitted from `release_tags`.
+- Remove a repository transferred out of the organization from every
+  desired-state inventory, validator identity map and test fixture in one
+  change, and record its transfer in `README.md#transferred-repositories`.
+  Historical evidence sections stay as written.
 - Update this `AGENTS.md` in the same change when major rework alters governance
   ownership, policy scope, publisher behavior, required checks, or validation.
 
