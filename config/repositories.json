@@ -109,6 +109,10 @@
     "agent-integrations": [
       "Required checks",
       "Conventional PR title"
+    ],
+    "pathfinder": [
+      "Pathfinder validation",
+      "Conventional PR title"
     ]
   },
   "maintenance_branches": [],
