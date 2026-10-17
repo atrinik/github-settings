@@ -153,7 +153,7 @@ available.
 
 ## Staged security merge protection
 
-`config/security-merge-protection.json` targets the 22 repositories in
+`config/security-merge-protection.json` targets the 21 repositories in
 `required_ci` for CodeQL, including `service-updater`; `.github` and
 `web-platform` are excluded from that CodeQL cohort. Its CodeQL `activation`
 map records each target's reviewed `pending` or `enforced` intent. `enforced`

@@ -98,9 +98,6 @@
       "Validate dashboard and Workers",
       "Conventional PR title"
     ],
-    "pathfinder": [
-      "Pathfinder validation"
-    ],
     "playtester": [
       "Playtester validation",
       "Conventional PR title"
