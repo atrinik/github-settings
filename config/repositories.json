@@ -12,6 +12,7 @@
     "github-settings",
     "metaserver-worker",
     "observatory",
+    "pathfinder",
     "playtester",
     "protocol",
     "renderer",
@@ -96,6 +97,9 @@
     "observatory": [
       "Validate dashboard and Workers",
       "Conventional PR title"
+    ],
+    "pathfinder": [
+      "Pathfinder validation"
     ],
     "playtester": [
       "Playtester validation",
