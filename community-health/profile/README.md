@@ -46,6 +46,8 @@ repositories or by itself approve a GPL dependency, link, or bundle.
 | [protocol](https://github.com/atrinik/protocol) | Game Protocol 1 schemas, QUIC specifications, and Go/Rust bindings |
 | [renderer](https://github.com/atrinik/renderer) | Shared Rust GPU renderer for clients, editors, and tools |
 
-Human creators direct the game world. Software is developed publicly—primarily
-through Codex-driven workflows under maintainer direction, review, provenance
-controls, and repository validation. Direct human contributions are welcome.
+Atrinik's creators shape the game world with whatever tools serve the work,
+including AI tools; every asset keeps its exact credit and license. Software is
+developed publicly—primarily through Codex-driven workflows under maintainer
+direction, review, provenance controls, and repository validation. Direct human
+contributions are welcome.
