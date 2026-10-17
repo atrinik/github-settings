@@ -47,7 +47,7 @@ repositories or by itself approve a GPL dependency, link, or bundle.
 | [renderer](https://github.com/atrinik/renderer) | Shared Rust GPU renderer for clients, editors, and tools |
 
 Atrinik's creators shape the game world with whatever tools serve the work,
-including AI tools; every asset keeps its exact credit and license. Software is
-developed publicly—primarily through Codex-driven workflows under maintainer
-direction, review, provenance controls, and repository validation. Direct human
-contributions are welcome.
+including AI tools; every asset keeps its exact credit and license.
+Software is developed publicly—primarily through Codex-driven workflows under
+maintainer direction, review, provenance controls, and repository validation.
+Direct human contributions are welcome.
