@@ -932,9 +932,9 @@ while IFS= read -r selected_repository; do
   fi
 done < <(jq -c '.repositories[]' <<<"${app_record}")
 if [[ $(jq -r '.status' <<<"${app_record}") == planned ]]; then
-  echo "PENDING ${app_slug} selected client/editor App installation and repository credential slots; no provisioning applied"
+  echo "PENDING ${app_slug} selected client App installation and repository credential slots; no provisioning applied"
 else
-  echo "MANUAL ${app_slug} selected repositories require current owner UI or App-authenticated API proof: atrinik/client and atrinik/editor only"
+  echo "MANUAL ${app_slug} selected repositories require current owner UI or App-authenticated API proof: atrinik/client only"
   activation_status=PENDING
   if [[ $(jq -r '.workflow_activation.state' <<<"${app_record}") == observed-successful-owned-pr ]]; then
     activation_status=OWNER-OBSERVED

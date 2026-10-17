@@ -166,16 +166,6 @@
       "lifecycle": "active",
       "release_policy": "semantic-release"
     },
-    "editor": {
-      "component_role": [
-        "editor"
-      ],
-      "provider_set": [
-        "replacement"
-      ],
-      "lifecycle": "active",
-      "release_policy": "semantic-release"
-    },
     "github-settings": {
       "component_role": [
         "governance"
@@ -295,16 +285,6 @@
     "protocol": {
       "component_role": [
         "protocol"
-      ],
-      "provider_set": [
-        "replacement"
-      ],
-      "lifecycle": "active",
-      "release_policy": "semantic-release"
-    },
-    "renderer": {
-      "component_role": [
-        "renderer"
       ],
       "provider_set": [
         "replacement"

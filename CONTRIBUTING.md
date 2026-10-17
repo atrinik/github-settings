@@ -222,8 +222,8 @@ Dependabot updates without a central version lock. Automatic publication follows
 source/version merges with zero environment reviewers/wait and no registry
 secrets. Keep pending onboarding distinct from observed source/environment and
 owner-observed external registration; verify live protected main and exact
-refs. First owner-local API-token bootstrap is restricted to the fourteen
-listed renderer/toolkit libraries and ends with revocation; subsequent releases
+refs. First owner-local API-token bootstrap is restricted to the seven
+listed toolkit libraries and ends with revocation; subsequent releases
 use OIDC only. Protocol 0.2 retains its approved manual path. Crate
 publication must qualify both exact-main workflows, isolate inert source
 signing from build/semantic-release OIDC, and keep automatic verify permissions
@@ -241,7 +241,7 @@ newly added live producer selections before its first mutation, with observed
 inventory and fresh scoped source/environment checks. Initial independently
 qualified draft-first code is sufficient for setup; actual immutable public
 release and registry proof remain later runtime obligations. Dependency-update
-App setup is client/editor only, exact contents/PR write and metadata read,
+App setup is client only, exact contents/PR write and metadata read,
 repository credential names only, registry readiness before owned PR creation,
 and ordinary review/checks without auto-merge. Distinguish observed installation
 and credential-name provisioning from pending reviewed workflow activation and
@@ -252,7 +252,7 @@ creation; that internal deadline does not assert upstream expiry. Verify a
 replacement key in the owning writing workflow before revoking the old key.
 Keep App-authenticated selected-set readback or owner
 UI evidence, and do not infer the webhook switch from an empty event set.
-Private linux-build consumption needs separate client/editor-only read grants
+Private linux-build consumption needs separate client-only read grants
 through owner UI. Keep exact private package/source identities and pending grant
 state until observed; metadata and owner pulls do not prove an effective owning
 workflow pull. Preserve foreign grants and visibility. Changes require negative schema

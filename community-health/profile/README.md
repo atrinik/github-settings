@@ -44,7 +44,6 @@ repositories or by itself approve a GPL dependency, link, or bundle.
 | [client](https://github.com/atrinik/client) | Rust and SDL3 foundation for the next-generation MIT client |
 | [server](https://github.com/atrinik/server) | Go foundation for the next-generation MIT authoritative server |
 | [protocol](https://github.com/atrinik/protocol) | Game Protocol 1 schemas, QUIC specifications, and Go/Rust bindings |
-| [renderer](https://github.com/atrinik/renderer) | Shared Rust GPU renderer for clients, editors, and tools |
 
 Human creators direct the game world. Software is developed publicly—primarily
 through Codex-driven workflows under maintainer direction, review, provenance
