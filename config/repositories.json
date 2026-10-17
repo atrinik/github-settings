@@ -12,6 +12,7 @@
     "github-settings",
     "metaserver-worker",
     "observatory",
+    "pathfinder",
     "playtester",
     "protocol",
     "renderer",

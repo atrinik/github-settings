@@ -272,6 +272,16 @@
       "lifecycle": "archived",
       "release_policy": "none"
     },
+    "pathfinder": {
+      "component_role": [
+        "service"
+      ],
+      "provider_set": [
+        "shared"
+      ],
+      "lifecycle": "seed",
+      "release_policy": "none"
+    },
     "playtester": {
       "component_role": [
         "tooling"
