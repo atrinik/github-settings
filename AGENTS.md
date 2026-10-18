@@ -173,7 +173,10 @@
   consumer paths, verified key creation date, verification date, rotation owner,
   and a rotate-by deadline within the existing 90-day cadence. The deadline is
   internal policy, not upstream expiry; verify replacement workflow use before
-  revoking the old key.
+  revoking the old key. Keep a selected-set change after the recorded readback
+  as pending `repository_scope_reverification` until fresh readback replaces
+  it. An owner-accepted key exposure binds to the current key and a closed
+  window, never extends rotate-by, and is removed on rotation.
 - Record GitHub Pages sites with stable repository identity, exact provider URL,
   HTTPS enforcement, owning deployment environment, desired Actions source,
   workflow path, and immutable deployment-action marker. Before that marker is

@@ -981,13 +981,20 @@ jq -e --arg today "${validation_today}" '
   def observed_day:
     (type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")) and
     (try ((. + "T00:00:00Z" | fromdateiso8601 | strftime("%Y-%m-%d")) == . and . <= $today) catch false);
+  def positive_id: type == "number" and floor == . and . > 0;
+  def repository_name: type == "string" and test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$");
+  def organization_repository: repository_name and startswith("atrinik/");
+  def evidence_reference: type == "string" and test("^[A-Za-z0-9_./#-]+$");
   .github_actions_apps as $apps |
   .external_provider_apps as $external_apps |
   .crate_dependency_update_app as $app |
-  ($app | keys == ["app_id", "app_slug", "consumers", "credential_state", "events", "evidence_location", "homepage_url", "installation_id",
-    "key_created_on", "last_verified_on", "observed_on", "owner", "permissions", "pull_request_policy", "readiness", "repositories",
-    "repository_scope_verification", "repository_selection", "rotate_by", "rotation_cadence_days", "rotation_owner", "runbook", "secret_name",
-    "secret_scope", "status", "variable_name", "variable_scope", "webhook_active", "workflow_activation", "workflow_filename", "workflow_triggers"]) and
+  ($app | keys == ["accepted_key_exposures", "app_id", "app_slug", "consumers", "credential_state", "events", "evidence_location",
+    "homepage_url", "installation_id", "key_created_on", "last_verified_on", "observed_on", "owner", "permissions", "pull_request_policy",
+    "readiness", "repositories", "repository_scope_reverification", "repository_scope_verification", "repository_selection", "rotate_by",
+    "rotation_cadence_days", "rotation_owner", "runbook", "secret_name", "secret_scope", "status", "variable_name", "variable_scope",
+    "webhook_active", "workflow_activation", "workflow_filename", "workflow_triggers"]) and
+  ($app.accepted_key_exposures | type == "array") and
+  ($app.repository_scope_reverification == null or ($app.repository_scope_reverification | type == "object")) and
   $app.app_slug == "atrinik-crate-dependency-update" and
   $app.homepage_url == "https://www.atrinik.org" and $app.webhook_active == false and
   $app.repository_selection == "selected" and
@@ -1018,11 +1025,54 @@ jq -e --arg today "${validation_today}" '
     $app.app_id == null and $app.installation_id == null and
     $app.repository_scope_verification == "pending-owner-ui" and
     $app.observed_on == null and $app.evidence_location == null and
-    $app.key_created_on == null and $app.last_verified_on == null and $app.rotate_by == null
+    $app.key_created_on == null and $app.last_verified_on == null and $app.rotate_by == null and
+    $app.accepted_key_exposures == [] and $app.repository_scope_reverification == null
   elif $app.status == "owner-observed" then
     ($app.app_id | type == "number" and floor == . and . > 0) and
     ($app.installation_id | type == "number" and floor == . and . > 0) and
     ($app.repository_scope_verification | IN("organization_owner_ui", "app_authenticated_repository_api")) and
+    # A selected-set change after the recorded readback leaves the expected set
+    # pending re-verification until fresh owner UI or App-authenticated proof.
+    ($app.repository_scope_reverification == null or (
+      $app.repository_scope_reverification as $pending |
+      ($pending | keys == ["evidence_location", "last_readback_on", "reason", "removed_repositories",
+        "selection_changed_on", "state"]) and
+      $pending.state == "pending-reverification" and
+      $pending.reason == "repository-transfer-after-readback" and
+      ($pending.last_readback_on | observed_day) and $pending.last_readback_on == $app.observed_on and
+      ($pending.selection_changed_on | observed_day) and
+      $pending.selection_changed_on > $pending.last_readback_on and
+      ($pending.removed_repositories | type == "array" and length > 0) and
+      all($pending.removed_repositories[];
+        . as $removed |
+        (type == "object") and (keys == ["repository", "repository_id"]) and
+        (.repository | organization_repository) and (.repository_id | positive_id) and
+        all($app.repositories[];
+          .repository != $removed.repository and .repository_id != $removed.repository_id)) and
+      ($pending.removed_repositories | map(.repository_id) | length == (unique | length)) and
+      ($pending.evidence_location | evidence_reference)
+    )) and
+    # An owner-accepted exposure applies only to the current key and closed
+    # windows; it never extends the rotate-by deadline.
+    all($app.accepted_key_exposures[];
+      . as $exposure |
+      (type == "object") and
+      (keys == ["accepted_by", "accepted_on", "evidence_location", "exposed_names", "exposure", "exposure_started_on",
+        "former_repository", "removal_observed_on", "repository", "repository_id"]) and
+      .exposure == "repository-transfer-retained-copy" and
+      (.exposed_names | type == "array" and length > 0 and . == unique and
+        any(.[]; . == $app.secret_name) and all(.[]; . == $app.secret_name or . == $app.variable_name)) and
+      (.former_repository | organization_repository) and
+      (.repository | repository_name and (ascii_downcase | startswith("atrinik/") | not)) and
+      (.repository_id | positive_id) and
+      all($app.repositories[];
+        .repository != $exposure.former_repository and .repository_id != $exposure.repository_id) and
+      (.exposure_started_on | observed_day) and .exposure_started_on >= $app.key_created_on and
+      (.removal_observed_on | observed_day) and .removal_observed_on >= .exposure_started_on and
+      (.accepted_on | observed_day) and .accepted_on >= .removal_observed_on and
+      .accepted_by == $app.owner and
+      (.evidence_location | evidence_reference)) and
+    ($app.accepted_key_exposures | length == (unique | length)) and
     ($app.observed_on | observed_day) and
     ($app.key_created_on | observed_day) and ($app.last_verified_on | observed_day) and
     $app.last_verified_on >= $app.key_created_on and
