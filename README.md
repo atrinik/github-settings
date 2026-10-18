@@ -1530,17 +1530,21 @@ could not resolve that manifest. An owner's successful pull cannot prove a
 repository workflow's package access.
 
 `github_packages_actions_access` records read-only Actions-access setup for
-`atrinik/client` (`1327106844`) and `atrinik/editor` (`1327106902`). The owner
-confirmed those two **Manage Actions access** read grants on 2026-10-11; their
-`grant_state` is `owner-observed-read-grant`, with dated sanitized owner evidence.
+`atrinik/client` (`1327106844`) only. The owner confirmed its **Manage Actions
+access** read grant on 2026-10-11; its `grant_state` is
+`owner-observed-read-grant`, with dated sanitized owner evidence. The same
+2026-10-11 owner observation also covered a read grant for `atrinik/editor`
+(`1327106902`); that entry is historical, because the editor left the
+organization on 2026-10-17 (see
+[Transferred repositories](#transferred-repositories)) and is no longer in the
+inventory.
 Client's exact-main post-grant run
 [38164640476](https://github.com/atrinik/client/actions/runs/38164640476)
 subsequently proved a repository-token pull of the pinned image and complete
 read-only preparation/application validation. It correctly produced no migration
 PR before registry readiness; App-writing jobs were skipped, so no effective
-App writer was proved. Editor owning workflow pull/activation proof remains
-pending. The grant observation comes from owner UI, not API enumeration of the
-grant list. Retain permission inheritance, private
+App writer was proved. The grant observation comes from owner UI, not API
+enumeration of the grant list. Retain permission inheritance, private
 visibility, linked source and every foreign entry. Do not broaden to
 organization/all repositories or change a foreign grant. The publisher never
 writes these manual grants.
@@ -1557,8 +1561,8 @@ be removed before credential-free Cargo/build preparation; the updater App
 remains isolated to its PR-writing job. No package grant supplies a
 registry-publication token or proves the dependency App key effective.
 
-Rollback stops the owning updater workflows first and removes only these two
-read grants through supported owner UI after reviewed inventory removal.
+Rollback stops the client's owning updater workflow first and removes only the
+client's read grant through supported owner UI after reviewed inventory removal.
 Preserve the package, published versions, source, visibility, foreign grants,
 and unrelated App credentials.
 
