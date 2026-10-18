@@ -1589,9 +1589,13 @@ reviewed source workflows produced the signed immutable releases used for the
 initial library publications.
 Protocol registration was owner-observed on 2026-10-11 and its manual 0.2 upload
 succeeded in [run 38156755961](https://github.com/atrinik/protocol/actions/runs/38156755961).
-The fourteen renderer/toolkit names have now been bootstrapped and their exact
-Trusted Publisher registrations are owner-observed. Their automatic jobs passed
-OIDC authentication and reconciliation of the existing published coordinates;
+The fourteen initial renderer/toolkit libraries have been bootstrapped and their
+exact Trusted Publisher registrations are owner-observed: the seven
+content-toolkit libraries in the table below, and the seven renderer libraries
+that were registered for `atrinik/renderer` before it left the organization
+(see [Renderer Trusted Publisher revocation](#renderer-trusted-publisher-revocation)).
+Their automatic jobs passed OIDC authentication and reconciliation of the
+existing published coordinates;
 [the onboarding evidence below](#initial-library-onboarding-evidence) records
 that scope. A source inventory update records these observations; it does not
 perform external registration or publication.
@@ -1651,12 +1655,15 @@ are the supported provisioning references. Activation proceeds in this order:
 2. Verify live repository ID/name, active status, default branch, exact main
    ref, protected main, and both merged publication/source-signing workflows. Record
    `source_state: observed-reviewed-workflow` only after that observation.
-3. The fourteen renderer and toolkit names above require a first owner-local
-   publication because Trusted Publishing cannot create their initial crate
-   records. Prepare, review, and verify the exact release archives, package
-   dependency order, versions, digests, native prerequisites, and registry
-   readiness first. The owner uses a narrowly scoped local API token only for
-   that initial bootstrap, then revokes it. Exclude the renderer CLI
+3. The fourteen initial renderer and toolkit names (the toolkit libraries in
+   the table above and the seven renderer libraries listed under
+   [Renderer Trusted Publisher revocation](#renderer-trusted-publisher-revocation))
+   require a first owner-local publication because Trusted Publishing cannot
+   create their initial crate records. Prepare, review, and verify the exact
+   release archives, package dependency order, versions, digests, native
+   prerequisites, and registry readiness first. The owner uses a narrowly
+   scoped local API token only for that initial bootstrap, then revokes it.
+   Exclude the renderer CLI
    `atrinik-render` and toolkit applications `atrinik-content` and
    `atrinik-content-mcp`. Protocol already exists and needs no bootstrap.
    No bootstrap token is sent to GitHub or stored in this inventory.
@@ -1676,9 +1683,15 @@ are the supported provisioning references. Activation proceeds in this order:
 ### Initial library onboarding evidence
 
 On 2026-10-12 (UTC), the owner confirmed Trusted Publisher registration for all
-fourteen renderer/toolkit names in the table above, with their respective exact
-repository, `publish-crate.yml` and `crates-io-release` environment. Registration
-is external owner evidence; the GitHub metadata API does not enumerate it.
+fourteen renderer/toolkit names, with their respective exact repository,
+`publish-crate.yml` and `crates-io-release` environment: the seven
+`atrinik/content-toolkit` libraries in the table above, and the seven
+`atrinik/renderer` (`1327106998`) libraries `atrinik-render-api`,
+`atrinik-render-resources`, `atrinik-render-sdl3`, `atrinik-render-testkit`,
+`atrinik-render-ui`, `atrinik-render-wgpu` and `atrinik-scene`. The table no
+longer lists the renderer because it left the organization on 2026-10-17.
+Registration is external owner evidence; the GitHub metadata API does not
+enumerate it.
 
 The initial renderer libraries are bound to the signed immutable
 [v1.8.0 source release](https://github.com/atrinik/renderer/releases/tag/v1.8.0)
@@ -1762,6 +1775,29 @@ remaining registered contract needs them. Preserve published crate versions,
 release assets, tags, unrelated environments, and unrelated Actions access.
 Removing unactivated inventory intent is also a valid reviewed rollback.
 
+### Renderer Trusted Publisher revocation
+
+The seven renderer libraries `atrinik-render-api`, `atrinik-render-resources`,
+`atrinik-render-sdl3`, `atrinik-render-testkit`, `atrinik-render-ui`,
+`atrinik-render-wgpu` and `atrinik-scene` are still registered on crates.io with
+a Trusted Publisher for `atrinik/renderer`, `publish-crate.yml` and
+`crates-io-release`, owner-observed on 2026-10-12. `atrinik/renderer`
+(`1327106998`) became `seraphinastudios/tilewright-renderer` on 2026-10-17 (see
+[Transferred repositories](#transferred-repositories)), so no contract in this
+repository covers those registrations any more. The former name can be reused:
+creating a new `atrinik/renderer` in the organization ends GitHub's redirect to
+the transferred repository. A new repository with that name, a matching
+`publish-crate.yml` workflow and a `crates-io-release` environment would then
+match the registrations and could publish new versions of those crates.
+
+On 2026-10-18 the owner decided to revoke the `atrinik/renderer` Trusted
+Publisher from all seven crates through the crates.io owner UI, the first step
+of the rollback above. **The revocation is an owner action pending
+confirmation.** It has not been observed yet, so treat all seven registrations
+as live until it is. After the owner confirms it, record the dated, sanitized
+owner observation for each crate here through reviewed source. Revoking a
+Trusted Publisher does not yank or delete any published version.
+
 ## Protocol crate Trusted Publishing
 
 The automatic contract above replaces the former planned per-release
@@ -1770,7 +1806,10 @@ future reviewed source/version merges use the automatic path after observed
 onboarding. Protocol registration is owner-observed with the successful manual 0.2 run;
 its automatic source/environment setup is observed. Renderer/toolkit initial
 publication and owner registration are complete, with the known-coordinate OIDC
-proofs above. The dependency App's workflow activation is pending: its only
+proofs above. The renderer's seven registrations now await the owner's
+revocation (see
+[Renderer Trusted Publisher revocation](#renderer-trusted-publisher-revocation)).
+The dependency App's workflow activation is pending: its only
 remaining consumer, the client, has not yet run its PR-writing job.
 
 ## Crate dependency update App
@@ -1789,13 +1828,29 @@ signed commit, all ordinary checks passed, independent review accepted it, and
 the maintainer merged it through the ordinary process. That observation belongs
 to the transferred repository and does not count as client activation.
 The live App is `atrinik-crate-dependency-update`, App ID `5276152`, installation
-ID `170332148`, with **selected repositories** exactly `atrinik/client` (ID
-`1327106844`). The editor repository left the organization on 2026-10-17 (see
-[Transferred repositories](#transferred-repositories)); the editor's copy of the
-App credential and variable were deleted from the transferred repository. App-authenticated supported
-API readback confirmed that complete selected set, exact contents write/pull
-requests write/metadata read permissions, no subscribed events, and the external
-homepage `https://www.atrinik.org`. Preserve every other App and installation,
+ID `170332148`. Its expected **selected repositories** set is exactly
+`atrinik/client` (ID `1327106844`). App-authenticated supported API readback on
+2026-10-11 confirmed the selected set at that time, `atrinik/client` and
+`atrinik/editor` (ID `1327106902`), exact contents write/pull requests
+write/metadata read permissions, no subscribed events, and the external homepage
+`https://www.atrinik.org`. The editor left the organization on 2026-10-17 (see
+[Transferred repositories](#transferred-repositories)), which changed the
+installation's repository set after that readback. The client-only set is
+therefore recorded as pending re-verification: `repository_scope_reverification`
+has state `pending-reverification`, reason `repository-transfer-after-readback`,
+the 2026-10-11 readback date, the 2026-10-17 change date and the removed editor
+identity. No readback of the client-only set has been recorded yet.
+
+To re-verify, the owner confirms in the installation's organization-owner UI,
+or through supported App-authenticated readback, that the selected set is
+exactly `atrinik/client`. Reviewed source then records that method in
+`repository_scope_verification`, the readback date in `observed_on`, and sets
+`repository_scope_reverification` to `null`. Validation pins the record to the
+editor transfer. While `observed_on` is on or before 2026-10-17, the pending
+record must name exactly that readback, the 2026-10-17 change and
+`atrinik/editor` (`1327106902`). It can be cleared only together with a
+readback dated after the transfer, and must be cleared once one is recorded.
+Preserve every other App and installation,
 including the existing Classic updater and provider Apps. The desired disabled
 webhook is a separate owner UI setting; `events: []` proves no subscriptions and
 does not independently prove the webhook switch is disabled.
@@ -1823,11 +1878,33 @@ through reviewed source. If replacement proof fails, stop the client's writing
 workflow and preserve the old working key until the owner restores service or
 explicitly revokes it.
 
+The editor's transfer also carried a copy of the current key. On 2026-10-17
+`atrinik/editor` became `seraphinastudios/tilewright-editor` (same ID
+`1327106902`). GitHub keeps repository secrets and variables with a transferred
+repository, so the editor's `CRATE_DEPENDENCY_UPDATE_APP_PRIVATE_KEY` secret and
+`CRATE_DEPENDENCY_UPDATE_APP_ID` variable moved with it. Only the Atrinik owner
+controls that repository and its organization, and the copy was deleted within
+hours: a names-only readback on 2026-10-18 listed no Actions secrets or
+variables in the transferred repository. **On 2026-10-18 the owner explicitly
+accepted that exposure window instead of rotating the key early.**
+`accepted_key_exposures` records the acceptance: the exposure type, the exposed
+names, the former and current repository identity, the exposure start, the
+removal readback and the acceptance date. The key keeps its ordinary 2027-01-09
+rotate-by deadline; the acceptance does not extend it. Validation pins the
+record to the editor transfer (former and current name, ID, the 2026-10-17
+start and both exposed names), and requires an observed removal with the
+acceptance on or after it. The record must stay while the current key was
+created on or before the transfer. Once a rotation records a newer
+`key_created_on`, the list must be empty, so remove the record in that same
+reviewed change.
+
 The read-only verifier checks live installation identity, exact permissions,
 empty events, active state, selected repository identities, and credential
 **names**. An administrative-token API cannot enumerate the complete selected
 repository set; retain current supported App-authenticated readback or owner UI
-proof. It reports `credential_state: observed-name-metadata` separately from
+proof. While `repository_scope_reverification` is pending, the verifier reports
+`PENDING` with the recorded change instead of the ordinary `MANUAL` reminder.
+It reports `credential_state: observed-name-metadata` separately from
 workflow activation. The client's reviewed `released-dependencies.yml` workflow
 has merged. The dated editor run/PR above is historical evidence of effective
 App use by the transferred repository's writer and does not prove the client's
@@ -1865,4 +1942,17 @@ Trusted Publishing, package-access and crate dependency App inventories. The
 organization rulesets that named them stop matching anything; an authorized
 `bin/publish --apply` removes the obsolete `03 - Required CI` rulesets. Atrinik
 consumes both projects as external MIT dependencies. Historical evidence in the
-sections above that names them is preserved unchanged.
+sections above that names them is preserved. Where that evidence pointed at a
+table row that left with the renderer, it now names the renderer crates
+directly.
+
+Three owner decisions from 2026-10-18 follow up on the transfer:
+
+- The editor's retained copy of the crate dependency App key is an accepted
+  exposure, and the key keeps its 2027-01-09 rotate-by deadline (see
+  [Crate dependency update App](#crate-dependency-update-app)).
+- The App's client-only selected set is pending re-verification, because the
+  transfer changed it after the 2026-10-11 readback (same section).
+- The owner is revoking the renderer's crates.io Trusted Publishers; that
+  revocation is pending confirmation (see
+  [Renderer Trusted Publisher revocation](#renderer-trusted-publisher-revocation)).

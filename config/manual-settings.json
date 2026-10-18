@@ -578,10 +578,40 @@
     "rotate_by": "2027-01-09",
     "rotation_cadence_days": 90,
     "rotation_owner": "Atrinik organization owners",
+    "accepted_key_exposures": [
+      {
+        "exposure": "repository-transfer-retained-copy",
+        "exposed_names": [
+          "CRATE_DEPENDENCY_UPDATE_APP_ID",
+          "CRATE_DEPENDENCY_UPDATE_APP_PRIVATE_KEY"
+        ],
+        "former_repository": "atrinik/editor",
+        "repository": "seraphinastudios/tilewright-editor",
+        "repository_id": 1327106902,
+        "exposure_started_on": "2026-10-17",
+        "removal_observed_on": "2026-10-18",
+        "accepted_by": "Atrinik organization owners",
+        "accepted_on": "2026-10-18",
+        "evidence_location": "README.md#crate-dependency-update-app"
+      }
+    ],
     "installation_id": 170332148,
     "status": "owner-observed",
     "repository_selection": "selected",
     "repository_scope_verification": "app_authenticated_repository_api",
+    "repository_scope_reverification": {
+      "state": "pending-reverification",
+      "reason": "repository-transfer-after-readback",
+      "last_readback_on": "2026-10-11",
+      "selection_changed_on": "2026-10-17",
+      "removed_repositories": [
+        {
+          "repository": "atrinik/editor",
+          "repository_id": 1327106902
+        }
+      ],
+      "evidence_location": "README.md#crate-dependency-update-app"
+    },
     "owner": "Atrinik organization owners",
     "permissions": {
       "contents": "write",

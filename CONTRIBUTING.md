@@ -251,7 +251,11 @@ creation/verification dates, rotation owner, and a deadline within 90 days of ke
 creation; that internal deadline does not assert upstream expiry. Verify a
 replacement key in the owning writing workflow before revoking the old key.
 Keep App-authenticated selected-set readback or owner
-UI evidence, and do not infer the webhook switch from an empty event set.
+UI evidence, and do not infer the webhook switch from an empty event set. A
+selected-set change after that readback stays pending re-verification until a
+later readback is recorded. An owner-accepted key exposure stays until the key
+rotates and never extends the rotate-by deadline; both records pin the exact
+editor transfer.
 Private linux-build consumption needs separate client-only read grants
 through owner UI. Keep exact private package/source identities and pending grant
 state until observed; metadata and owner pulls do not prove an effective owning

@@ -934,7 +934,16 @@ done < <(jq -c '.repositories[]' <<<"${app_record}")
 if [[ $(jq -r '.status' <<<"${app_record}") == planned ]]; then
   echo "PENDING ${app_slug} selected client App installation and repository credential slots; no provisioning applied"
 else
-  echo "MANUAL ${app_slug} selected repositories require current owner UI or App-authenticated API proof: atrinik/client only"
+  # A selected-set change after the recorded readback stays pending until a
+  # fresh owner UI or App-authenticated readback is recorded.
+  if [[ $(jq -c '.repository_scope_reverification' <<<"${app_record}") != null ]]; then
+    echo "PENDING ${app_slug} selected repositories await re-verification: $(jq -r '
+      .repository_scope_reverification |
+      "a \(.selection_changed_on) repository transfer removed \(.removed_repositories | map(.repository) | join(", ")) after the \(.last_readback_on) readback"
+    ' <<<"${app_record}"); fresh owner UI or App-authenticated API proof is required: atrinik/client only"
+  else
+    echo "MANUAL ${app_slug} selected repositories require current owner UI or App-authenticated API proof: atrinik/client only"
+  fi
   activation_status=PENDING
   if [[ $(jq -r '.workflow_activation.state' <<<"${app_record}") == observed-successful-owned-pr ]]; then
     activation_status=OWNER-OBSERVED

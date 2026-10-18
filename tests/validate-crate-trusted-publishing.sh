@@ -4,7 +4,7 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 temporary=$(mktemp -d)
 trap 'rm -rf "${temporary}"' EXIT
-export ATRINIK_VALIDATION_TODAY=2026-10-12
+export ATRINIK_VALIDATION_TODAY=2026-10-18
 mkdir -p "${temporary}/bin"
 cp "${root}/bin/validate" "${temporary}/bin/validate"
 cp -R "${root}/config" "${root}/community-health" "${root}/.github" "${temporary}/"
@@ -115,6 +115,7 @@ done
 jq '.crate_dependency_update_app |= (.status="owner-observed" | .app_id=85500002 |
   .installation_id=154000002 | .repository_scope_verification="organization_owner_ui" |
   .observed_on="2026-08-31" | .evidence_location="atrinik/github-settings#owner-app" |
+  .repository_scope_reverification.last_readback_on="2026-08-31" |
   .workflow_activation={state:"pending-reviewed-workflows", observed_on:null, evidence_location:null})' \
   "${root}/config/manual-settings.json" >"${temporary}/config/manual-settings.json"
 "${temporary}/bin/validate" >/dev/null
@@ -146,6 +147,98 @@ for filter in \
   '.crate_dependency_update_app.observed_on = null'; do
   assert_rejected "${filter}"
 done
+
+assert_accepted() {
+  local filter=$1
+  jq "${filter}" "${root}/config/manual-settings.json" >"${temporary}/config/manual-settings.json"
+  if ! "${temporary}/bin/validate" >/dev/null 2>&1; then
+    echo "error: rejected valid dependency App record: ${filter}" >&2
+    exit 1
+  fi
+  reset_policy
+}
+
+# The exposure acceptance pins the editor transfer and stays while the key
+# that was current at the transfer is in use. Rotation retires it.
+assert_accepted '.crate_dependency_update_app |= (.key_created_on = "2026-10-18" |
+  .last_verified_on = "2026-10-18" | .rotate_by = "2027-01-16" | .accepted_key_exposures = [])'
+exposure='.crate_dependency_update_app.accepted_key_exposures'
+for filter in \
+  "${exposure} = null" \
+  "${exposure} = []" \
+  "${exposure}[0] |= (.former_repository = \"atrinik/classic\" | .repository = \"elsewhere/classic\" | .repository_id = 1327289971)" \
+  "${exposure}[0].repository = \"seraphinastudios/other-editor\"" \
+  "${exposure}[0].exposure_started_on = \"2026-10-18\"" \
+  "${exposure} = {}" \
+  "${exposure} += [${exposure}[0]]" \
+  "${exposure}[0].private_key = \"forbidden\"" \
+  "del(${exposure}[0].accepted_on)" \
+  "${exposure}[0].exposure = \"accepted\"" \
+  "${exposure}[0].exposed_names = [\"CRATE_DEPENDENCY_UPDATE_APP_ID\"]" \
+  "${exposure}[0].exposed_names += [\"CARGO_REGISTRY_TOKEN\"]" \
+  "${exposure}[0].exposed_names |= reverse" \
+  "${exposure}[0].former_repository = \"atrinik/client\"" \
+  "${exposure}[0].former_repository = \"seraphinastudios/tilewright-editor\"" \
+  "${exposure}[0].repository = \"atrinik/editor\"" \
+  "${exposure}[0].repository = \"Atrinik/editor\"" \
+  "${exposure}[0].repository_id = 1327106844" \
+  "${exposure}[0].repository_id = 0" \
+  "${exposure}[0].exposure_started_on = \"2026-10-10\"" \
+  "${exposure}[0].exposure_started_on = \"2026-02-30\"" \
+  "${exposure}[0].removal_observed_on = null" \
+  "${exposure}[0].removal_observed_on = \"2026-10-16\"" \
+  "${exposure}[0].accepted_on = null" \
+  "${exposure}[0].accepted_on = \"2026-10-17\"" \
+  "${exposure}[0].accepted_on = \"2099-01-01\"" \
+  "${exposure}[0].accepted_by = \"unknown\"" \
+  "${exposure}[0].evidence_location = \"https://example.test/evidence?id=1\"" \
+  '.crate_dependency_update_app |= (.key_created_on = "2026-10-18" |
+    .last_verified_on = "2026-10-18" | .rotate_by = "2027-01-16")'; do
+  assert_rejected "${filter}"
+done
+
+# A readback on or before the transfer stays pending; only a later readback
+# in observed_on may clear the record, and then it must be cleared.
+assert_accepted '.crate_dependency_update_app |= (.repository_scope_verification = "organization_owner_ui" |
+  .observed_on = "2026-10-18" | .repository_scope_reverification = null)'
+reverification='.crate_dependency_update_app.repository_scope_reverification'
+for filter in \
+  "${reverification} = null" \
+  "${reverification} = \"pending\"" \
+  '.crate_dependency_update_app |= (.observed_on = "2026-10-17" | .repository_scope_reverification = null)' \
+  '.crate_dependency_update_app.observed_on = "2026-10-18"' \
+  '.crate_dependency_update_app |= (.observed_on = "2026-10-17" | .repository_scope_reverification.last_readback_on = "2026-10-17")' \
+  "${reverification}.removed_repositories = [{repository:\"atrinik/classic\", repository_id:1327289971}]" \
+  "${reverification}.selection_changed_on = \"2026-10-16\"" \
+  "${reverification} = {}" \
+  "${reverification}.observed_on = \"2026-10-18\"" \
+  "${reverification}.state = \"reverified\"" \
+  "${reverification}.reason = \"unknown\"" \
+  "${reverification}.last_readback_on = \"2026-10-10\"" \
+  "${reverification}.last_readback_on = null" \
+  "${reverification}.selection_changed_on = \"2026-10-11\"" \
+  "${reverification}.selection_changed_on = \"2099-01-01\"" \
+  "${reverification}.selection_changed_on = null" \
+  "${reverification}.removed_repositories = []" \
+  "${reverification}.removed_repositories = null" \
+  "${reverification}.removed_repositories += [${reverification}.removed_repositories[0]]" \
+  "${reverification}.removed_repositories[0] = {repository:\"atrinik/client\", repository_id:1327106844}" \
+  "${reverification}.removed_repositories[0].repository_id = 1327106844" \
+  "${reverification}.removed_repositories[0].repository = \"seraphinastudios/tilewright-editor\"" \
+  "${reverification}.removed_repositories[0].visibility = \"public\"" \
+  "${reverification}.evidence_location = null" \
+  '.crate_dependency_update_app.observed_on = "2026-10-12"'; do
+  assert_rejected "${filter}"
+done
+
+# A planned App has no observed readback or key to qualify.
+planned='.crate_dependency_update_app |= (.status="planned" | .app_id=null | .installation_id=null |
+  .key_created_on=null | .last_verified_on=null | .rotate_by=null |
+  .repository_scope_verification="pending-owner-ui" | .observed_on=null | .evidence_location=null |
+  .credential_state="pending-name-metadata")'
+assert_accepted "${planned} | .crate_dependency_update_app |= (.accepted_key_exposures=[] | .repository_scope_reverification=null)"
+assert_rejected "${planned} | .crate_dependency_update_app.accepted_key_exposures=[]"
+assert_rejected "${planned} | .crate_dependency_update_app.repository_scope_reverification=null"
 # Removing unactivated manual intent is a valid reviewed rollback.
 jq '.crates_io_trusted_publishing = []' "${root}/config/manual-settings.json" \
   >"${temporary}/config/manual-settings.json"

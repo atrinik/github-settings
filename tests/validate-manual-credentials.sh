@@ -31,6 +31,7 @@ reset_manual_settings() {
     .crate_dependency_update_app |= (.status="planned" | .app_id=null | .installation_id=null |
       .key_created_on=null | .last_verified_on=null | .rotate_by=null |
       .repository_scope_verification="pending-owner-ui" | .observed_on=null | .evidence_location=null |
+      .accepted_key_exposures=[] | .repository_scope_reverification=null |
       .credential_state="pending-name-metadata" |
   .workflow_activation={state:"pending-reviewed-workflows", observed_on:null, evidence_location:null})' \
     "${root}/config/manual-settings.json" >"${temporary}/config/manual-settings.json"
@@ -235,7 +236,7 @@ jq '.github_actions_credentials |= map(select(.environment != "production")) |
   .runbook = "README.md#metaserver-production-credentials"
 ]' "${root}/config/manual-settings.json" >"${temporary}/production-credentials.json"
 cp "${temporary}/production-credentials.json" "${temporary}/config/manual-settings.json"
-ATRINIK_VALIDATION_TODAY=2026-10-12 "${temporary}/bin/validate" >/dev/null
+ATRINIK_VALIDATION_TODAY=2026-10-18 "${temporary}/bin/validate" >/dev/null
 
 for invalid in \
   '.github_actions_credentials += [.github_actions_credentials[-1]]' \
@@ -245,7 +246,7 @@ for invalid in \
   '.github_actions_credentials[-1].required_scopes += ["Workers Scripts Edit"]' \
   '.github_actions_credentials[-1].credential_type = "cloudflare_account_token"'; do
   jq "$invalid" "${temporary}/production-credentials.json" >"${temporary}/config/manual-settings.json"
-  if ATRINIK_VALIDATION_TODAY=2026-10-12 "${temporary}/bin/validate" >/dev/null 2>&1; then
+  if ATRINIK_VALIDATION_TODAY=2026-10-18 "${temporary}/bin/validate" >/dev/null 2>&1; then
     echo "error: validator accepted malformed PROD credential lifecycle: ${invalid}" >&2
     exit 1
   fi
@@ -259,7 +260,7 @@ for invalid in \
   '.github_actions_credentials[1].consumers = [".github/workflows/publish.yml"]' \
   '.github_actions_credentials[1].credential_value = "secret"'; do
   jq "$invalid" "${root}/config/manual-settings.json" >"${temporary}/config/manual-settings.json"
-  if ATRINIK_VALIDATION_TODAY=2026-10-12 "${temporary}/bin/validate" >/dev/null 2>&1; then
+  if ATRINIK_VALIDATION_TODAY=2026-10-18 "${temporary}/bin/validate" >/dev/null 2>&1; then
     echo "error: validator accepted malformed DEV credential lifecycle: ${invalid}" >&2
     exit 1
   fi
