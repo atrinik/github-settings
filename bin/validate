@@ -981,13 +981,18 @@ jq -e --arg today "${validation_today}" '
   def observed_day:
     (type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")) and
     (try ((. + "T00:00:00Z" | fromdateiso8601 | strftime("%Y-%m-%d")) == . and . <= $today) catch false);
-  def positive_id: type == "number" and floor == . and . > 0;
-  def repository_name: type == "string" and test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$");
-  def organization_repository: repository_name and startswith("atrinik/");
   def evidence_reference: type == "string" and test("^[A-Za-z0-9_./#-]+$");
+  # The 2026-10-17 editor transfer (README.md#transferred-repositories) removed
+  # a selected repository after the 2026-10-11 readback and carried a copy of
+  # the then-current key. Its evidence records pin this exact identity.
+  def editor_transfer: {
+    former_repository: "atrinik/editor", repository: "seraphinastudios/tilewright-editor",
+    repository_id: 1327106902, transferred_on: "2026-10-17"
+  };
   .github_actions_apps as $apps |
   .external_provider_apps as $external_apps |
   .crate_dependency_update_app as $app |
+  editor_transfer as $transfer |
   ($app | keys == ["accepted_key_exposures", "app_id", "app_slug", "consumers", "credential_state", "events", "evidence_location",
     "homepage_url", "installation_id", "key_created_on", "last_verified_on", "observed_on", "owner", "permissions", "pull_request_policy",
     "readiness", "repositories", "repository_scope_reverification", "repository_scope_verification", "repository_selection", "rotate_by",
@@ -1031,48 +1036,46 @@ jq -e --arg today "${validation_today}" '
     ($app.app_id | type == "number" and floor == . and . > 0) and
     ($app.installation_id | type == "number" and floor == . and . > 0) and
     ($app.repository_scope_verification | IN("organization_owner_ui", "app_authenticated_repository_api")) and
-    # A selected-set change after the recorded readback leaves the expected set
-    # pending re-verification until fresh owner UI or App-authenticated proof.
-    ($app.repository_scope_reverification == null or (
+    # A readback on or before the transfer no longer proves the selected set:
+    # keep it pending until a later readback replaces observed_on.
+    (if $app.observed_on <= $transfer.transferred_on then
       $app.repository_scope_reverification as $pending |
+      ($pending | type == "object") and
       ($pending | keys == ["evidence_location", "last_readback_on", "reason", "removed_repositories",
         "selection_changed_on", "state"]) and
       $pending.state == "pending-reverification" and
       $pending.reason == "repository-transfer-after-readback" and
-      ($pending.last_readback_on | observed_day) and $pending.last_readback_on == $app.observed_on and
-      ($pending.selection_changed_on | observed_day) and
-      $pending.selection_changed_on > $pending.last_readback_on and
-      ($pending.removed_repositories | type == "array" and length > 0) and
-      all($pending.removed_repositories[];
-        . as $removed |
-        (type == "object") and (keys == ["repository", "repository_id"]) and
-        (.repository | organization_repository) and (.repository_id | positive_id) and
-        all($app.repositories[];
-          .repository != $removed.repository and .repository_id != $removed.repository_id)) and
-      ($pending.removed_repositories | map(.repository_id) | length == (unique | length)) and
+      $pending.last_readback_on == $app.observed_on and
+      $pending.selection_changed_on == $transfer.transferred_on and
+      $pending.last_readback_on < $pending.selection_changed_on and
+      $pending.removed_repositories ==
+        [{repository: $transfer.former_repository, repository_id: $transfer.repository_id}] and
       ($pending.evidence_location | evidence_reference)
-    )) and
-    # An owner-accepted exposure applies only to the current key and closed
-    # windows; it never extends the rotate-by deadline.
-    all($app.accepted_key_exposures[];
-      . as $exposure |
-      (type == "object") and
-      (keys == ["accepted_by", "accepted_on", "evidence_location", "exposed_names", "exposure", "exposure_started_on",
-        "former_repository", "removal_observed_on", "repository", "repository_id"]) and
-      .exposure == "repository-transfer-retained-copy" and
-      (.exposed_names | type == "array" and length > 0 and . == unique and
-        any(.[]; . == $app.secret_name) and all(.[]; . == $app.secret_name or . == $app.variable_name)) and
-      (.former_repository | organization_repository) and
-      (.repository | repository_name and (ascii_downcase | startswith("atrinik/") | not)) and
-      (.repository_id | positive_id) and
-      all($app.repositories[];
-        .repository != $exposure.former_repository and .repository_id != $exposure.repository_id) and
-      (.exposure_started_on | observed_day) and .exposure_started_on >= $app.key_created_on and
-      (.removal_observed_on | observed_day) and .removal_observed_on >= .exposure_started_on and
-      (.accepted_on | observed_day) and .accepted_on >= .removal_observed_on and
-      .accepted_by == $app.owner and
-      (.evidence_location | evidence_reference)) and
-    ($app.accepted_key_exposures | length == (unique | length)) and
+    else
+      $app.repository_scope_reverification == null
+    end) and
+    # A key that was current at the transfer keeps its exposure acceptance
+    # until rotation; a newer key has none. Acceptance never extends rotate-by.
+    (if $app.key_created_on <= $transfer.transferred_on then
+      ($app.accepted_key_exposures | length == 1) and
+      ($app.accepted_key_exposures[0] as $exposure |
+        ($exposure | type == "object") and
+        ($exposure | keys == ["accepted_by", "accepted_on", "evidence_location", "exposed_names", "exposure",
+          "exposure_started_on", "former_repository", "removal_observed_on", "repository", "repository_id"]) and
+        $exposure.exposure == "repository-transfer-retained-copy" and
+        $exposure.exposed_names == ([$app.secret_name, $app.variable_name] | sort) and
+        $exposure.former_repository == $transfer.former_repository and
+        $exposure.repository == $transfer.repository and
+        $exposure.repository_id == $transfer.repository_id and
+        $exposure.exposure_started_on == $transfer.transferred_on and
+        ($exposure.removal_observed_on | observed_day) and
+        $exposure.removal_observed_on >= $exposure.exposure_started_on and
+        ($exposure.accepted_on | observed_day) and $exposure.accepted_on >= $exposure.removal_observed_on and
+        $exposure.accepted_by == $app.owner and
+        ($exposure.evidence_location | evidence_reference))
+    else
+      $app.accepted_key_exposures == []
+    end) and
     ($app.observed_on | observed_day) and
     ($app.key_created_on | observed_day) and ($app.last_verified_on | observed_day) and
     $app.last_verified_on >= $app.key_created_on and

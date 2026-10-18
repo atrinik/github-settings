@@ -1845,10 +1845,12 @@ To re-verify, the owner confirms in the installation's organization-owner UI,
 or through supported App-authenticated readback, that the selected set is
 exactly `atrinik/client`. Reviewed source then records that method in
 `repository_scope_verification`, the readback date in `observed_on`, and sets
-`repository_scope_reverification` to `null`. Validation accepts a pending record
-only for an owner-observed App, only when its readback date equals `observed_on`
-and the change came after it, and only for removed organization repositories
-that are no longer selected. Preserve every other App and installation,
+`repository_scope_reverification` to `null`. Validation pins the record to the
+editor transfer. While `observed_on` is on or before 2026-10-17, the pending
+record must name exactly that readback, the 2026-10-17 change and
+`atrinik/editor` (`1327106902`). It can be cleared only together with a
+readback dated after the transfer, and must be cleared once one is recorded.
+Preserve every other App and installation,
 including the existing Classic updater and provider Apps. The desired disabled
 webhook is a separate owner UI setting; `events: []` proves no subscriptions and
 does not independently prove the webhook switch is disabled.
@@ -1888,11 +1890,13 @@ accepted that exposure window instead of rotating the key early.**
 `accepted_key_exposures` records the acceptance: the exposure type, the exposed
 names, the former and current repository identity, the exposure start, the
 removal readback and the acceptance date. The key keeps its ordinary 2027-01-09
-rotate-by deadline; the acceptance does not extend it. Validation binds each
-accepted exposure to the current key and to a closed window: the exposure cannot
-start before `key_created_on`, its removal must be observed, and acceptance
-cannot precede that observation. Rotating the key therefore retires the record;
-remove it in the same reviewed change that records the new key's dates.
+rotate-by deadline; the acceptance does not extend it. Validation pins the
+record to the editor transfer (former and current name, ID, the 2026-10-17
+start and both exposed names), and requires an observed removal with the
+acceptance on or after it. The record must stay while the current key was
+created on or before the transfer. Once a rotation records a newer
+`key_created_on`, the list must be empty, so remove the record in that same
+reviewed change.
 
 The read-only verifier checks live installation identity, exact permissions,
 empty events, active state, selected repository identities, and credential

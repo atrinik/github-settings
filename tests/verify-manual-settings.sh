@@ -898,7 +898,7 @@ cp "${root}/bin/validate" "${fixture_root}/bin/verify-manual-settings" "${update
 cp -R "${root}/config" "${root}/community-health" "${root}/.github" "${updater_root}/"
 jq '.crate_dependency_update_app |= (.status="owner-observed" | .app_id=5276152 |
   .installation_id=170332148 | .repository_scope_verification="organization_owner_ui" |
-  .observed_on="2026-08-31" | .evidence_location="atrinik/github-settings#owner-app" |
+  .observed_on="2026-10-18" | .evidence_location="atrinik/github-settings#owner-app" |
   .repository_scope_reverification=null |
   .workflow_activation={state:"pending-reviewed-workflows", observed_on:null, evidence_location:null})' \
   "${fixture_root}/config/manual-settings.json" >"${updater_root}/config/manual-settings.json"

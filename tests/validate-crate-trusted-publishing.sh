@@ -115,7 +115,7 @@ done
 jq '.crate_dependency_update_app |= (.status="owner-observed" | .app_id=85500002 |
   .installation_id=154000002 | .repository_scope_verification="organization_owner_ui" |
   .observed_on="2026-08-31" | .evidence_location="atrinik/github-settings#owner-app" |
-  .repository_scope_reverification=null |
+  .repository_scope_reverification.last_readback_on="2026-08-31" |
   .workflow_activation={state:"pending-reviewed-workflows", observed_on:null, evidence_location:null})' \
   "${root}/config/manual-settings.json" >"${temporary}/config/manual-settings.json"
 "${temporary}/bin/validate" >/dev/null
@@ -158,14 +158,17 @@ assert_accepted() {
   reset_policy
 }
 
-# Owner-accepted key exposures bind to the current key and a closed window.
-# Rotation retires them: a new key cannot keep an older key's acceptance.
-assert_accepted '.crate_dependency_update_app.accepted_key_exposures = []'
+# The exposure acceptance pins the editor transfer and stays while the key
+# that was current at the transfer is in use. Rotation retires it.
 assert_accepted '.crate_dependency_update_app |= (.key_created_on = "2026-10-18" |
   .last_verified_on = "2026-10-18" | .rotate_by = "2027-01-16" | .accepted_key_exposures = [])'
 exposure='.crate_dependency_update_app.accepted_key_exposures'
 for filter in \
   "${exposure} = null" \
+  "${exposure} = []" \
+  "${exposure}[0] |= (.former_repository = \"atrinik/classic\" | .repository = \"elsewhere/classic\" | .repository_id = 1327289971)" \
+  "${exposure}[0].repository = \"seraphinastudios/other-editor\"" \
+  "${exposure}[0].exposure_started_on = \"2026-10-18\"" \
   "${exposure} = {}" \
   "${exposure} += [${exposure}[0]]" \
   "${exposure}[0].private_key = \"forbidden\"" \
@@ -194,13 +197,19 @@ for filter in \
   assert_rejected "${filter}"
 done
 
-# A selected-set change after the recorded readback stays pending until a
-# fresh readback replaces it; then the pending record is cleared.
+# A readback on or before the transfer stays pending; only a later readback
+# in observed_on may clear the record, and then it must be cleared.
 assert_accepted '.crate_dependency_update_app |= (.repository_scope_verification = "organization_owner_ui" |
   .observed_on = "2026-10-18" | .repository_scope_reverification = null)'
 reverification='.crate_dependency_update_app.repository_scope_reverification'
 for filter in \
+  "${reverification} = null" \
   "${reverification} = \"pending\"" \
+  '.crate_dependency_update_app |= (.observed_on = "2026-10-17" | .repository_scope_reverification = null)' \
+  '.crate_dependency_update_app.observed_on = "2026-10-18"' \
+  '.crate_dependency_update_app |= (.observed_on = "2026-10-17" | .repository_scope_reverification.last_readback_on = "2026-10-17")' \
+  "${reverification}.removed_repositories = [{repository:\"atrinik/classic\", repository_id:1327289971}]" \
+  "${reverification}.selection_changed_on = \"2026-10-16\"" \
   "${reverification} = {}" \
   "${reverification}.observed_on = \"2026-10-18\"" \
   "${reverification}.state = \"reverified\"" \

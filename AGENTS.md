@@ -174,9 +174,10 @@
   and a rotate-by deadline within the existing 90-day cadence. The deadline is
   internal policy, not upstream expiry; verify replacement workflow use before
   revoking the old key. Keep a selected-set change after the recorded readback
-  as pending `repository_scope_reverification` until fresh readback replaces
-  it. An owner-accepted key exposure binds to the current key and a closed
-  window, never extends rotate-by, and is removed on rotation.
+  as pending `repository_scope_reverification` until a later readback replaces
+  it. An owner-accepted key exposure stays until rotation, never extends
+  rotate-by, and is removed on rotation. Both records pin the exact editor
+  transfer.
 - Record GitHub Pages sites with stable repository identity, exact provider URL,
   HTTPS enforcement, owning deployment environment, desired Actions source,
   workflow path, and immutable deployment-action marker. Before that marker is
@@ -234,7 +235,8 @@
 - Remove a repository transferred out of the organization from every
   desired-state inventory, validator identity map and test fixture in one
   change, and record its transfer in `README.md#transferred-repositories`.
-  Historical evidence sections stay as written.
+  Historical evidence sections stay as written. Validated evidence records of
+  the transfer itself may pin the former identity.
 - Update this `AGENTS.md` in the same change when major rework alters governance
   ownership, policy scope, publisher behavior, required checks, or validation.
 
