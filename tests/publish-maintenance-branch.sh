@@ -85,7 +85,6 @@ security_scenario=${GH_SECURITY_SCENARIO:-converged}
 crate_repository_id() {
   case $1 in
   protocol) printf '%s\n' 1327106950 ;;
-  renderer) printf '%s\n' 1327106998 ;;
   content-toolkit) printf '%s\n' 1327107043 ;;
   *) return 1 ;;
   esac
@@ -106,11 +105,6 @@ crate_workflow_content() {
   if [[ ${workflow} == publish-crate.yml ]]; then
     sed -e "s|atrinik/protocol|atrinik/${repository}|g" \
       -e "s/1327106950/${identifier}/g" "${fixture}/crate-publication.yml"
-  elif [[ ${repository} == renderer ]]; then
-    sed -e 's/package/source-package/g' \
-      -e "s/needs.source-package.outputs.version != ''/needs.source-package.outputs.release == 'true'/g" \
-      -e 's/source-release-${{ github.sha }}/prepared-renderer-release-${{ github.sha }}/g' \
-      "${fixture}/crate-source-release.yml"
   else
     cat "${fixture}/crate-source-release.yml"
   fi
@@ -354,11 +348,10 @@ repos/atrinik/*/actions/permissions/workflow\|*)
     }
   ' "${GH_IMMUTABLE_STATE}" | jq -r "${jq_filter}"
   ;;
-"repos/atrinik/metaserver-worker/immutable-releases|"* | "repos/atrinik/protocol/immutable-releases|"* | "repos/atrinik/renderer/immutable-releases|"* | "repos/atrinik/content-toolkit/immutable-releases|"*)
+"repos/atrinik/metaserver-worker/immutable-releases|"* | "repos/atrinik/protocol/immutable-releases|"* | "repos/atrinik/content-toolkit/immutable-releases|"*)
   case ${endpoint} in
   */metaserver-worker/*) repository_id=1324297032 ;;
   */protocol/*) repository_id=1327106950 ;;
-  */renderer/*) repository_id=1327106998 ;;
   */content-toolkit/*) repository_id=1327107043 ;;
   esac
   if [[ ${GH_CRATE_IMMUTABLE_VERIFY_FAILURE:-false} == true && ${repository_id} == 1327107043 ]]; then
@@ -369,13 +362,13 @@ repos/atrinik/*/actions/permissions/workflow\|*)
     printf '{"enabled":false,"enforced_by_owner":false}\n'
   fi
   ;;
-"repos/atrinik/metaserver-worker/code-security-configuration|"* | "repos/atrinik/protocol/code-security-configuration|"* | "repos/atrinik/renderer/code-security-configuration|"* | "repos/atrinik/content-toolkit/code-security-configuration|"*)
+"repos/atrinik/metaserver-worker/code-security-configuration|"* | "repos/atrinik/protocol/code-security-configuration|"* | "repos/atrinik/content-toolkit/code-security-configuration|"*)
   printf '{"status":"enforced","configuration":{"id":265376}}\n'
   ;;
 "repos/atrinik/metaserver-worker/code-scanning/default-setup|"*)
   printf '{"state":"configured","query_suite":"default","languages":["javascript-typescript","python","actions"]}\n'
   ;;
-"repos/atrinik/protocol/code-scanning/default-setup|"* | "repos/atrinik/renderer/code-scanning/default-setup|"* | "repos/atrinik/content-toolkit/code-scanning/default-setup|"*)
+"repos/atrinik/protocol/code-scanning/default-setup|"* | "repos/atrinik/content-toolkit/code-scanning/default-setup|"*)
   printf '{"state":"configured","query_suite":"default","languages":["rust"]}\n'
   ;;
 "repos/atrinik/classic/immutable-releases|"*)
@@ -393,12 +386,12 @@ repos/atrinik/*/actions/permissions/workflow\|*)
     printf '{"enabled":false,"enforced_by_owner":false}\n'
   fi
   ;;
-repos/atrinik/protocol\| | repos/atrinik/renderer\| | repos/atrinik/content-toolkit\|)
+repos/atrinik/protocol\| | repos/atrinik/content-toolkit\|)
   repository=${endpoint#repos/atrinik/}
   jq -cn --arg repository "${repository}" --argjson id "$(crate_repository_id "${repository}")" \
     '{id: $id, full_name: ("atrinik/" + $repository), archived: false, default_branch: "main"}'
   ;;
-repos/atrinik/protocol/branches/main\| | repos/atrinik/renderer/branches/main\| | repos/atrinik/content-toolkit/branches/main\|)
+repos/atrinik/protocol/branches/main\| | repos/atrinik/content-toolkit/branches/main\|)
   printf '{"name":"main","protected":true,"commit":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}\n'
   ;;
 repos/atrinik/metaserver-worker/git/ref/heads/main\|)
@@ -429,7 +422,7 @@ repos/atrinik/metaserver-worker/actions/workflows/check.yml/runs*\|)
     head_repository:{full_name:"atrinik/metaserver-worker"},status:"completed",conclusion:$conclusion
   }]}'
   ;;
-repos/atrinik/protocol/git/ref/heads/main\| | repos/atrinik/renderer/git/ref/heads/main\| | repos/atrinik/content-toolkit/git/ref/heads/main\|)
+repos/atrinik/protocol/git/ref/heads/main\| | repos/atrinik/content-toolkit/git/ref/heads/main\|)
   printf '{"ref":"refs/heads/main","object":{"type":"commit","sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}\n'
   ;;
 repos/atrinik/*/contents/.github/workflows/publish-crate.yml*\|)

@@ -1755,33 +1755,29 @@ future reviewed source/version merges use the automatic path after observed
 onboarding. Protocol registration is owner-observed with the successful manual 0.2 run;
 its automatic source/environment setup is observed. Renderer/toolkit initial
 publication and owner registration are complete, with the known-coordinate OIDC
-proofs above. The dependency App has observed successful owned-PR activation
-through the editor workflow and its signed bot PR with ordinary checks. Client's
-no-op preparation remains a separate observation; it did not exercise its writer.
+proofs above. The dependency App's workflow activation is pending: its only
+remaining consumer, the client, has not yet run its PR-writing job.
 
 ## Crate dependency update App
 
-`crate_dependency_update_app` records owner-observed App setup on 2026-10-11
-and `workflow_activation: observed-successful-owned-pr` on 2026-10-12. Both
-reviewed updater workflows have merged.
-[Editor run 38193476856](https://github.com/atrinik/editor/actions/runs/38193476856)
-passed credential-free preparation, independent lock/consumer/aggregate
-verification, and candidate/metadata sealing before its isolated App job created
-[PR 36](https://github.com/atrinik/editor/pull/36). The App bot authored the
-verified signed commit; all twelve ordinary CI checks passed, independent
-review accepted the candidate, and the maintainer merged the PR through the
-ordinary process. The App did not approve or merge its own PR.
-
+`crate_dependency_update_app` records owner-observed App setup on 2026-10-11.
+Its `workflow_activation` is `pending-reviewed-workflows`: the client's reviewed
+updater workflow has merged, but no client-owned PR has been observed yet.
 Client [run 38192029425](https://github.com/atrinik/client/actions/runs/38192029425)
-completed preparation as a no-op and skipped the isolated PR-writing job. The
-observed successful-owned-PR record refers to editor acceptance; the client
-no-op does not prove that its writer job ran.
+completed preparation as a no-op and skipped the isolated PR-writing job, so it
+does not prove that the writer works. Record `observed-successful-owned-pr` only
+after a client run creates its own PR that passes ordinary checks and review.
+
+Before the editor left the organization, its run 38193476856 created the App's
+first owned PR (editor PR 36) on 2026-10-12. The App bot authored the verified
+signed commit, all ordinary checks passed, independent review accepted it, and
+the maintainer merged it through the ordinary process. That observation belongs
+to the transferred repository and does not count as client activation.
 The live App is `atrinik-crate-dependency-update`, App ID `5276152`, installation
 ID `170332148`, with **selected repositories** exactly `atrinik/client` (ID
 `1327106844`). The editor repository left the organization on 2026-10-17 (see
-[Transferred repositories](#transferred-repositories)); the successful-owned-PR
-observation above was made there before the transfer, and the editor's copy of
-the App credential and variable were deleted from the transferred repository. App-authenticated supported
+[Transferred repositories](#transferred-repositories)); the editor's copy of the
+App credential and variable were deleted from the transferred repository. App-authenticated supported
 API readback confirmed that complete selected set, exact contents write/pull
 requests write/metadata read permissions, no subscribed events, and the external
 homepage `https://www.atrinik.org`. Preserve every other App and installation,

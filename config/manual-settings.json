@@ -613,9 +613,9 @@
     "webhook_active": false,
     "credential_state": "observed-name-metadata",
     "workflow_activation": {
-      "state": "observed-successful-owned-pr",
-      "observed_on": "2026-10-12",
-      "evidence_location": "README.md#crate-dependency-update-app"
+      "state": "pending-reviewed-workflows",
+      "observed_on": null,
+      "evidence_location": null
     }
   }
 }
