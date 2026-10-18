@@ -113,7 +113,10 @@ replace its default, or re-attach repositories, because attachment starts an
 asynchronous enablement event.
 
 Do not require a new workflow context until that exact aggregate context has
-landed and passed on the protected branch.
+landed and passed on the protected branch. In particular, add Classic's
+`CodeQL validation` requirement only after its advanced workflow is merged;
+otherwise the required check would prevent the workflow pull request itself
+from merging.
 
 Add a repository to the `merge_queue` inventory only after every one of its
 required checks reports on the `merge_group` event on its default branch. Keep
@@ -121,15 +124,12 @@ required checks reports on the `merge_group` event on its default branch. Keep
 organization rulesets. Keep its parameters within GitHub's API ranges, and use
 the organization's only merge method. Queued repositories drop the up-to-date
 requirement from required CI and never require Dependency review. Merge-queue
-changes need publisher tests for creation, a converged rerun, drift
-convergence, retained foreign or modified rules, the identity and final-read
+changes need schema negative tests and publisher tests for creation, a
+converged rerun, drift convergence, required CI that stays strict without a
+verified queue, retained foreign or modified rules, the identity and final-read
 fences before retirement, and install-before-relax and restore-before-retire
-ordering. They also need audit scenarios for a missing
-queue, parameter drift, organization ownership, strict drift, and a retained
-queue. In particular, add Classic's
-`CodeQL validation` requirement only after its advanced workflow is merged;
-otherwise the required check would prevent the workflow pull request itself
-from merging.
+ordering. They also need audit scenarios for a missing queue, parameter drift,
+organization ownership, strict drift, and a retained queue.
 
 Maintenance-branch retirement removes the active entry from
 `config/repositories.json` and adds an immutable recovery record to

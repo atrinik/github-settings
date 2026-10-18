@@ -958,8 +958,9 @@ branch, as they do for `06 - CodeQL security`. The rule comes from
 - squash merges, the organization's only merge method;
 - `ALLGREEN` grouping, so every queued pull request's own merge result must
   pass the required checks, not only the head of its group;
-- a build concurrency of 5, groups of 1 to 5 pull requests, and a 5-minute
-  wait for the minimum group size;
+- a build concurrency of 5 and groups of 1 to 5 pull requests, with no wait:
+  a single queued pull request merges as soon as its checks pass, and pull
+  requests queued together share a group;
 - a 60-minute timeout for required checks to report on a merge group.
 
 Organization owners keep the usual pull-request-only bypass. During an
@@ -969,9 +970,13 @@ repository's required CI.
 A queued repository's `03 - Required CI` rule sets
 `strict_required_status_checks_policy` to `false`. The queue already tests each
 pull request merged onto the latest base, so the branch itself no longer has
-to be current. Every other repository keeps the strict policy. Validation
-requires each listed repository to be in `required_ci`, and keeps the
-template's parameters within GitHub's API ranges and the allowed merge method.
+to be current. When applying, the publisher re-reads the queue just before it
+publishes required CI and relaxes the rule only if that read shows the exact
+repository-owned queue. Otherwise it prints a `SKIP` and keeps required CI
+strict. Every other repository keeps the strict policy. Validation requires
+each listed repository to be in `required_ci`. It also keeps the template's
+parameters within GitHub's API ranges and the allowed merge method, and allows
+a wait only with a minimum group size above one.
 GitHub Team offers merge queue only for public repositories, so the publisher
 fails before any write if a listed active repository is private. Like the
 security gates, it skips a listed repository that is not active; that

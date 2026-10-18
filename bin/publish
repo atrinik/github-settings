@@ -687,7 +687,8 @@ publish_repository_rulesets() {
       "${ruleset_config}" || return 1
   done < <(jq -r '.pull_request_gate[]' "${repositories_config}")
 
-  queued=$(active_merge_queue_repositories)
+  verify_installed_merge_queues || return 1
+  queued=${verified_merge_queue_repositories}
   while IFS= read -r repository; do
     ci_payload=$(mktemp)
     temporary_files+=("${ci_payload}")
@@ -810,7 +811,8 @@ publish_organization_rulesets() {
   temporary_files+=("${input}")
   upsert_organization_ruleset "${input}" || return 1
 
-  queued=$(active_merge_queue_repositories)
+  verify_installed_merge_queues || return 1
+  queued=${verified_merge_queue_repositories}
   while IFS= read -r repository; do
     name="03 - Required CI - ${repository}"
     desired_rulesets+=("${name}")
@@ -1381,18 +1383,38 @@ publish_security_merge_rulesets() {
   done
 }
 
-# Required CI stops requiring a current branch only where this run installs
-# the queue: the repository is listed and active.
-active_merge_queue_repositories() {
-  local repository
+# Required CI stops requiring a current branch only where the queue protects
+# the branch: the repository is listed and active and, when applying, a fresh
+# read just before required CI is published shows the exact repository-owned
+# queue. A plan reports the queue publisher's planned installation instead.
+# Sets verified_merge_queue_repositories to a JSON array.
+verify_installed_merge_queues() {
+  local repository name existing id current template
   local -a queued=()
 
+  name=$(jq -r '.name' "${root}/config/rulesets/merge-queue.json")
   while IFS= read -r repository; do
-    if [[ -v active_repository_ids["${repository}"] ]]; then
-      queued+=("${repository}")
+    [[ -v active_repository_ids["${repository}"] ]] || continue
+    if ${apply}; then
+      existing=$(list_rulesets \
+        "repos/${organization}/${repository}/rulesets?includes_parents=false") || return 1
+      id=$(jq -r --arg name "${name}" \
+        '.[] | select(.name == $name) | .id' <<<"${existing}")
+      current='{}'
+      if [[ -n ${id} ]]; then
+        current=$(github_api "repos/${organization}/${repository}/rulesets/${id}") || return 1
+      fi
+      template=$(make_merge_queue_ruleset "${repository}")
+      temporary_files+=("${template}")
+      if [[ -z ${id} ]] ||
+        ! owned_security_ruleset_matches "${repository}" "${id}" "${template}" "${current}"; then
+        echo "SKIP ${organization}/${repository} ${name}: queue not verified; required CI stays strict"
+        continue
+      fi
     fi
+    queued+=("${repository}")
   done < <(jq -r '(.merge_queue // [])[]' "${repositories_config}")
-  jq -cn '$ARGS.positional' --args "${queued[@]}"
+  verified_merge_queue_repositories=$(jq -cn '$ARGS.positional' --args "${queued[@]}")
 }
 
 repository_uses_merge_queue() {

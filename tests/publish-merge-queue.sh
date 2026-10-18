@@ -118,7 +118,7 @@ jq -e '
     max_entries_to_merge: 5,
     merge_method: "SQUASH",
     min_entries_to_merge: 1,
-    min_entries_to_merge_wait_minutes: 5
+    min_entries_to_merge_wait_minutes: 0
   }}]
 ' "${template}" >/dev/null
 
@@ -269,8 +269,8 @@ if grep -Fq 'repos/atrinik/playtester/' "${log}"; then
   exit 1
 fi
 
-# Required CI stops requiring a current branch only where the queue tests the
-# merged result, in both policy scopes.
+# Required CI stops requiring a current branch only where the queue protects
+# the branch, in both policy scopes.
 upsert_repository_ruleset() {
   cp "$2" "${temporary}/captured/repository-$1-$(jq -r .name "$2")"
 }
@@ -282,31 +282,61 @@ delete_stale_repository_maintenance_rulesets() { :; }
 delete_stale_repository_advisory_rulesets() { :; }
 delete_managed_organization_rulesets() { :; }
 delete_managed_repository_rulesets() { :; }
+publish_required_ci() {
+  rm -f "${temporary}/captured/"*
+  publish_repository_rulesets >"${temporary}/output"
+  publish_organization_rulesets >>"${temporary}/output"
+}
+assert_playtester_strict() {
+  local strict=$1 scope
+  for scope in repository-playtester-03\ -\ Required\ CI organization-03\ -\ Required\ CI\ -\ playtester; do
+    jq -e --argjson strict "${strict}" '
+      .rules[0].parameters.strict_required_status_checks_policy == $strict and
+      .rules[0].parameters.required_status_checks ==
+        [{context: "Playtester validation", integration_id: 15368},
+         {context: "Conventional PR title", integration_id: 15368}]
+    ' "${temporary}/captured/${scope}" >/dev/null
+  done
+  for scope in repository-observatory-03\ -\ Required\ CI organization-03\ -\ Required\ CI\ -\ observatory; do
+    jq -e '.rules[0].parameters.strict_required_status_checks_policy == true' \
+      "${temporary}/captured/${scope}" >/dev/null
+  done
+}
+# Applying relaxes required CI only after a fresh read shows the exact queue.
 reset_case
-publish_repository_rulesets >/dev/null
-publish_organization_rulesets >/dev/null
-for scope in repository-playtester-03\ -\ Required\ CI organization-03\ -\ Required\ CI\ -\ playtester; do
-  jq -e '
-    .rules[0].parameters.strict_required_status_checks_policy == false and
-    .rules[0].parameters.required_status_checks ==
-      [{context: "Playtester validation", integration_id: 15368},
-       {context: "Conventional PR title", integration_id: 15368}]
-  ' "${temporary}/captured/${scope}" >/dev/null
+printf '[{"id":8,"name":"08 - Merge queue"}]\n' >"${temporary}/playtester-list.json"
+publish_required_ci
+assert_playtester_strict false
+for state in missing disabled scoped-away foreign modified; do
+  reset_case
+  printf '[{"id":8,"name":"08 - Merge queue"}]\n' >"${temporary}/playtester-list.json"
+  case ${state} in
+  missing) printf '[]\n' >"${temporary}/playtester-list.json" ;;
+  disabled) filter='.enforcement = "disabled"' ;;
+  scoped-away) filter='.conditions.ref_name.include = ["refs/heads/other"]' ;;
+  foreign) filter='.source_type = "Organization"' ;;
+  modified) filter='.rules[0].parameters.grouping_strategy = "HEADGREEN"' ;;
+  esac
+  if [[ ${state} != missing ]]; then
+    jq "${filter}" "${temporary}/playtester-rule.json" >"${temporary}/changed.json"
+    mv "${temporary}/changed.json" "${temporary}/playtester-rule.json"
+  fi
+  publish_required_ci
+  assert_playtester_strict true
+  grep -Fxq 'SKIP atrinik/playtester 08 - Merge queue: queue not verified; required CI stays strict' \
+    "${temporary}/output"
 done
-for scope in repository-observatory-03\ -\ Required\ CI organization-03\ -\ Required\ CI\ -\ observatory; do
-  jq -e '.rules[0].parameters.strict_required_status_checks_policy == true' \
-    "${temporary}/captured/${scope}" >/dev/null
-done
+# A plan reports the queue publisher's planned installation.
+reset_case
+apply=false
+printf '[]\n' >"${temporary}/playtester-list.json"
+publish_required_ci
+assert_playtester_strict false
 # A listed but inactive repository gets no queue, so its required CI stays strict.
 reset_case
-rm -f "${temporary}/captured/"*
 active_repository_ids=([observatory]=1)
-publish_repository_rulesets >/dev/null
-publish_organization_rulesets >/dev/null
-for scope in repository-playtester-03\ -\ Required\ CI organization-03\ -\ Required\ CI\ -\ playtester; do
-  jq -e '.rules[0].parameters.strict_required_status_checks_policy == true' \
-    "${temporary}/captured/${scope}" >/dev/null
-done
+publish_required_ci
+assert_playtester_strict true
 
 # Install the queue before required CI is relaxed, and retire it only after
 # required CI is restored. Neither step belongs to one policy scope.
