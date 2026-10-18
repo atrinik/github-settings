@@ -311,15 +311,13 @@ def verify_source_release(source, repository):
     require(signer.get("runs-on") == "ubuntu-24.04" and "container" not in signer and "services" not in signer,
             "signer must use the reviewed hosted runner without execution overrides")
     package_name = signer.get("needs")
-    expected_package = "source-package" if repository == "atrinik/renderer" else "package"
-    require(package_name == expected_package and package_name in jobs,
+    require(package_name == "package" and package_name in jobs,
             "signer must depend on one credential-free package job")
     package = jobs[package_name]
     require(package.get("permissions", workflow["permissions"]) == {"contents": "read"},
             "source package preparation must be credential-free")
     require(package.get("continue-on-error", "false") == "false", "package preparation must fail on errors")
-    guard = (f"needs.{package_name}.outputs.release == 'true'" if repository == "atrinik/renderer"
-             else f"needs.{package_name}.outputs.version != ''")
+    guard = f"needs.{package_name}.outputs.version != ''"
     require(expression(signer.get("if")) == guard, "signer must use the package version readiness guard")
     release = jobs.get("release", {})
     require(set(release.get("needs", [])) == {package_name, signer_name}
@@ -335,8 +333,7 @@ def verify_source_release(source, repository):
         critical_step(step, "source signing step")
     revision = "${{ needs." + package_name + ".outputs.revision }}"
     version = "${{ needs." + package_name + ".outputs.version }}"
-    artifact = ("prepared-renderer-release-${{ github.sha }}" if repository == "atrinik/renderer"
-                else "source-release-${{ github.sha }}")
+    artifact = "source-release-${{ github.sha }}"
     require(re.fullmatch(r"actions/checkout@[0-9a-f]{40}", str(checkout.get("uses"))) is not None
             and checkout.get("with") == {"ref": revision, "persist-credentials": "false"},
             "signer checkout must use the exact prepared revision without persisted credentials")
