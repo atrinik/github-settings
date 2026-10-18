@@ -120,15 +120,15 @@ run_audit() {
 }
 
 output=$(run_audit production-advisory full)
-grep -Fxq 'Governance audit passed: 24 active repositories checked.' <<<"${output}"
+grep -Fxq 'Governance audit passed: 22 active repositories checked.' <<<"${output}"
 if grep -Fq 'Dependency review merge protection' <<<"${output}"; then
   echo 'advisory production must not require dependency merge protection' >&2
   exit 1
 fi
 output=$(run_audit pass full)
-grep -Fxq 'Governance audit passed: 24 active repositories checked.' <<<"${output}"
+grep -Fxq 'Governance audit passed: 22 active repositories checked.' <<<"${output}"
 output=$(run_audit temporary full)
-grep -Fxq 'Governance audit passed: 24 active repositories checked.' <<<"${output}"
+grep -Fxq 'Governance audit passed: 22 active repositories checked.' <<<"${output}"
 output=$(run_audit legacy-security)
 grep -Fq 'Governance audit passed:' <<<"${output}"
 output=$(run_audit repository-rulesets)

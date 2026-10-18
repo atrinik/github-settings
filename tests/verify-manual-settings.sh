@@ -85,13 +85,11 @@ repos/atrinik/protocol)
   jq -n --argjson id "${repository_id}" \
     '{id: $id, full_name: "atrinik/protocol", archived: false, default_branch: "main"}'
   ;;
-repos/atrinik/renderer | repos/atrinik/content-toolkit | repos/atrinik/client | repos/atrinik/editor)
+repos/atrinik/content-toolkit | repos/atrinik/client)
   name=${endpoint##*/}
   case ${name} in
-  renderer) id=1327106998 ;;
   content-toolkit) id=1327107043 ;;
   client) id=1327106844 ;;
-  editor) id=1327106902 ;;
   esac
   jq -n --arg name "${name}" --argjson id "${id}" \
     '{id:$id, full_name:("atrinik/"+$name), archived:false, default_branch:"main"}'
@@ -176,14 +174,14 @@ repos/atrinik/protocol/environments/crates-io-release)
 "repos/atrinik/protocol/environments/crates-io-release/variables?per_page=100&page=1")
   jq -n '{total_count:0,variables:[]}'
   ;;
-"repos/atrinik/client/actions/secrets?per_page=100&page=1" | "repos/atrinik/editor/actions/secrets?per_page=100&page=1")
+"repos/atrinik/client/actions/secrets?per_page=100&page=1")
   if [[ ${FAKE_GH_SCENARIO} == updater-missing-secret ]]; then
     jq -n '{total_count:0,secrets:[]}'
   else
     jq -n '{total_count:1,secrets:[{name:"CRATE_DEPENDENCY_UPDATE_APP_PRIVATE_KEY",updated_at:"2026-08-31T00:00:00Z"}]}'
   fi
   ;;
-"repos/atrinik/client/actions/variables?per_page=100&page=1" | "repos/atrinik/editor/actions/variables?per_page=100&page=1")
+"repos/atrinik/client/actions/variables?per_page=100&page=1")
   if [[ ${FAKE_GH_SCENARIO} == updater-missing-variable ]]; then
     jq -n '{total_count:0,variables:[]}'
   else
@@ -837,7 +835,6 @@ if grep -Fq 'metaserver-worker/environments/development/deployment-branch-polici
   exit 1
 fi
 grep -Fq 'OWNER-OBSERVED atrinik/client read-only Actions access to private atrinik/linux-build' <<<"${output}"
-grep -Fq 'OWNER-OBSERVED atrinik/editor read-only Actions access to private atrinik/linux-build' <<<"${output}"
 grep -Fq 'PENDING atrinik/protocol crates.io atrinik-protocol via publish-crate.yml / crates-io-release' <<<"${output}"
 if grep -Eq 'protocol/environments|crates.io|/trusted-publishers' "${temporary}/gh.log"; then
   echo "error: planned crate contract inspected or mutated unprovisioned state" >&2
@@ -905,8 +902,7 @@ jq '.crate_dependency_update_app |= (.status="owner-observed" | .app_id=5276152 
   "${fixture_root}/config/manual-settings.json" >"${updater_root}/config/manual-settings.json"
 updater_output=$(run_verify updater-present "${updater_root}")
 grep -Fq 'KEEP atrinik/client crate dependency App credential name metadata' <<<"${updater_output}"
-grep -Fq 'KEEP atrinik/editor crate dependency App credential name metadata' <<<"${updater_output}"
-grep -Fq 'selected repositories require current owner UI or App-authenticated API proof: atrinik/client and atrinik/editor only' <<<"${updater_output}"
+grep -Fq 'selected repositories require current owner UI or App-authenticated API proof: atrinik/client only' <<<"${updater_output}"
 for scenario in updater-missing updater-permissions updater-selection updater-missing-secret updater-missing-variable; do
   if run_verify "${scenario}" "${updater_root}" >"${temporary}/updater-${scenario}.out" \
     2>"${temporary}/updater-${scenario}.err"; then

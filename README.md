@@ -1048,8 +1048,8 @@ repair coverage.
 ## Metaserver immutable releases and production environment
 
 The desired selected inventory adds only `atrinik/metaserver-worker`, stable
-repository ID `1324297032`, while preserving Classic, content-toolkit, protocol
-and renderer. This is pending activation until the reviewed metaserver producer
+repository ID `1324297032`, while preserving Classic, content-toolkit and
+protocol. This is pending activation until the reviewed metaserver producer
 creates a draft, finishes and verifies every release asset, and only then
 publishes that draft. Before any broad publisher mutation introducing this
 selection, the read-only preflight checks the exact authenticated current-main
@@ -1172,8 +1172,11 @@ only after this inventory is reviewed and accepted.
 ## Enabling immutable source releases
 
 The desired organization-level `selected` inventory preserves Classic
-(`1327289971`) and adds protocol (`1327106950`), renderer (`1327106998`), and
-content-toolkit (`1327107043`). These additions are pending activation until
+(`1327289971`) and adds protocol (`1327106950`) and content-toolkit
+(`1327107043`). Renderer (`1327106998`) was part of the same addition until it
+left the organization on 2026-10-17 (see
+[Transferred repositories](#transferred-repositories)); the desired inventory
+no longer selects it. These additions are pending activation until
 reviewed source workflows are merged and qualified. Their release producers
 must assemble and verify the complete crate/archive/manifest payload on a draft
 before publishing it. A published immutable release must be complete because
@@ -1213,6 +1216,14 @@ semantic-release GitHub plugin supports the configured draft-first publication
 and the complete asset payload. A configured flag alone is not release proof.
 Qualification includes build, packaging, draft assembly, retry/recovery,
 actual immutable-release upload gating, and publication paths.
+
+The rollout order below is the record of the activation that added protocol,
+renderer and content-toolkit, and it stays as written. Its three-producer
+payload and four-repository checks describe the selection at that time, before
+renderer left the organization. Derive the payload for any later change,
+including the pending metaserver addition, a rollback or an intentional removal,
+from the current `config/immutable-releases.json`, and never select or query
+`atrinik/renderer`.
 
 Use this narrow rollout order for this release activation:
 
@@ -1261,7 +1272,7 @@ gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
 gh api --paginate -H 'X-GitHub-Api-Version: 2026-03-10' \
   'orgs/atrinik/settings/immutable-releases/repositories?per_page=100' \
   --jq '.repositories[] | [.name, .id]'
-for repository in classic protocol renderer content-toolkit; do
+for repository in classic protocol content-toolkit; do
   gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
     "repos/atrinik/${repository}/immutable-releases"
 done
@@ -1530,17 +1541,21 @@ could not resolve that manifest. An owner's successful pull cannot prove a
 repository workflow's package access.
 
 `github_packages_actions_access` records read-only Actions-access setup for
-`atrinik/client` (`1327106844`) and `atrinik/editor` (`1327106902`). The owner
-confirmed those two **Manage Actions access** read grants on 2026-10-11; their
-`grant_state` is `owner-observed-read-grant`, with dated sanitized owner evidence.
+`atrinik/client` (`1327106844`) only. The owner confirmed its **Manage Actions
+access** read grant on 2026-10-11; its `grant_state` is
+`owner-observed-read-grant`, with dated sanitized owner evidence. The same
+2026-10-11 owner observation also covered a read grant for `atrinik/editor`
+(`1327106902`); that entry is historical, because the editor left the
+organization on 2026-10-17 (see
+[Transferred repositories](#transferred-repositories)) and is no longer in the
+inventory.
 Client's exact-main post-grant run
 [38164640476](https://github.com/atrinik/client/actions/runs/38164640476)
 subsequently proved a repository-token pull of the pinned image and complete
 read-only preparation/application validation. It correctly produced no migration
 PR before registry readiness; App-writing jobs were skipped, so no effective
-App writer was proved. Editor owning workflow pull/activation proof remains
-pending. The grant observation comes from owner UI, not API enumeration of the
-grant list. Retain permission inheritance, private
+App writer was proved. The grant observation comes from owner UI, not API
+enumeration of the grant list. Retain permission inheritance, private
 visibility, linked source and every foreign entry. Do not broaden to
 organization/all repositories or change a foreign grant. The publisher never
 writes these manual grants.
@@ -1557,15 +1572,15 @@ be removed before credential-free Cargo/build preparation; the updater App
 remains isolated to its PR-writing job. No package grant supplies a
 registry-publication token or proves the dependency App key effective.
 
-Rollback stops the owning updater workflows first and removes only these two
-read grants through supported owner UI after reviewed inventory removal.
+Rollback stops the client's owning updater workflow first and removes only the
+client's read grant through supported owner UI after reviewed inventory removal.
 Preserve the package, published versions, source, visibility, foreign grants,
 and unrelated App credentials.
 
 ## Automatic crate Trusted Publishing
 
 `config/manual-settings.json` records the desired, value-free contracts below.
-All three source contracts are `observed-reviewed-workflow`, and their
+The remaining source contracts are `observed-reviewed-workflow`, and their
 environments are `observed`: supported live readback qualified both workflow
 files at the same protected-main revision, exact repository identities, and
 main-only environments with no reviewers, wait, administrator bypass, secrets,
@@ -1584,7 +1599,6 @@ perform external registration or publication.
 | Repository | Stable repository ID | Published libraries |
 | --- | --- | --- |
 | `atrinik/protocol` | `1327106950` | `atrinik-protocol` |
-| `atrinik/renderer` | `1327106998` | `atrinik-render-api`, `atrinik-render-resources`, `atrinik-render-sdl3`, `atrinik-render-testkit`, `atrinik-render-ui`, `atrinik-render-wgpu`, `atrinik-scene` |
 | `atrinik/content-toolkit` | `1327107043` | `atrinik-artifact`, `atrinik-catalog`, `atrinik-diagnostics`, `atrinik-schema`, `atrinik-source`, `atrinik-testkit`, `atrinik-transaction` |
 
 Every Trusted Publisher binds the exact repository, `publish-crate.yml`, and
@@ -1756,30 +1770,29 @@ future reviewed source/version merges use the automatic path after observed
 onboarding. Protocol registration is owner-observed with the successful manual 0.2 run;
 its automatic source/environment setup is observed. Renderer/toolkit initial
 publication and owner registration are complete, with the known-coordinate OIDC
-proofs above. The dependency App has observed successful owned-PR activation
-through the editor workflow and its signed bot PR with ordinary checks. Client's
-no-op preparation remains a separate observation; it did not exercise its writer.
+proofs above. The dependency App's workflow activation is pending: its only
+remaining consumer, the client, has not yet run its PR-writing job.
 
 ## Crate dependency update App
 
-`crate_dependency_update_app` records owner-observed App setup on 2026-10-11
-and `workflow_activation: observed-successful-owned-pr` on 2026-10-12. Both
-reviewed updater workflows have merged.
-[Editor run 38193476856](https://github.com/atrinik/editor/actions/runs/38193476856)
-passed credential-free preparation, independent lock/consumer/aggregate
-verification, and candidate/metadata sealing before its isolated App job created
-[PR 36](https://github.com/atrinik/editor/pull/36). The App bot authored the
-verified signed commit; all twelve ordinary CI checks passed, independent
-review accepted the candidate, and the maintainer merged the PR through the
-ordinary process. The App did not approve or merge its own PR.
-
+`crate_dependency_update_app` records owner-observed App setup on 2026-10-11.
+Its `workflow_activation` is `pending-reviewed-workflows`: the client's reviewed
+updater workflow has merged, but no client-owned PR has been observed yet.
 Client [run 38192029425](https://github.com/atrinik/client/actions/runs/38192029425)
-completed preparation as a no-op and skipped the isolated PR-writing job. The
-observed successful-owned-PR record refers to editor acceptance; the client
-no-op does not prove that its writer job ran.
+completed preparation as a no-op and skipped the isolated PR-writing job, so it
+does not prove that the writer works. Record `observed-successful-owned-pr` only
+after a client run creates its own PR that passes ordinary checks and review.
+
+Before the editor left the organization, its run 38193476856 created the App's
+first owned PR (editor PR 36) on 2026-10-12. The App bot authored the verified
+signed commit, all ordinary checks passed, independent review accepted it, and
+the maintainer merged it through the ordinary process. That observation belongs
+to the transferred repository and does not count as client activation.
 The live App is `atrinik-crate-dependency-update`, App ID `5276152`, installation
 ID `170332148`, with **selected repositories** exactly `atrinik/client` (ID
-`1327106844`) and `atrinik/editor` (ID `1327106902`). App-authenticated supported
+`1327106844`). The editor repository left the organization on 2026-10-17 (see
+[Transferred repositories](#transferred-repositories)); the editor's copy of the
+App credential and variable were deleted from the transferred repository. App-authenticated supported
 API readback confirmed that complete selected set, exact contents write/pull
 requests write/metadata read permissions, no subscribed events, and the external
 homepage `https://www.atrinik.org`. Preserve every other App and installation,
@@ -1798,38 +1811,58 @@ cannot prove that a key is valid or effective. These observations do not grant
 workflow activation, bypass, self-approval, or self-merge authority.
 
 The value-free key lifecycle records creation and verification on 2026-10-11,
-consumer paths for both `released-dependencies.yml` workflows, and rotation
-owner `Atrinik organization owners`. Its 90-day internal rotation deadline is
-2027-01-09; this is not an upstream key expiry. Validation rejects missing,
-future, overdue, or over-cadence lifecycle dates. Rotate by issuing a replacement
-App key, verifying the App identity with it, securely updating only the two
-existing repository secret slots, and proving the owning PR-writing workflow.
-Revoke the old key after successful replacement proof; retain name-only evidence
-and update creation/verification/deadline metadata through reviewed source. If
-replacement proof fails, stop the writing workflows and preserve the old working
-key until the owner restores service or explicitly revokes it.
+the consumer path of the client's `released-dependencies.yml` workflow, and
+rotation owner `Atrinik organization owners`. Its 90-day internal rotation
+deadline is 2027-01-09; this is not an upstream key expiry. Validation rejects
+missing, future, overdue, or over-cadence lifecycle dates. Rotate by issuing a
+replacement App key, verifying the App identity with it, securely updating only
+the client's existing repository secret slot, and proving the client's
+PR-writing workflow. Revoke the old key after successful replacement proof;
+retain name-only evidence and update creation/verification/deadline metadata
+through reviewed source. If replacement proof fails, stop the client's writing
+workflow and preserve the old working key until the owner restores service or
+explicitly revokes it.
 
 The read-only verifier checks live installation identity, exact permissions,
 empty events, active state, selected repository identities, and credential
 **names**. An administrative-token API cannot enumerate the complete selected
 repository set; retain current supported App-authenticated readback or owner UI
 proof. It reports `credential_state: observed-name-metadata` separately from
-workflow activation. Both reviewed `released-dependencies.yml` workflows have
-merged; the dated editor run/PR above proves effective App use and ordinary
-required checks for that writer. A no-op run or setup/name metadata alone cannot
+workflow activation. The client's reviewed `released-dependencies.yml` workflow
+has merged. The dated editor run/PR above is historical evidence of effective
+App use by the transferred repository's writer and does not prove the client's
+writer. A no-op run or setup/name metadata alone cannot
 prove a successful PR-writing job. Keep new or replacement credential acceptance
 bound to the actual owning workflow and its required checks.
 
-The updaters run hourly (`17 * * * *`) and through `workflow_dispatch`. Their
-credential-free preparation verifies exact released versions and registry
-checksums, resolves dependencies, updates Cargo locks, and runs aggregate
-validation before requesting an App token in the isolated PR-writing job. They
-maintain only their owned `automation/released-crate-dependencies` branch and
-pull request; ordinary required checks and the pull-request process still govern
-merging, with zero required human approvals.
-Missing registry readiness produces no migration PR. They never upload crates,
-approve a pull request, merge it, or loosen branch protection. Prove initial
+The client's updater runs hourly (`17 * * * *`) and through
+`workflow_dispatch`. Its credential-free preparation verifies exact released
+versions and registry checksums, resolves dependencies, updates Cargo locks, and
+runs aggregate validation before requesting an App token in the isolated
+PR-writing job. It maintains only its owned
+`automation/released-crate-dependencies` branch and pull request; ordinary
+required checks and the pull-request process still govern merging, with zero
+required human approvals.
+Missing registry readiness produces no migration PR. It never uploads crates,
+approves a pull request, merges it, or loosens branch protection. Prove initial
 App permissions with a disposable/owned PR and current ordinary checks, without
-exposing credentials. On retirement, stop these workflows and revoke the
-App/key and only the two named repository credential slots; preserve unrelated
-installations and secrets.
+exposing credentials. On retirement, stop the client's workflow and revoke the
+App/key and only the client's named secret and variable slots; preserve
+unrelated installations and secrets.
+
+## Transferred repositories
+
+On 2026-10-17 two repositories left the organization by GitHub transfer:
+
+| Former repository | Stable repository ID | New location |
+| --- | --- | --- |
+| `atrinik/editor` | `1327106902` | `seraphinastudios/tilewright-editor` |
+| `atrinik/renderer` | `1327106998` | `seraphinastudios/tilewright-renderer` |
+
+They are no longer governed here: they are removed from the repository,
+required-CI, release-tag, immutable-release, custom-property, CodeQL, Codecov,
+Trusted Publishing, package-access and crate dependency App inventories. The
+organization rulesets that named them stop matching anything; an authorized
+`bin/publish --apply` removes the obsolete `03 - Required CI` rulesets. Atrinik
+consumes both projects as external MIT dependencies. Historical evidence in the
+sections above that names them is preserved unchanged.
