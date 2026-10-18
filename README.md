@@ -1796,41 +1796,44 @@ cannot prove that a key is valid or effective. These observations do not grant
 workflow activation, bypass, self-approval, or self-merge authority.
 
 The value-free key lifecycle records creation and verification on 2026-10-11,
-consumer paths for both `released-dependencies.yml` workflows, and rotation
-owner `Atrinik organization owners`. Its 90-day internal rotation deadline is
-2027-01-09; this is not an upstream key expiry. Validation rejects missing,
-future, overdue, or over-cadence lifecycle dates. Rotate by issuing a replacement
-App key, verifying the App identity with it, securely updating only the two
-existing repository secret slots, and proving the owning PR-writing workflow.
-Revoke the old key after successful replacement proof; retain name-only evidence
-and update creation/verification/deadline metadata through reviewed source. If
-replacement proof fails, stop the writing workflows and preserve the old working
-key until the owner restores service or explicitly revokes it.
+the consumer path of the client's `released-dependencies.yml` workflow, and
+rotation owner `Atrinik organization owners`. Its 90-day internal rotation
+deadline is 2027-01-09; this is not an upstream key expiry. Validation rejects
+missing, future, overdue, or over-cadence lifecycle dates. Rotate by issuing a
+replacement App key, verifying the App identity with it, securely updating only
+the client's existing repository secret slot, and proving the client's
+PR-writing workflow. Revoke the old key after successful replacement proof;
+retain name-only evidence and update creation/verification/deadline metadata
+through reviewed source. If replacement proof fails, stop the client's writing
+workflow and preserve the old working key until the owner restores service or
+explicitly revokes it.
 
 The read-only verifier checks live installation identity, exact permissions,
 empty events, active state, selected repository identities, and credential
 **names**. An administrative-token API cannot enumerate the complete selected
 repository set; retain current supported App-authenticated readback or owner UI
 proof. It reports `credential_state: observed-name-metadata` separately from
-workflow activation. Both reviewed `released-dependencies.yml` workflows have
-merged; the dated editor run/PR above proves effective App use and ordinary
-required checks for that writer. A no-op run or setup/name metadata alone cannot
+workflow activation. The client's reviewed `released-dependencies.yml` workflow
+has merged. The dated editor run/PR above is historical evidence of effective
+App use by the transferred repository's writer and does not prove the client's
+writer. A no-op run or setup/name metadata alone cannot
 prove a successful PR-writing job. Keep new or replacement credential acceptance
 bound to the actual owning workflow and its required checks.
 
-The updaters run hourly (`17 * * * *`) and through `workflow_dispatch`. Their
-credential-free preparation verifies exact released versions and registry
-checksums, resolves dependencies, updates Cargo locks, and runs aggregate
-validation before requesting an App token in the isolated PR-writing job. They
-maintain only their owned `automation/released-crate-dependencies` branch and
-pull request; ordinary required checks and the pull-request process still govern
-merging, with zero required human approvals.
-Missing registry readiness produces no migration PR. They never upload crates,
-approve a pull request, merge it, or loosen branch protection. Prove initial
+The client's updater runs hourly (`17 * * * *`) and through
+`workflow_dispatch`. Its credential-free preparation verifies exact released
+versions and registry checksums, resolves dependencies, updates Cargo locks, and
+runs aggregate validation before requesting an App token in the isolated
+PR-writing job. It maintains only its owned
+`automation/released-crate-dependencies` branch and pull request; ordinary
+required checks and the pull-request process still govern merging, with zero
+required human approvals.
+Missing registry readiness produces no migration PR. It never uploads crates,
+approves a pull request, merges it, or loosens branch protection. Prove initial
 App permissions with a disposable/owned PR and current ordinary checks, without
-exposing credentials. On retirement, stop these workflows and revoke the
-App/key and only the two named repository credential slots; preserve unrelated
-installations and secrets.
+exposing credentials. On retirement, stop the client's workflow and revoke the
+App/key and only the client's named secret and variable slots; preserve
+unrelated installations and secrets.
 
 ## Transferred repositories
 
