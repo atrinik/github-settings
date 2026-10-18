@@ -1048,8 +1048,8 @@ repair coverage.
 ## Metaserver immutable releases and production environment
 
 The desired selected inventory adds only `atrinik/metaserver-worker`, stable
-repository ID `1324297032`, while preserving Classic, content-toolkit, protocol
-and renderer. This is pending activation until the reviewed metaserver producer
+repository ID `1324297032`, while preserving Classic, content-toolkit and
+protocol. This is pending activation until the reviewed metaserver producer
 creates a draft, finishes and verifies every release asset, and only then
 publishes that draft. Before any broad publisher mutation introducing this
 selection, the read-only preflight checks the exact authenticated current-main
@@ -1172,8 +1172,11 @@ only after this inventory is reviewed and accepted.
 ## Enabling immutable source releases
 
 The desired organization-level `selected` inventory preserves Classic
-(`1327289971`) and adds protocol (`1327106950`), renderer (`1327106998`), and
-content-toolkit (`1327107043`). These additions are pending activation until
+(`1327289971`) and adds protocol (`1327106950`) and content-toolkit
+(`1327107043`). Renderer (`1327106998`) was part of the same addition until it
+left the organization on 2026-10-17 (see
+[Transferred repositories](#transferred-repositories)); the desired inventory
+no longer selects it. These additions are pending activation until
 reviewed source workflows are merged and qualified. Their release producers
 must assemble and verify the complete crate/archive/manifest payload on a draft
 before publishing it. A published immutable release must be complete because
@@ -1213,6 +1216,14 @@ semantic-release GitHub plugin supports the configured draft-first publication
 and the complete asset payload. A configured flag alone is not release proof.
 Qualification includes build, packaging, draft assembly, retry/recovery,
 actual immutable-release upload gating, and publication paths.
+
+The rollout order below is the record of the activation that added protocol,
+renderer and content-toolkit, and it stays as written. Its three-producer
+payload and four-repository checks describe the selection at that time, before
+renderer left the organization. Derive the payload for any later change,
+including the pending metaserver addition, a rollback or an intentional removal,
+from the current `config/immutable-releases.json`, and never select or query
+`atrinik/renderer`.
 
 Use this narrow rollout order for this release activation:
 
@@ -1261,7 +1272,7 @@ gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
 gh api --paginate -H 'X-GitHub-Api-Version: 2026-03-10' \
   'orgs/atrinik/settings/immutable-releases/repositories?per_page=100' \
   --jq '.repositories[] | [.name, .id]'
-for repository in classic protocol renderer content-toolkit; do
+for repository in classic protocol content-toolkit; do
   gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
     "repos/atrinik/${repository}/immutable-releases"
 done
