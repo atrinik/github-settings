@@ -993,8 +993,9 @@ Before adding a repository:
 The publisher installs the queue before it relaxes required CI. When a
 repository is removed from the inventory, it restores the strict policy first
 and only then deletes the managed queue. It deletes only an unmodified,
-repository-owned `08 - Merge queue` rule. A modified or foreign rule with that
-name is retained with a `SKIP`, and `bin/audit` reports it until someone
+repository-owned `08 - Merge queue` rule, and checks the repository's identity
+and re-reads the rule immediately before the deletion. A modified, foreign or
+concurrently edited rule with that name is retained with a `SKIP`, and `bin/audit` reports it until someone
 reviews it. The audit also requires each listed repository's exact queue rule,
 repository ownership, and non-strict required CI.
 

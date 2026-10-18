@@ -70,7 +70,8 @@
   reporting on `merge_group` before it is listed, never requires Dependency
   review, and drops the up-to-date requirement from required CI. Install the
   queue before relaxing required CI, restore the strict policy before
-  retiring a queue, and retire only an unmodified repository-owned rule.
+  retiring a queue, and retire only an unmodified repository-owned rule that
+  passes a fresh identity check and final re-read.
 - Keep required workflow job names synchronized with rulesets. Workflow or
   permissions changes also require actionlint, least-privilege review, and
   immutable action references according to policy.

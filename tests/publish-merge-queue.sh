@@ -33,8 +33,19 @@ github_api() {
     repository=${repository%%/*}
     cat "${temporary}/${repository}-list.json" ;;
   repos/atrinik/playtester/rulesets/8 | repos/atrinik/observatory/rulesets/8)
-    local repository=${1#repos/atrinik/}
-    cat "${temporary}/${repository%%/*}-rule.json" ;;
+    local repository=${1#repos/atrinik/} reads
+    repository=${repository%%/*}
+    # A later read may observe a concurrent edit or fail.
+    reads=$(jq -s --arg endpoint "$1" '[.[] | select(.endpoint == $endpoint)] | length' "${log}")
+    if ((reads > 1)) && [[ -e ${temporary}/${repository}-later-rule.json ]]; then
+      cat "${temporary}/${repository}-later-rule.json"
+    elif ((reads > 1)) && [[ -e ${temporary}/${repository}-later-unreadable ]]; then
+      return 1
+    else
+      cat "${temporary}/${repository}-rule.json"
+    fi ;;
+  repos/atrinik/playtester | repos/atrinik/observatory)
+    cat "${temporary}/${1#repos/atrinik/}-metadata.json" ;;
   orgs/atrinik/rulesets) echo '[]' ;;
   *) echo "unexpected endpoint: $1" >&2; return 99 ;;
   esac
@@ -78,6 +89,11 @@ reset_case() {
   }' >"${repositories_config}"
   printf '[{"id":3,"name":"03 - Required CI"}]\n' >"${temporary}/playtester-list.json"
   printf '[{"id":3,"name":"03 - Required CI"}]\n' >"${temporary}/observatory-list.json"
+  rm -f "${temporary}/"*-later-rule.json "${temporary}/"*-later-unreadable
+  printf '{"id":2,"full_name":"atrinik/playtester","archived":false}\n' \
+    >"${temporary}/playtester-metadata.json"
+  printf '{"id":1,"full_name":"atrinik/observatory","archived":false}\n' \
+    >"${temporary}/observatory-metadata.json"
   live_rule playtester >"${temporary}/playtester-rule.json"
   live_rule observatory >"${temporary}/observatory-rule.json"
 }
@@ -206,6 +222,43 @@ for filter in '.source_type = "Organization"' '.source = "foreign/playtester"' \
   grep -Fxq 'SKIP atrinik/playtester 08 - Merge queue: unrecognized ownership or payload; retained' \
     "${temporary}/output"
 done
+# Identity drift, a concurrent edit after the first read, or an unreadable
+# final read retains the queue.
+retire_playtester() {
+  reset_case
+  jq '.merge_queue = []' "${repositories_config}" >"${temporary}/retired.json"
+  mv "${temporary}/retired.json" "${repositories_config}"
+  printf '[{"id":8,"name":"08 - Merge queue"}]\n' >"${temporary}/playtester-list.json"
+}
+for filter in '.id = 999' '.full_name = "foreign/playtester"' '.archived = true'; do
+  retire_playtester
+  jq "${filter}" "${temporary}/playtester-metadata.json" >"${temporary}/changed.json"
+  mv "${temporary}/changed.json" "${temporary}/playtester-metadata.json"
+  delete_removed_merge_queue_rulesets >"${temporary}/output"
+  [[ $(writes) == '[]' ]]
+  grep -Fxq 'SKIP atrinik/playtester 08 - Merge queue: repository identity or archive state changed; retained' \
+    "${temporary}/output"
+done
+for filter in '.enforcement = "disabled"' '.source_type = "Organization"' \
+  '.rules[0].parameters.max_entries_to_merge = 1'; do
+  retire_playtester
+  jq "${filter}" "${temporary}/playtester-rule.json" >"${temporary}/playtester-later-rule.json"
+  delete_removed_merge_queue_rulesets >"${temporary}/output"
+  [[ $(writes) == '[]' ]]
+  grep -Fxq 'SKIP atrinik/playtester 08 - Merge queue: rule changed during retirement preflight; retained' \
+    "${temporary}/output"
+  # The final read happens after the identity fence.
+  jq -se '
+    [.[] | .endpoint] as $calls |
+    ($calls | index("repos/atrinik/playtester")) <
+      ($calls | rindex("repos/atrinik/playtester/rulesets/8"))
+  ' "${log}" >/dev/null
+done
+retire_playtester
+touch "${temporary}/playtester-later-unreadable"
+expect_failure 'merge-queue final retirement read failed; retained: playtester' \
+  delete_removed_merge_queue_rulesets
+
 # Queued repositories and repositories without the rule are left alone.
 reset_case
 printf '[{"id":8,"name":"08 - Merge queue"}]\n' >"${temporary}/playtester-list.json"

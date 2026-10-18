@@ -1449,7 +1449,7 @@ publish_merge_queue_rulesets() {
 # Retire a queue only after required CI again requires an up-to-date branch.
 # Only an unmodified repository-owned managed rule is removed.
 delete_removed_merge_queue_rulesets() {
-  local repository template name existing id current
+  local repository template name existing id current metadata
 
   name=$(jq -r '.name' "${root}/config/rulesets/merge-queue.json")
   for repository in "${active_repositories[@]}"; do
@@ -1464,11 +1464,28 @@ delete_removed_merge_queue_rulesets() {
     template=$(make_merge_queue_ruleset "${repository}")
     temporary_files+=("${template}")
     current=$(github_api "repos/${organization}/${repository}/rulesets/${id}") || return 1
-    if owned_security_ruleset_matches "${repository}" "${id}" "${template}" "${current}"; then
-      run_api DELETE "repos/${organization}/${repository}/rulesets/${id}" || return 1
-    else
+    if ! owned_security_ruleset_matches "${repository}" "${id}" "${template}" "${current}"; then
       echo "SKIP ${organization}/${repository} ${name}: unrecognized ownership or payload; retained"
+      continue
     fi
+    metadata=$(github_api "repos/${organization}/${repository}") || return 1
+    if ! jq -e --argjson id "${active_repository_ids["${repository}"]}" \
+      --arg full_name "${organization}/${repository}" '
+      .id == $id and .full_name == $full_name and .archived == false
+    ' <<<"${metadata}" >/dev/null; then
+      echo "SKIP ${organization}/${repository} ${name}: repository identity or archive state changed; retained"
+      continue
+    fi
+    # Re-read immediately before deletion so a concurrent edit is retained.
+    current=$(github_api "repos/${organization}/${repository}/rulesets/${id}") || {
+      echo "error: merge-queue final retirement read failed; retained: ${repository} ${name}" >&2
+      return 1
+    }
+    if ! owned_security_ruleset_matches "${repository}" "${id}" "${template}" "${current}"; then
+      echo "SKIP ${organization}/${repository} ${name}: rule changed during retirement preflight; retained"
+      continue
+    fi
+    run_api DELETE "repos/${organization}/${repository}/rulesets/${id}" || return 1
   done
 }
 

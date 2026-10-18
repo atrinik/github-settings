@@ -122,8 +122,9 @@ organization rulesets. Keep its parameters within GitHub's API ranges, and use
 the organization's only merge method. Queued repositories drop the up-to-date
 requirement from required CI and never require Dependency review. Merge-queue
 changes need publisher tests for creation, a converged rerun, drift
-convergence, retained foreign or modified rules, and install-before-relax and
-restore-before-retire ordering. They also need audit scenarios for a missing
+convergence, retained foreign or modified rules, the identity and final-read
+fences before retirement, and install-before-relax and restore-before-retire
+ordering. They also need audit scenarios for a missing
 queue, parameter drift, organization ownership, strict drift, and a retained
 queue. In particular, add Classic's
 `CodeQL validation` requirement only after its advanced workflow is merged;
