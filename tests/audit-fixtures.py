@@ -78,6 +78,10 @@ def rulesets(repository):
         specs.append(('pull-request-gate', None))
     if repository in repositories['required_ci']:
         specs.append(('required-ci', '03 - Required CI - ' + repository))
+    queued = repository in repositories['merge_queue']
+    if (queued and scenario != 'queue-missing') or (
+            scenario == 'queue-retained' and repository == 'observatory'):
+        specs.append(('merge-queue', None))
     if repository in repositories['release_tags'] or scenario in (
             'inherited-tag-unaffected', 'tag-extra-nonrelease', 'tag-all-nonrelease', 'tag-repository-nonrelease'):
         specs.append(('immutable-release-tags', None))
@@ -104,6 +108,11 @@ def rulesets(repository):
             item['rules'][0]['parameters']['required_status_checks'] = [
                 {'context': context, 'integration_id': 15368}
                 for context in repositories['required_ci'][repository]]
+            # The publisher relaxes the up-to-date requirement for queued merges.
+            if queued and scenario != 'queue-strict':
+                item['rules'][0]['parameters']['strict_required_status_checks_policy'] = False
+        if template == 'merge-queue' and scenario == 'queue-parameter':
+            item['rules'][0]['parameters']['check_response_timeout_minutes'] = 30
         # Actual ruleset GET responses expand omitted request parameters.
         for rule in item['rules']:
             if rule['type'] == 'pull_request':
@@ -138,7 +147,9 @@ def rulesets(repository):
                     rule.get('parameters', {}).pop(key, None)
         item.update(id=active.index(repository) * 10 + index,
                     source_type='Repository' if scenario == 'repository-rulesets' or
-                    template in ('code-scanning', 'dependency-review') else 'Organization')
+                    template in ('code-scanning', 'dependency-review', 'merge-queue') else 'Organization')
+        if scenario == 'queue-organization-owner' and template == 'merge-queue':
+            item['source_type'] = 'Organization'
         if ((scenario == 'organization-codeql-owner' and template == 'code-scanning') or
                 (scenario == 'organization-dependency-owner' and template == 'dependency-review')):
             item['source_type'] = 'Organization'

@@ -31,7 +31,7 @@ mv "${temporary}/actions.json" "${temporary}/full/config/actions-permissions.jso
 jq '.pull_request_gate |= ((. + [".github"]) | unique)' "${temporary}/full/config/repositories.json" \
   >"${temporary}/repositories.json"
 mv "${temporary}/repositories.json" "${temporary}/full/config/repositories.json"
-for repository in .github classic observatory content-toolkit service-updater web-platform; do
+for repository in .github classic observatory content-toolkit playtester service-updater web-platform; do
   fixture="${temporary}/fixture-${repository}"
   cp -R "${temporary}/full" "${fixture}"
   jq --arg repository "${repository}" \
@@ -69,6 +69,8 @@ run_audit() {
       missing-rust) repository=content-toolkit ;;
       missing-tag-scope|tag-ref-drift|tag-all-scope|tag-extra-repo|tag-extra-exclude) repository=service-updater ;;
       unexpected-pr) repository=web-platform ;;
+      queue-retained) repository=observatory ;;
+      queue-*) repository=playtester ;;
     esac
     fixture="fixture-${repository}"
   fi
@@ -89,8 +91,14 @@ run_audit() {
   if [[ ${scenario} == production-advisory ]]; then
     cp "${root}/config/security-merge-protection.json" "${temporary}/${fixture}/config/security-merge-protection.json"
   else
-  jq '.dependency_review = .code_scanning | .activation.dependency_review = .activation.code_scanning' \
-    "${root}/config/security-merge-protection.json" >"${temporary}/${fixture}/config/security-merge-protection.json"
+  # Dependency review never reports on merge groups, so queued repositories
+  # cannot carry its required gate.
+  jq --slurpfile repositories "${root}/config/repositories.json" '
+    $repositories[0].merge_queue as $queued |
+    .dependency_review = (.code_scanning - $queued) |
+    .activation.dependency_review = (.activation.code_scanning |
+      with_entries(select(.key as $repository | $queued | index($repository) | not)))
+  ' "${root}/config/security-merge-protection.json" >"${temporary}/${fixture}/config/security-merge-protection.json"
   fi
   case ${scenario} in
     retired-*)
@@ -265,6 +273,20 @@ done
 for scenario in approval-count thread-resolution; do
   assert_drift "${scenario}" 'effective pull-request policy drift'
 done
+
+# A queued repository needs its repository-owned queue, the exact queue
+# parameters, and required CI that no longer demands a current branch.
+output=$(run_audit queue-pass)
+grep -Fq 'Governance audit passed:' <<<"${output}"
+assert_drift queue-missing "missing or duplicate inherited ruleset '08 - Merge queue': atrinik/playtester"
+assert_drift queue-missing 'effective merge queue drift: atrinik/playtester'
+assert_drift queue-parameter "ruleset scope or policy drift '08 - Merge queue': atrinik/playtester"
+assert_drift queue-parameter 'effective merge queue drift: atrinik/playtester'
+assert_drift queue-organization-owner 'managed merge-queue ruleset must be repository-owned: atrinik/playtester'
+assert_drift queue-strict 'effective required CI contexts or app drift: atrinik/playtester'
+assert_drift queue-strict "ruleset scope or policy drift '03 - Required CI - playtester'"
+assert_drift queue-retained 'unexpected retained merge-queue ruleset requires manual review: atrinik/observatory'
+assert_drift queue-retained 'effective branch policy drift requires manual review: atrinik/observatory/main'
 assert_drift effective-integrity 'effective default-branch integrity drift'
 assert_drift unexpected-pr 'effective pull-request policy drift: atrinik/web-platform'
 assert_drift unexpected-codeql 'unexpected effective CodeQL merge protection: atrinik/.github'
