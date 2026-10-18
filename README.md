@@ -974,7 +974,8 @@ requires each listed repository to be in `required_ci`, and keeps the
 template's parameters within GitHub's API ranges and the allowed merge method.
 GitHub Team offers merge queue only for public repositories, so the publisher
 fails before any write if a listed active repository is private. Like the
-security gates, it skips a listed repository that is not active.
+security gates, it skips a listed repository that is not active; that
+repository's required CI stays strict because no queue was installed.
 
 Before adding a repository:
 

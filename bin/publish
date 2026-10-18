@@ -657,7 +657,7 @@ delete_retired_repository_required_ci() {
 
 publish_repository_rulesets() {
   local repository ruleset_config ci_payload maintenance branch required_ci
-  local input
+  local input queued
 
   # Establish the Classic-specific policy before replacing its shared policy.
   for repository in "${active_repositories[@]}"; do
@@ -687,11 +687,13 @@ publish_repository_rulesets() {
       "${ruleset_config}" || return 1
   done < <(jq -r '.pull_request_gate[]' "${repositories_config}")
 
+  queued=$(active_merge_queue_repositories)
   while IFS= read -r repository; do
     ci_payload=$(mktemp)
     temporary_files+=("${ci_payload}")
     jq --arg repository "${repository}" \
       --argjson app_id 15368 \
+      --argjson queued "${queued}" \
       --slurpfile advisory_windows "${advisory_merge_windows_config}" \
       --slurpfile repositories "${repositories_config}" '
         .bypass_actors |= map(
@@ -706,7 +708,7 @@ publish_repository_rulesets() {
            map({context: ., integration_id: $app_id})) |
         # A merge queue tests the merged result, so its branch need not be current.
         .rules[0].parameters.strict_required_status_checks_policy =
-          (($repositories[0].merge_queue | index($repository)) == null)
+          (($queued | index($repository)) == null)
       ' "${root}/config/rulesets/required-ci.json" >"${ci_payload}"
     upsert_repository_ruleset "${repository}" "${ci_payload}" || return 1
   done < <(jq -r '.required_ci | keys[]' "${repositories_config}")
@@ -736,7 +738,7 @@ publish_repository_rulesets() {
 }
 
 publish_organization_rulesets() {
-  local input repository ci_payload maintenance branch required_ci
+  local input repository ci_payload maintenance branch required_ci queued
   local -a desired_rulesets
   local repositories ruleset name id desired rulesets
 
@@ -808,6 +810,7 @@ publish_organization_rulesets() {
   temporary_files+=("${input}")
   upsert_organization_ruleset "${input}" || return 1
 
+  queued=$(active_merge_queue_repositories)
   while IFS= read -r repository; do
     name="03 - Required CI - ${repository}"
     desired_rulesets+=("${name}")
@@ -816,6 +819,7 @@ publish_organization_rulesets() {
     jq --arg name "${name}" \
       --arg repository "${repository}" \
       --argjson app_id 15368 \
+      --argjson queued "${queued}" \
       --slurpfile advisory_windows "${advisory_merge_windows_config}" \
       --slurpfile repositories "${repositories_config}" '
         .name = $name |
@@ -836,7 +840,7 @@ publish_organization_rulesets() {
            map({context: ., integration_id: $app_id})) |
         # A merge queue tests the merged result, so its branch need not be current.
         .rules[0].parameters.strict_required_status_checks_policy =
-          (($repositories[0].merge_queue | index($repository)) == null)
+          (($queued | index($repository)) == null)
       ' "${root}/config/rulesets/required-ci.json" >"${ci_payload}"
     upsert_organization_ruleset "${ci_payload}" || return 1
   done < <(jq -r '.required_ci | keys[]' "${repositories_config}")
@@ -1375,6 +1379,20 @@ publish_security_merge_rulesets() {
       fi
     done < <(jq -r --arg kind "${kind}" '.[$kind][]' "${security_merge_config}")
   done
+}
+
+# Required CI stops requiring a current branch only where this run installs
+# the queue: the repository is listed and active.
+active_merge_queue_repositories() {
+  local repository
+  local -a queued=()
+
+  while IFS= read -r repository; do
+    if [[ -v active_repository_ids["${repository}"] ]]; then
+      queued+=("${repository}")
+    fi
+  done < <(jq -r '(.merge_queue // [])[]' "${repositories_config}")
+  jq -cn '$ARGS.positional' --args "${queued[@]}"
 }
 
 repository_uses_merge_queue() {

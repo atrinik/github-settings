@@ -297,6 +297,16 @@ for scope in repository-observatory-03\ -\ Required\ CI organization-03\ -\ Requ
   jq -e '.rules[0].parameters.strict_required_status_checks_policy == true' \
     "${temporary}/captured/${scope}" >/dev/null
 done
+# A listed but inactive repository gets no queue, so its required CI stays strict.
+reset_case
+rm -f "${temporary}/captured/"*
+active_repository_ids=([observatory]=1)
+publish_repository_rulesets >/dev/null
+publish_organization_rulesets >/dev/null
+for scope in repository-playtester-03\ -\ Required\ CI organization-03\ -\ Required\ CI\ -\ playtester; do
+  jq -e '.rules[0].parameters.strict_required_status_checks_policy == true' \
+    "${temporary}/captured/${scope}" >/dev/null
+done
 
 # Install the queue before required CI is relaxed, and retire it only after
 # required CI is restored. Neither step belongs to one policy scope.
