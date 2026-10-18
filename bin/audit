@@ -152,6 +152,13 @@ has_required_ci() {
     '.required_ci | has($repository)' "${repositories_config}" >/dev/null
 }
 
+has_merge_queue() {
+  local repository=$1
+  jq -e --arg repository "${repository}" \
+    '.merge_queue | index($repository) != null' "${repositories_config}" \
+    >/dev/null
+}
+
 has_release_tags() {
   local repository=$1
   jq -e --arg repository "${repository}" \
@@ -297,6 +304,10 @@ check_ruleset() {
     record_finding "managed security ruleset must be repository-owned '${name}': ${organization}/${repository}"
     return
   fi
+  if [[ ${name} == '08 - Merge queue' && ${source} != Repository ]]; then
+    record_finding "managed merge-queue ruleset must be repository-owned: ${organization}/${repository}"
+    return
+  fi
   case ${source} in
     Organization) endpoint="orgs/${organization}/rulesets/${id}" ;;
     Repository) endpoint="repos/${organization}/${repository}/rulesets/${id}" ;;
@@ -321,9 +332,12 @@ check_ruleset() {
       '.rules[0].parameters.required_status_checks = $checks' <<<"${wanted}")
     # Dependency review is governed by its separate rollout ruleset.
     wanted=$(jq '.rules[0].parameters.required_status_checks |= map(select(.context != "Dependency review"))' <<<"${wanted}")
+    wanted=$(jq --argjson strict "${expected_strict}" \
+      '.rules[0].parameters.strict_required_status_checks_policy = $strict' <<<"${wanted}")
   fi
   if jq -e --arg repository "${repository}" '.repositories | index($repository) != null' \
-    "${advisory_windows}" >/dev/null && [[ ${name} == '03 - Required CI - '* ]]; then
+    "${advisory_windows}" >/dev/null &&
+    [[ ${name} == '03 - Required CI - '* || ${name} == '08 - Merge queue' ]]; then
     wanted=$(jq '.bypass_actors[].bypass_mode = "always"' <<<"${wanted}")
   fi
   if [[ ${source} == Organization ]]; then
@@ -545,6 +559,12 @@ for repository in "${!expected_active[@]}"; do
       record_finding "unexpected retained security ruleset '${security_name}' requires manual review: ${organization}/${repository}"
     fi
   done
+  # A retained queue still changes how the branch merges. Report it for review;
+  # the publisher alone retires recognized managed queues.
+  if ! has_merge_queue "${repository}" &&
+    jq -e 'any(.[]; .name == "08 - Merge queue")' <<<"${rulesets}" >/dev/null; then
+    record_finding "unexpected retained merge-queue ruleset requires manual review: ${organization}/${repository}"
+  fi
   branch=$(jq -r '.default_branch' "${repository_defaults}")
   audit_legacy_protection "${repository}" "${branch}" "${metadata_file}"
   while IFS= read -r maintenance; do
@@ -572,6 +592,11 @@ for repository in "${!expected_active[@]}"; do
   fi
   expected_checks=$(jq -c --arg repository "${repository}" \
     '(.required_ci[$repository] // []) | map({context: ., integration_id: 15368})' "${repositories_config}")
+  # The merge queue tests the merged result instead of requiring a current branch.
+  expected_strict=true
+  if has_merge_queue "${repository}"; then
+    expected_strict=false
+  fi
   dependency_required=false
   if jq -e --arg repository "${repository}" '.dependency_review | index($repository) != null' \
     "${root}/config/security-merge-protection.json" >/dev/null; then
@@ -600,17 +625,18 @@ for repository in "${!expected_active[@]}"; do
         "${root}/config/rulesets/dependency-review.json" "${rulesets}" "${metadata_file}"
     fi
   fi
-  if ! jq -e --argjson checks "${expected_checks}" '
+  if ! jq -e --argjson checks "${expected_checks}" --argjson strict "${expected_strict}" '
     ([.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[]] |
       unique_by(.context, .integration_id) | sort_by(.context, .integration_id)) ==
       ($checks | sort_by(.context, .integration_id)) and
-    all(.[] | select(.type == "required_status_checks"); .parameters.strict_required_status_checks_policy == true)
+    all(.[] | select(.type == "required_status_checks"); .parameters.strict_required_status_checks_policy == $strict)
   ' <<<"${effective}" >/dev/null; then
     record_finding "effective required CI contexts or app drift: ${organization}/${repository}"
   fi
-  desired_effective=$(jq --argjson checks "${expected_checks}" '
+  desired_effective=$(jq --argjson checks "${expected_checks}" --argjson strict "${expected_strict}" '
     if ($checks | length) == 0 then []
-    else .rules | map(.parameters.required_status_checks = $checks) end
+    else .rules | map(.parameters.required_status_checks = $checks |
+      .parameters.strict_required_status_checks_policy = $strict) end
   ' "${root}/config/rulesets/required-ci.json")
   for policy in default-branch-integrity default-branch-linear-history; do
     template="${root}/config/rulesets/${policy}.json"
@@ -644,6 +670,17 @@ for repository in "${!expected_active[@]}"; do
   if has_required_ci "${repository}"; then
     check_ruleset "${repository}" "03 - Required CI - ${repository}" \
       "${root}/config/rulesets/required-ci.json" "${rulesets}" "${metadata_file}"
+  fi
+  if has_merge_queue "${repository}"; then
+    check_ruleset "${repository}" '08 - Merge queue' \
+      "${root}/config/rulesets/merge-queue.json" "${rulesets}" "${metadata_file}"
+    desired_effective=$(jq --argjson prior "${desired_effective}" '$prior + .rules' \
+      "${root}/config/rulesets/merge-queue.json")
+    if ! jq -e --slurpfile desired "${root}/config/rulesets/merge-queue.json" \
+      '[.[] | select(.type == "merge_queue") | {type, parameters}] == $desired[0].rules' \
+      <<<"${effective}" >/dev/null; then
+      record_finding "effective merge queue drift: ${organization}/${repository}"
+    fi
   fi
   # Parent listings can contain correctly scoped but nonapplicable rulesets.
   # Inspect the exact managed name on nonrelease repositories too, so widening

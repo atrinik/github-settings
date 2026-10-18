@@ -63,6 +63,14 @@
   six ordered public pins with stable repository IDs in
   `config/manual-settings.json`, verify them read-only through GraphQL, and use
   the documented organization-owner UI step instead of an undocumented writer.
+- `merge_queue` in `config/repositories.json` is the exhaustive merge-queue
+  inventory; `playtester` is the pilot. GitHub accepts the rule only in
+  repository rulesets, so `08 - Merge queue` stays repository-owned in both
+  scopes. Every queued repository is in `required_ci`, has every required check
+  reporting on `merge_group` before it is listed, never requires Dependency
+  review, and drops the up-to-date requirement from required CI. Install the
+  queue before relaxing required CI, restore the strict policy before
+  retiring a queue, and retire only an unmodified repository-owned rule.
 - Keep required workflow job names synchronized with rulesets. Workflow or
   permissions changes also require actionlint, least-privilege review, and
   immutable action references according to policy.

@@ -60,6 +60,9 @@ jq -e --slurpfile repositories "${repositories_config}" \
     ($policy.activation[$kind] | type == "object" and keys == $policy[$kind]) and
     all($policy.activation[$kind][]; IN("pending", "enforced"))) and
   .dependency_review == [] and
+  # Dependency review never reports on merge groups; a queued gate would stall.
+  all(.dependency_review[]; . as $repository |
+    ($repositories[0].merge_queue | index($repository)) == null) and
   .code_scanning == ($repositories[0].required_ci | keys) and
   (.codeql_required_languages | type == "object") and
   all(.codeql_required_languages | to_entries[];
@@ -149,6 +152,54 @@ jq -e '
   [.rules[].type] == ["pull_request"]
 ' "${root}/config/rulesets/pull-request-gate-classic.json" >/dev/null
 
+# The publisher relaxes the up-to-date requirement only for merge-queue
+# repositories, whose queue tests the merged result instead.
+jq -e '
+  .name == "03 - Required CI" and
+  .target == "branch" and .enforcement == "active" and
+  .conditions == {ref_name: {exclude: [], include: ["~DEFAULT_BRANCH"]}} and
+  .bypass_actors == [{actor_id: 1, actor_type: "OrganizationAdmin",
+    bypass_mode: "pull_request"}] and
+  .rules == [{type: "required_status_checks", parameters: {
+    required_status_checks: [], strict_required_status_checks_policy: true
+  }}]
+' "${root}/config/rulesets/required-ci.json" >/dev/null
+
+# GitHub accepts merge-queue rules only in repository rulesets. Keep the queue
+# within the API ranges, merging with the organization's only merge method, and
+# able to build and merge at least one entry.
+jq -e --slurpfile defaults "${root}/config/repository-defaults.json" '
+  def integer_between($low; $high):
+    type == "number" and floor == . and . >= $low and . <= $high;
+  .name == "08 - Merge queue" and
+  .target == "branch" and .enforcement == "active" and
+  .conditions == {ref_name: {exclude: [], include: ["~DEFAULT_BRANCH"]}} and
+  .bypass_actors == [{actor_id: 1, actor_type: "OrganizationAdmin",
+    bypass_mode: "pull_request"}] and
+  (.rules | type == "array" and length == 1) and
+  (.rules[0] | keys == ["parameters", "type"] and .type == "merge_queue") and
+  (.rules[0].parameters |
+    keys == [
+      "check_response_timeout_minutes",
+      "grouping_strategy",
+      "max_entries_to_build",
+      "max_entries_to_merge",
+      "merge_method",
+      "min_entries_to_merge",
+      "min_entries_to_merge_wait_minutes"
+    ] and
+    (.check_response_timeout_minutes | integer_between(1; 360)) and
+    (.grouping_strategy | IN("ALLGREEN", "HEADGREEN")) and
+    (.max_entries_to_build | integer_between(1; 100)) and
+    (.max_entries_to_merge | integer_between(1; 100)) and
+    (.min_entries_to_merge | integer_between(1; 100)) and
+    .min_entries_to_merge <= .max_entries_to_merge and
+    (.min_entries_to_merge_wait_minutes | integer_between(0; 360)) and
+    ({MERGE: "allow_merge_commit", SQUASH: "allow_squash_merge",
+      REBASE: "allow_rebase_merge"}[.merge_method] as $setting |
+      $setting != null and $defaults[0][$setting] == true))
+' "${root}/config/rulesets/merge-queue.json" >/dev/null
+
 jq -e \
   --slurpfile repositories "${repositories_config}" '
     (keys == ["repositories"]) and
@@ -176,6 +227,11 @@ jq -e '
     (.key as $repository |
       ($config.pull_request_gate | index($repository)) != null)
   ) and
+  # A queue runs the required checks on each merge result, so it needs them.
+  (.merge_queue | type == "array") and
+  ((.merge_queue | length) == (.merge_queue | unique | length)) and
+  all(.merge_queue[]; type == "string" and length > 0 and
+    (. as $repository | $config.required_ci | has($repository))) and
   (.release_tags | type == "array") and
   ((.release_tags | length) == (.release_tags | unique | length)) and
   all(.release_tags[]; type == "string" and length > 0) and

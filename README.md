@@ -37,6 +37,10 @@ read-only and are skipped on later runs.
   and are not independent merge gates. The `classic` monorepo requires its
   stable aggregate `Classic validation` and `CodeQL validation` jobs plus
   `Conventional PR title`.
+- Repositories in the `merge_queue` inventory merge through GitHub's merge
+  queue, and their required CI no longer requires an up-to-date branch because
+  the queue tests each merged result. `playtester` is the pilot. See
+  [Enabling a merge queue](#enabling-a-merge-queue).
 - Declared maintenance branches reject deletion and non-fast-forward updates,
   require linear history and pull requests, and require only checks already
   emitted for that branch.
@@ -941,6 +945,58 @@ Moving a repository to `archive` is an executable policy change: the next
 confirm that remaining pull requests and branches have been preserved at their
 new location. For `atrinik/classic`, also complete any intentional tag rebuild
 before applying immutable release-tag policy.
+
+## Enabling a merge queue
+
+`merge_queue` in `config/repositories.json` is the exhaustive list of
+repositories that merge through GitHub's merge queue. GitHub accepts the
+`merge_queue` rule only in repository rulesets, so both policy scopes install a
+repository-owned `08 - Merge queue` ruleset on each listed repository's default
+branch, as they do for `06 - CodeQL security`. The rule comes from
+`config/rulesets/merge-queue.json`:
+
+- squash merges, the organization's only merge method;
+- `ALLGREEN` grouping, so every queued pull request's own merge result must
+  pass the required checks, not only the head of its group;
+- a build concurrency of 5, groups of 1 to 5 pull requests, and a 5-minute
+  wait for the minimum group size;
+- a 60-minute timeout for required checks to report on a merge group.
+
+Organization owners keep the usual pull-request-only bypass. During an
+advisory merge window, the queue rule gets `always` bypass like that
+repository's required CI.
+
+A queued repository's `03 - Required CI` rule sets
+`strict_required_status_checks_policy` to `false`. The queue already tests each
+pull request merged onto the latest base, so the branch itself no longer has
+to be current. Every other repository keeps the strict policy. Validation
+requires each listed repository to be in `required_ci`, and keeps the
+template's parameters within GitHub's API ranges and the allowed merge method.
+GitHub Team offers merge queue only for public repositories, so the publisher
+fails before any write if a listed active repository is private. Like the
+security gates, it skips a listed repository that is not active.
+
+Before adding a repository:
+
+1. Merge a change in that repository so every required check also runs on the
+   `merge_group` event and reports under its existing name. A required check
+   that never reports on a merge group stalls the queue until the timeout.
+   Dependency review stays advisory, has no merge-group trigger, and must never
+   be a required gate on a queued repository; validation enforces that.
+2. Add the repository to `merge_queue`, merge the reviewed change, and review
+   the `bin/publish` plan. It should create `08 - Merge queue` on that
+   repository. The publisher re-PUTs every managed ruleset on each run, and
+   that repository's `03 - Required CI` payload should be the only one whose
+   content changes. Then apply the plan with the usual explicit
+   authorization.
+
+The publisher installs the queue before it relaxes required CI. When a
+repository is removed from the inventory, it restores the strict policy first
+and only then deletes the managed queue. It deletes only an unmodified,
+repository-owned `08 - Merge queue` rule. A modified or foreign rule with that
+name is retained with a `SKIP`, and `bin/audit` reports it until someone
+reviews it. The audit also requires each listed repository's exact queue rule,
+repository ownership, and non-strict required CI.
 
 ## Protecting and retiring a maintenance branch
 

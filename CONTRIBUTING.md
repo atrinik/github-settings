@@ -113,7 +113,19 @@ replace its default, or re-attach repositories, because attachment starts an
 asynchronous enablement event.
 
 Do not require a new workflow context until that exact aggregate context has
-landed and passed on the protected branch. In particular, add Classic's
+landed and passed on the protected branch.
+
+Add a repository to the `merge_queue` inventory only after every one of its
+required checks reports on the `merge_group` event on its default branch. Keep
+`08 - Merge queue` repository-owned, because GitHub rejects the rule in
+organization rulesets. Keep its parameters within GitHub's API ranges, and use
+the organization's only merge method. Queued repositories drop the up-to-date
+requirement from required CI and never require Dependency review. Merge-queue
+changes need publisher tests for creation, a converged rerun, drift
+convergence, retained foreign or modified rules, and install-before-relax and
+restore-before-retire ordering. They also need audit scenarios for a missing
+queue, parameter drift, organization ownership, strict drift, and a retained
+queue. In particular, add Classic's
 `CodeQL validation` requirement only after its advanced workflow is merged;
 otherwise the required check would prevent the workflow pull request itself
 from merging.

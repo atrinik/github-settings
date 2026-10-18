@@ -105,6 +105,9 @@
       "Conventional PR title"
     ]
   },
+  "merge_queue": [
+    "playtester"
+  ],
   "maintenance_branches": [],
   "release_tags": [
     "atrinik",

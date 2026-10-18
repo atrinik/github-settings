@@ -703,7 +703,10 @@ publish_repository_rulesets() {
         ) |
         .rules[0].parameters.required_status_checks =
           ($repositories[0].required_ci[$repository] |
-           map({context: ., integration_id: $app_id}))
+           map({context: ., integration_id: $app_id})) |
+        # A merge queue tests the merged result, so its branch need not be current.
+        .rules[0].parameters.strict_required_status_checks_policy =
+          (($repositories[0].merge_queue | index($repository)) == null)
       ' "${root}/config/rulesets/required-ci.json" >"${ci_payload}"
     upsert_repository_ruleset "${repository}" "${ci_payload}" || return 1
   done < <(jq -r '.required_ci | keys[]' "${repositories_config}")
@@ -830,7 +833,10 @@ publish_organization_rulesets() {
         } |
         .rules[0].parameters.required_status_checks =
           ($repositories[0].required_ci[$repository] |
-           map({context: ., integration_id: $app_id}))
+           map({context: ., integration_id: $app_id})) |
+        # A merge queue tests the merged result, so its branch need not be current.
+        .rules[0].parameters.strict_required_status_checks_policy =
+          (($repositories[0].merge_queue | index($repository)) == null)
       ' "${root}/config/rulesets/required-ci.json" >"${ci_payload}"
     upsert_organization_ruleset "${ci_payload}" || return 1
   done < <(jq -r '.required_ci | keys[]' "${repositories_config}")
@@ -1371,6 +1377,101 @@ publish_security_merge_rulesets() {
   done
 }
 
+repository_uses_merge_queue() {
+  local repository=$1
+
+  jq -e --arg repository "${repository}" \
+    '(.merge_queue | index($repository)) != null' \
+    "${repositories_config}" >/dev/null
+}
+
+make_merge_queue_ruleset() {
+  local repository=$1
+  local output
+
+  output=$(mktemp)
+  temporary_files+=("${output}")
+  # An advisory-level merge needs every rule reported for the branch to be
+  # bypassable, exactly as for required CI.
+  jq --arg repository "${repository}" \
+    --slurpfile advisory_windows "${advisory_merge_windows_config}" '
+      .bypass_actors |= map(
+        if ($advisory_windows[0].repositories | index($repository)) != null then
+          .bypass_mode = "always"
+        else
+          .
+        end
+      )
+    ' "${root}/config/rulesets/merge-queue.json" >"${output}"
+  echo "${output}"
+}
+
+# GitHub supports merge-queue rules only in repository rulesets, so this rule
+# is repository-owned in both policy scopes. It is published before required
+# CI stops requiring an up-to-date branch for the same repository.
+publish_merge_queue_rulesets() {
+  local repository template name existing id current
+
+  name=$(jq -r '.name' "${root}/config/rulesets/merge-queue.json")
+  while IFS= read -r repository; do
+    if [[ ! -v active_repository_ids["${repository}"] ]]; then
+      echo "SKIP ${organization}/${repository} is not active; ${name}"
+      continue
+    fi
+    template=$(make_merge_queue_ruleset "${repository}")
+    temporary_files+=("${template}")
+    existing=$(list_rulesets \
+      "repos/${organization}/${repository}/rulesets?includes_parents=false") || return 1
+    id=$(jq -r --arg name "${name}" \
+      '.[] | select(.name == $name) | .id' <<<"${existing}")
+    if [[ -z ${id} ]]; then
+      run_api POST "repos/${organization}/${repository}/rulesets" "${template}" || return 1
+      continue
+    fi
+    current=$(github_api "repos/${organization}/${repository}/rulesets/${id}") || return 1
+    if ! jq -e --argjson id "${id}" --arg name "${name}" \
+      --arg source "${organization}/${repository}" '
+      .id == $id and .name == $name and
+      .source_type == "Repository" and .source == $source
+    ' <<<"${current}" >/dev/null; then
+      echo "error: merge-queue ruleset ownership changed; retained: ${repository} ${name}" >&2
+      return 1
+    fi
+    if security_ruleset_matches "${template}" "${current}"; then
+      echo "KEEP /repos/${organization}/${repository}/rulesets/${id} ${name}"
+    else
+      run_api PUT "repos/${organization}/${repository}/rulesets/${id}" \
+        "${template}" || return 1
+    fi
+  done < <(jq -r '.merge_queue[]' "${repositories_config}")
+}
+
+# Retire a queue only after required CI again requires an up-to-date branch.
+# Only an unmodified repository-owned managed rule is removed.
+delete_removed_merge_queue_rulesets() {
+  local repository template name existing id current
+
+  name=$(jq -r '.name' "${root}/config/rulesets/merge-queue.json")
+  for repository in "${active_repositories[@]}"; do
+    if repository_uses_merge_queue "${repository}"; then
+      continue
+    fi
+    existing=$(list_rulesets \
+      "repos/${organization}/${repository}/rulesets?includes_parents=false") || return 1
+    id=$(jq -r --arg name "${name}" \
+      '.[] | select(.name == $name) | .id' <<<"${existing}")
+    [[ -n ${id} ]] || continue
+    template=$(make_merge_queue_ruleset "${repository}")
+    temporary_files+=("${template}")
+    current=$(github_api "repos/${organization}/${repository}/rulesets/${id}") || return 1
+    if owned_security_ruleset_matches "${repository}" "${id}" "${template}" "${current}"; then
+      run_api DELETE "repos/${organization}/${repository}/rulesets/${id}" || return 1
+    else
+      echo "SKIP ${organization}/${repository} ${name}: unrecognized ownership or payload; retained"
+    fi
+  done
+}
+
 validate_sha_canary_target() {
   local canary=$1 owner repository number metadata
   IFS=/ read -r owner repository number <<<"${canary}"
@@ -1836,6 +1937,7 @@ ${apply} && echo "Mode: apply" || echo "Mode: plan"
 
 declare -a active_repositories=()
 declare -A active_repository_ids=()
+declare -A active_repository_visibility=()
 while IFS=$'\t' read -r \
   repository id private visibility disabled fork has_issues has_projects has_wiki; do
   if [[ ! ${id} =~ ^[0-9]+$ ]]; then
@@ -1850,6 +1952,7 @@ while IFS=$'\t' read -r \
   fi
   active_repositories+=("${repository}")
   active_repository_ids["${repository}"]=${id}
+  active_repository_visibility["${repository}"]=${visibility}
 done < <(
   github_api --paginate "orgs/${organization}/repos?per_page=100&type=all" \
     --jq '
@@ -1891,6 +1994,18 @@ while IFS= read -r repository; do
   fi
 done < <(jq -r '.repositories[]' "${codeql_advanced_config}")
 
+# Team offers merge queue only for public repositories. Fail before any write
+# rather than relaxing required CI for a repository that cannot use a queue.
+# Inactive entries are skipped by the queue publisher, like security gates.
+while IFS= read -r repository; do
+  [[ -v active_repository_ids["${repository}"] ]] || continue
+  if [[ ${active_repository_visibility["${repository}"]} != public &&
+    ${organization_plan} != enterprise ]]; then
+    echo "error: merge queue requires a public repository on the ${organization_plan} plan: ${repository}" >&2
+    exit 1
+  fi
+done < <(jq -r '.merge_queue[]' "${repositories_config}")
+
 while IFS=$'\t' read -r repository expected_id; do
   if [[ ! -v active_repository_ids["${repository}"] ]]; then
     echo "error: immutable-release inventory repository is not active: ${repository}" >&2
@@ -1922,6 +2037,8 @@ done
 
 converge_repository_workflow_permissions
 
+publish_merge_queue_rulesets
+
 if [[ ${policy_scope} == organization ]]; then
   publish_organization_rulesets
   publish_organization_security
@@ -1931,6 +2048,7 @@ else
 fi
 
 publish_security_merge_rulesets
+delete_removed_merge_queue_rulesets
 
 while IFS= read -r repository; do
   if ! repository_archived=$(
