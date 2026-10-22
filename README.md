@@ -1063,7 +1063,9 @@ request it runs `gh pr merge --auto --squash` bound to the classified head
 commit. For any other run on a Dependabot pull request it disables an earlier
 auto-merge request: when Dependabot updates a grouped pull request to include a
 major, when a person pushes to the branch (including **Update branch**), or
-when classification fails. That pull request is then merged by hand.
+when classification fails. That pull request is then merged by hand; after a
+transient failure, re-running the workflow restores the request. The disable
+path also clears a request a person set on an ineligible pull request.
 
 Required approvals stay at zero, so no bot approval is needed and Actions still
 cannot approve pull requests. Required CI, review-thread resolution and the
@@ -1075,7 +1077,7 @@ strict up-to-date policy apply unchanged. Known limits:
   merge by a person. Changing that needs a dedicated GitHub App credential and
   a separate review.
 - With strict required checks, an auto-merge request waits while the branch is
-  behind `main`. Dependabot rebases automatically only on conflicts. Comment
+  behind `main`. Dependabot may not rebase a branch that is only behind. Comment
   `@dependabot rebase` to refresh a behind pull request: Dependabot pushes the
   rebase itself, so it stays eligible. **Update branch** makes it manual.
 - Repositories in the `merge_queue` inventory (`playtester`) are not rolled
@@ -1084,8 +1086,16 @@ strict up-to-date policy apply unchanged. Known limits:
 - GitHub reports `0.x` minor bumps as `semver-minor`; they are eligible like
   any other minor update and rely on required CI.
 
-Roll out only after the publisher has applied `allow_auto_merge`; before
-that, every eligible run fails at `gh pr merge --auto`. Then add the caller in
+- Auto-merge removes the human read of release notes, lockfile changes and
+  provenance for eligible updates. That includes minor GitHub Actions updates,
+  whose code later runs on `main` with repository secrets; required CI is the
+  remaining gate. Whether `GITHUB_TOKEN` can merge an update that changes
+  `.github/workflows/` is verified by the pilot before rollout.
+
+Opt in only repositories with required CI: on a pull request with no pending
+required check, auto-merge merges at once. Roll out only after the publisher
+has applied `allow_auto_merge`; before that, every eligible run fails at
+`gh pr merge --auto`. Then add the caller in
 a reviewed pull request in each repository, without editing its
 `dependabot.yml`. A `pull_request` run uses the workflow files of the
 pull request's merge with `main`, so open Dependabot pull requests pick up the
