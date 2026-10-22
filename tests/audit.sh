@@ -241,6 +241,7 @@ done
 
 assert_drift unmanaged 'active repository is not in the desired-state inventory'
 assert_drift merge-drift 'repository merge policy drift'
+assert_drift auto-merge-drift 'repository merge policy drift'
 assert_drift properties-drift 'repository custom-property drift'
 assert_drift schema-drift 'organization custom-property schema drift'
 assert_drift inventory-unreadable 'organization repository inventory could not be read'

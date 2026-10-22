@@ -553,6 +553,8 @@ elif endpoint.startswith('repos/atrinik/'):
             payload['full_name'] = 'foreign/observatory'
         if scenario == 'merge-drift' and target:
             payload['allow_merge_commit'] = True
+        if scenario == 'auto-merge-drift' and target:
+            payload['allow_auto_merge'] = False
         if scenario == 'secret-baseline' and target:
             payload['security_and_analysis']['secret_scanning']['status'] = 'disabled'
     else:

@@ -76,9 +76,11 @@ jobs:
           fi
 
           # fetch-metadata verifies only the first commit; require all of them.
-          authors=$(gh api --paginate \
+          if ! authors=$(gh api --paginate \
             "repos/${REPOSITORY}/pulls/${PULL_REQUEST}/commits?per_page=100" \
-            --jq '.[] | (.author.login // "unknown")' | sort -u)
+            --jq '.[] | (.author.login // "unknown")' | sort -u); then
+            decide false "Not eligible: the pull request's commits could not be read."
+          fi
           if [[ ${authors} != 'dependabot[bot]' ]]; then
             decide false "Not eligible: commits are not all authored by Dependabot."
           fi
@@ -92,7 +94,7 @@ jobs:
             all(.[];
               (.updateType | IN("version-update:semver-patch",
                                 "version-update:semver-minor")) and
-              ((.dependencyName // "") as $name |
+              ((.dependencyName // "" | ascii_downcase) as $name |
                 ($name == "dependabot/fetch-metadata" or
                  ($name | startswith("atrinik/github-settings"))) | not))
           ' <<<"${UPDATES:-[]}" >/dev/null; then
@@ -109,6 +111,9 @@ jobs:
   apply:
     name: Apply auto-merge decision
     needs: classify
+    # Run after a failed or timed-out classification too, so a stale request
+    # is still disabled. A cancelled run was superseded by a newer one.
+    if: ${{ !cancelled() && needs.classify.result != 'skipped' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -119,12 +124,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           ELIGIBLE: ${{ needs.classify.outputs.eligible }}
+          CLASSIFIED: ${{ needs.classify.result }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PULL_REQUEST: ${{ github.event.pull_request.number }}
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          if [[ ${ELIGIBLE} == true ]]; then
+          if [[ ${ELIGIBLE} == true && ${CLASSIFIED} == success ]]; then
             # Bind the request to the classified head commit.
             gh pr merge "${PULL_REQUEST}" --repo "${REPOSITORY}" \
               --auto --squash --match-head-commit "${HEAD_SHA}"

@@ -1027,6 +1027,7 @@ failing stay manual. Two parts implement it:
 
   on:
     pull_request:
+      branches: [main]
       types: [opened, synchronize, reopened]
 
   permissions: {}
@@ -1061,8 +1062,8 @@ The `apply` job holds the write token and runs only `gh`. For an eligible pull
 request it runs `gh pr merge --auto --squash` bound to the classified head
 commit. For any other run on a Dependabot pull request it disables an earlier
 auto-merge request: when Dependabot updates a grouped pull request to include a
-major, or when a person pushes to the branch (including **Update branch**).
-That pull request is then merged by hand.
+major, when a person pushes to the branch (including **Update branch**), or
+when classification fails. That pull request is then merged by hand.
 
 Required approvals stay at zero, so no bot approval is needed and Actions still
 cannot approve pull requests. Required CI, review-thread resolution and the
@@ -1074,16 +1075,21 @@ strict up-to-date policy apply unchanged. Known limits:
   merge by a person. Changing that needs a dedicated GitHub App credential and
   a separate review.
 - With strict required checks, an auto-merge request waits while the branch is
-  behind `main`. Dependabot rebases its own pull requests; pressing
-  **Update branch** instead makes the pull request manual, as described above.
+  behind `main`. Dependabot rebases automatically only on conflicts. Comment
+  `@dependabot rebase` to refresh a behind pull request: Dependabot pushes the
+  rebase itself, so it stays eligible. **Update branch** makes it manual.
+- Repositories in the `merge_queue` inventory (`playtester`) are not rolled
+  out yet. A queue entry added with `GITHUB_TOKEN` may not start
+  `merge_group` checks; verify that live before adding a caller there.
 - GitHub reports `0.x` minor bumps as `semver-minor`; they are eligible like
   any other minor update and rely on required CI.
 
-To roll out to a repository, add the caller in a reviewed pull request in that
-repository. Do not edit its `dependabot.yml` for this. The `pull_request`
-trigger runs the caller from the pull request's head, so a Dependabot pull
-request is handled once its branch contains the caller: new pull requests
-after the caller merges, and open ones after Dependabot next rebases them.
+Roll out only after the publisher has applied `allow_auto_merge`; before
+that, every eligible run fails at `gh pr merge --auto`. Then add the caller in
+a reviewed pull request in each repository, without editing its
+`dependabot.yml`. A `pull_request` run uses the workflow files of the
+pull request's merge with `main`, so open Dependabot pull requests pick up the
+caller on their next update, and new ones from the start.
 
 ## Protecting and retiring a maintenance branch
 
