@@ -509,6 +509,7 @@ for repository in "${!expected_active[@]}"; do
     .allow_merge_commit == $desired[0].allow_merge_commit and
     .allow_rebase_merge == $desired[0].allow_rebase_merge and
     .allow_squash_merge == $desired[0].allow_squash_merge and
+    .allow_auto_merge == $desired[0].allow_auto_merge and
     .delete_branch_on_merge == $desired[0].delete_branch_on_merge and
     .squash_merge_commit_title == $desired[0].squash_merge_commit_title and
     .squash_merge_commit_message == $desired[0].squash_merge_commit_message

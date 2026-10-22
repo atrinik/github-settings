@@ -1,0 +1,141 @@
+name: Dependabot auto-merge
+
+# Reusable policy for Dependabot pull requests in component repositories.
+# A caller runs it on `pull_request` (opened, synchronize, reopened) and grants
+# `contents: write` and `pull-requests: write`. It never checks out or runs
+# pull-request code. See README.md#dependabot-auto-merge.
+#
+# Auto-merge is enabled only when every updated dependency is a semver patch or
+# minor update, Dependabot authored every commit, and the run was triggered by
+# Dependabot itself. Anything else (majors, unknown update types, a person's
+# push, the policy's own inputs) disables any earlier auto-merge request and
+# leaves the pull request for a person. Required CI and the repository's
+# rulesets still decide when the merge happens.
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  classify:
+    name: Classify Dependabot update
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      eligible: ${{ steps.classify.outputs.eligible }}
+    steps:
+      - name: Check the triggering actor
+        id: actor
+        env:
+          ACTOR: ${{ github.actor }}
+        run: |
+          if [[ ${ACTOR} == 'dependabot[bot]' ]]; then
+            echo "dependabot=true" >>"${GITHUB_OUTPUT}"
+          else
+            echo "dependabot=false" >>"${GITHUB_OUTPUT}"
+          fi
+
+      - name: Fetch Dependabot metadata
+        id: metadata
+        if: steps.actor.outputs.dependabot == 'true'
+        # Missing or unverifiable metadata fails this step; the next step then
+        # treats the pull request as needing a person.
+        continue-on-error: true
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+
+      - name: Decide eligibility
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+          FROM_DEPENDABOT: ${{ steps.actor.outputs.dependabot }}
+          UPDATES: ${{ steps.metadata.outputs.updated-dependencies-json }}
+          PULL_REQUEST: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          decide() {
+            echo "eligible=$1" >>"${GITHUB_OUTPUT}"
+            {
+              echo "### Dependabot auto-merge"
+              echo
+              echo "$2"
+            } >>"${GITHUB_STEP_SUMMARY}"
+            echo "$2"
+            exit 0
+          }
+
+          if [[ ${FROM_DEPENDABOT} != true ]]; then
+            decide false "Not eligible: this run was triggered by ${ACTOR}, not Dependabot."
+          fi
+
+          # fetch-metadata verifies only the first commit; require all of them.
+          authors=$(gh api --paginate \
+            "repos/${REPOSITORY}/pulls/${PULL_REQUEST}/commits?per_page=100" \
+            --jq '.[] | (.author.login // "unknown")' | sort -u)
+          if [[ ${authors} != 'dependabot[bot]' ]]; then
+            decide false "Not eligible: commits are not all authored by Dependabot."
+          fi
+
+          # Every update must be a known semver patch or minor update. The
+          # action's own update-type output ignores updates whose type is
+          # unknown, so read the per-dependency list instead. Updates to this
+          # policy's own inputs always need a person.
+          if ! jq -e '
+            type == "array" and length > 0 and
+            all(.[];
+              (.updateType | IN("version-update:semver-patch",
+                                "version-update:semver-minor")) and
+              ((.dependencyName // "") as $name |
+                ($name == "dependabot/fetch-metadata" or
+                 ($name | startswith("atrinik/github-settings"))) | not))
+          ' <<<"${UPDATES:-[]}" >/dev/null; then
+            summary=$(jq -r '
+              if type == "array" and length > 0 then
+                map("- `\(.dependencyName)`: \(.updateType // "" | if . == "" then "unknown" else . end)") | join("\n")
+              else "- no dependency metadata" end
+            ' <<<"${UPDATES:-[]}" 2>/dev/null || echo "- unreadable dependency metadata")
+            decide false "$(printf 'Not eligible: needs a person.\n\n%s' "${summary}")"
+          fi
+
+          decide true "Eligible: every update is a semver patch or minor update by Dependabot."
+
+  apply:
+    name: Apply auto-merge decision
+    needs: classify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Enable or disable auto-merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ELIGIBLE: ${{ needs.classify.outputs.eligible }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PULL_REQUEST: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [[ ${ELIGIBLE} == true ]]; then
+            # Bind the request to the classified head commit.
+            gh pr merge "${PULL_REQUEST}" --repo "${REPOSITORY}" \
+              --auto --squash --match-head-commit "${HEAD_SHA}"
+            exit 0
+          fi
+
+          state=$(gh pr view "${PULL_REQUEST}" --repo "${REPOSITORY}" \
+            --json autoMergeRequest --jq '.autoMergeRequest != null')
+          if [[ ${state} == true ]]; then
+            gh pr merge "${PULL_REQUEST}" --repo "${REPOSITORY}" --disable-auto
+            echo "Disabled auto-merge: this pull request needs a person."
+          else
+            echo "Auto-merge is not enabled; nothing to do."
+          fi

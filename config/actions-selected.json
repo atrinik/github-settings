@@ -7,6 +7,7 @@
     "docker/login-action@*",
     "docker/setup-buildx-action@*",
     "docker/build-push-action@*",
-    "rust-lang/crates-io-auth-action@*"
+    "rust-lang/crates-io-auth-action@*",
+    "dependabot/fetch-metadata@*"
   ]
 }

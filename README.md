@@ -57,6 +57,9 @@ read-only and are skipped on later runs.
   publisher policy scopes.
 - Active repositories allow squash merges only. The squash commit uses the
   pull-request title and description, and merged head branches are deleted.
+- Active repositories allow auto-merge. Dependabot patch and minor updates
+  enable it through the shared reusable workflow once required CI passes; see
+  [Dependabot auto-merge](#dependabot-auto-merge).
 - Every repository uses an enforced security baseline: dependency graph,
   Dependabot alerts and security updates, secret scanning, push protection,
   validity checks, and private vulnerability reporting remain enabled in both
@@ -108,7 +111,8 @@ read-only and are skipped on later runs.
   remain outside GitHub and this repository.
 - GitHub Actions defaults to read-only, cannot approve pull requests, and may
   use only Atrinik, GitHub, Codecov coverage, explicitly allowed Docker
-  actions, and `rust-lang/crates-io-auth-action@*`. Workflow references remain
+  actions, `rust-lang/crates-io-auth-action@*`, and
+  `dependabot/fetch-metadata@*` for Dependabot auto-merge. Workflow references remain
   full commit SHAs; the action allowlist permits routine pin updates. The
   publisher also restores per-repository workflow permission overrides to
   read-only with PR approvals disabled, applying only real drift.
@@ -1004,6 +1008,82 @@ and re-reads the rule immediately before the deletion. A modified, foreign or
 concurrently edited rule with that name is retained with a `SKIP`, and `bin/audit` reports it until someone
 reviews it. The audit also requires each listed repository's exact queue rule,
 repository ownership, and non-strict required CI.
+
+## Dependabot auto-merge
+
+The owner approved auto-merging Dependabot patch and minor updates once
+required CI passes (2026-10-22). Majors, updates of unknown type and anything
+failing stay manual. Two parts implement it:
+
+- `allow_auto_merge` is part of `config/repository-defaults.json`, so every
+  active repository allows auto-merge. The setting only permits auto-merge
+  requests; it merges nothing by itself, and rulesets still gate every merge.
+- `.github/workflows/dependabot-auto-merge.yml` in this repository is a
+  reusable workflow. A component repository opts in with a thin caller,
+  pinned to a full commit SHA on this repository's `main`:
+
+  ```yaml
+  name: Dependabot auto-merge
+
+  on:
+    pull_request:
+      types: [opened, synchronize, reopened]
+
+  permissions: {}
+
+  concurrency:
+    group: dependabot-auto-merge-${{ github.event.pull_request.number }}
+    cancel-in-progress: true
+
+  jobs:
+    auto-merge:
+      if: github.event.pull_request.user.login == 'dependabot[bot]'
+      uses: atrinik/github-settings/.github/workflows/dependabot-auto-merge.yml@<sha> # <tag>
+      permissions:
+        contents: write
+        pull-requests: write
+  ```
+
+The reusable workflow never checks out or runs pull-request code. Its
+`classify` job has read-only access and uses the official
+`dependabot/fetch-metadata` action, which verifies the pull request author and
+the signed first commit. The job also requires that Dependabot authored every
+commit and triggered the run. A pull request is eligible only when every
+updated dependency is a `version-update:semver-patch` or
+`version-update:semver-minor` update. A grouped pull request therefore
+qualifies when its largest update is minor and no update has an unknown type
+(for example a bare commit-SHA or digest change). Updates to
+`dependabot/fetch-metadata` or to this repository's workflow always need a
+person, because the pull request would otherwise classify itself with the new
+code.
+
+The `apply` job holds the write token and runs only `gh`. For an eligible pull
+request it runs `gh pr merge --auto --squash` bound to the classified head
+commit. For any other run on a Dependabot pull request it disables an earlier
+auto-merge request: when Dependabot updates a grouped pull request to include a
+major, or when a person pushes to the branch (including **Update branch**).
+That pull request is then merged by hand.
+
+Required approvals stay at zero, so no bot approval is needed and Actions still
+cannot approve pull requests. Required CI, review-thread resolution and the
+strict up-to-date policy apply unchanged. Known limits:
+
+- Merges are made with the workflow's `GITHUB_TOKEN`, so the resulting push to
+  `main` does not start `push` or `workflow_run` workflows. Main-branch checks,
+  releases and development deployments pick the change up with the next
+  merge by a person. Changing that needs a dedicated GitHub App credential and
+  a separate review.
+- With strict required checks, an auto-merge request waits while the branch is
+  behind `main`. Dependabot rebases its own pull requests; pressing
+  **Update branch** instead makes the pull request manual, as described above.
+- GitHub reports `0.x` minor bumps as `semver-minor`; they are eligible like
+  any other minor update and rely on required CI.
+
+To roll out to a repository, add the caller in a reviewed pull request in that
+repository. Do not edit its `dependabot.yml` for this. The `pull_request`
+trigger runs the caller from the pull request's head, so a Dependabot pull
+request is handled once its branch contains the caller: new pull requests
+after the caller merges, and open ones after Dependabot next rebases them.
 
 ## Protecting and retiring a maintenance branch
 

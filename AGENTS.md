@@ -73,6 +73,13 @@
   required CI, restore the strict policy before retiring a queue, and retire
   only an unmodified repository-owned rule that passes a fresh identity check
   and final re-read.
+- `.github/workflows/dependabot-auto-merge.yml` is the reusable Dependabot
+  auto-merge policy (owner-approved 2026-10-22): only all-patch/minor updates
+  authored and triggered by Dependabot, read-only classification, a write job
+  that runs only `gh`, and no approvals or bypass. It needs
+  `allow_auto_merge` in `config/repository-defaults.json` and the
+  `dependabot/fetch-metadata@*` allowance. Never let it approve pull requests,
+  check out pull-request code, or auto-merge updates of its own inputs.
 - Keep required workflow job names synchronized with rulesets. Workflow or
   permissions changes also require actionlint, least-privilege review, and
   immutable action references according to policy.
