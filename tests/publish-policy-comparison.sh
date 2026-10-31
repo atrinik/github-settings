@@ -46,6 +46,7 @@ reset_case() {
   if [[ ${scope} == repository ]]; then source_type=Repository; source=atrinik/example; fi
   jq --arg source_type "${source_type}" --arg source "${source}" '
     . + {id:42,source_type:$source_type,source:$source,updated_at:"before"} |
+    if $source_type == "Repository" then .current_user_can_bypass = "pull_requests_only" else . end |
     .bypass_actors |= map(.actor_id = null) |
     .rules |= map(if .type == "pull_request" then
       .parameters += {required_reviewers:[],allowed_merge_methods:["rebase","squash","merge"],
@@ -78,7 +79,7 @@ for scope in organization repository; do
       length == 1 and .[0].method == "PUT" and
       .[0].body.conditions == $desired[0].conditions and
       .[0].body.rules == $live[0].rules and
-      (.[0].body | has("id") or has("updated_at") | not)
+      (.[0].body | has("id") or has("updated_at") or has("current_user_can_bypass") | not)
     ' "${log}" >/dev/null
   done
   for mutation in \
@@ -114,6 +115,12 @@ for scope in organization repository; do
   change_live '.enforcement = "disabled"'
   jq '.rules[0].parameters.required_reviewers = [{reviewer:{id:42,type:"Team"},minimum_approvals:1}]' \
     "${live}" >"${later}"
+  if upsert >"${temporary}/output" 2>&1; then exit 1; fi
+  test ! -s "${log}"
+  # Known read-only metadata remains part of the complete concurrency fence.
+  reset_case pull-request-gate
+  change_live '.enforcement = "disabled"'
+  jq '.current_user_can_bypass = "never"' "${live}" >"${later}"
   if upsert >"${temporary}/output" 2>&1; then exit 1; fi
   test ! -s "${log}"
 done

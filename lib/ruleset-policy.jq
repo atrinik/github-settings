@@ -29,7 +29,8 @@ def normalize_policy:
   .conditions |= normalize_conditions |
   .rules |= normalize_rules;
 def policy_body:
-  del(.id, .node_id, .source, .source_type, .created_at, .updated_at, ._links);
+  del(.id, .node_id, .source, .source_type, .created_at, .updated_at, ._links,
+    .current_user_can_bypass);
 
 # Validate keys recursively before replacing managed values. Arrays other than
 # rules are atomic policy values. New restrictions require source review.
