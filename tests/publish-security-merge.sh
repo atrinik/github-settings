@@ -12,6 +12,7 @@ trap 'rm -rf "${temporary}"' EXIT
 root=${temporary}/fixture
 mkdir -p "${root}/bin" "${root}/config/rulesets"
 cp "${source_root}/config/"*.json "${root}/config/"
+cp -R "${source_root}/lib" "${root}/lib"
 cp "${source_root}/config/rulesets/"*.json "${root}/config/rulesets/"
 
 # Source production functions without executing validation, authentication or
@@ -503,6 +504,11 @@ for policy_scope in organization repository; do
         jq -se --arg endpoint "repos/atrinik/content-toolkit/rulesets/${gate_update_id}" '
           [.[] | select(.method != "GET")] | length == 1 and
           .[0].method == "PUT" and .[0].endpoint == $endpoint' "${api_log}" >/dev/null
+        if [[ ${gate_update_id} == 7 && ${filter} == *do_not_enforce_on_create* ]]; then
+          jq -se '[.[] | select(.method == "PUT")][0].payload.rules[0].parameters |
+            has("do_not_enforce_on_create") and .do_not_enforce_on_create == false' \
+            "${api_log}" >/dev/null
+        fi
       fi
     done
     for filter in '.archived = true' '.id = 999' '.full_name = "foreign/content-toolkit"' unreadable; do

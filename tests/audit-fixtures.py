@@ -159,7 +159,7 @@ def rulesets(repository):
         for actor in item['bypass_actors']:
             if actor['actor_type'] == 'OrganizationAdmin':
                 actor['actor_id'] = None
-        if scenario == 'owner-id-drift' and repository == 'observatory' and template == 'pull-request-gate':
+        if scenario == 'owner-id-ignored' and repository == 'observatory' and template == 'pull-request-gate':
             item['bypass_actors'][0]['actor_id'] = 2
         if item['source_type'] == 'Organization':
             if template in ('default-branch-integrity', 'default-branch-linear-history'):
