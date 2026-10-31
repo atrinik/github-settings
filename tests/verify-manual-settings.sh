@@ -312,7 +312,7 @@ repos/atrinik/classic/pages)
   workflow='name: Daily Classic client performance'
   if [[ ${FAKE_GH_SCENARIO} == pages-active ||
     ${FAKE_GH_SCENARIO} == pages-activation-missing ]]; then
-    workflow='uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e'
+    workflow='uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346'
   fi
   if [[ ${FAKE_GH_SCENARIO} == pages-workflow-metadata-drift ]]; then
     jq -n '{type: "dir", encoding: "none", content: null}'

@@ -1466,13 +1466,18 @@ environment. The environment permits only the exact `main` branch and has no
 required reviewers, secrets, or variables. The desired Pages build type is
 `workflow`; the consuming workflow is
 `.github/workflows/daily-client-performance.yml`, bound by the immutable
-`actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e` marker.
+`actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346` marker.
 
-The live legacy `main`-root source is a bounded pre-activation state only while
+A legacy `main`-root source is a bounded pre-activation state only while
 that marker is absent from the default-branch workflow.
 `bin/verify-manual-settings` reports it as `PENDING`. Once the reviewed Classic
 workflow is merged, the same verifier requires the Actions source and fails on
 any lingering legacy source. It never changes the source itself.
+
+Classic PR #547 merged the v5.0.1 deployment action update on 2026-10-03.
+The inventory marker follows that reviewed immutable action. Read-only metadata
+on 2026-10-31 showed the site already uses the Actions source; this verifies
+configuration, not successful execution of the latest Pages deployment.
 
 Before activation, verify the repository, current Pages site, environment, and
 the merged workflow without changing live state:
@@ -1492,7 +1497,7 @@ gh api repos/atrinik/classic/environments/github-pages/variables \
   --jq '{total_count,names:[.variables[].name]}'
 gh api 'repos/atrinik/classic/contents/.github/workflows/daily-client-performance.yml?ref=main' \
   --jq -r .content | base64 --decode | \
-  grep -F 'actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e'
+  grep -F 'actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346'
 ```
 
 Require the stable repository identity and `main` default branch, exact site

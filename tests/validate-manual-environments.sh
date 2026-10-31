@@ -123,7 +123,7 @@ jq -e '
       variable_names: ["ATRINIK_PRODUCTION_RECOVERY_PUBLIC_KEY"]
     }) and
   .github_pages_sites == [{
-    activation_marker: "actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e",
+    activation_marker: "actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346",
     build_type: "workflow",
     environment: "github-pages",
     https_enforced: true,
