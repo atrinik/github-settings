@@ -1169,7 +1169,7 @@ The names-only `production` environment inventory declares the reviewed
 production-promotion contract: protected branches enabled,
 custom policies disabled, no custom patterns and no required reviewers. Solo
 owner dispatch of the exact reviewed inputs remains the approval boundary.
-The eight secret names and two variable names are desired state, not proof that
+The seven secret names and one variable name are desired state, not proof that
 the environment or effective credentials exist. The recovery public-key input
 remains pending the owning workflow merge; provision it only after that reviewed
 consumer is merged. Provision through supported
