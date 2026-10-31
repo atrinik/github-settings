@@ -198,7 +198,7 @@ jq -e '
 
 jq -e '
   [.github_actions_credentials[] | select(.environment == "development")] as $credentials |
-  ($credentials | length) == 3 and
+  ($credentials | length) == 2 and
   all($credentials[];
     .repository == "atrinik/metaserver-worker" and .repository_id == 1324297032 and
     .environment == "development" and .consumers == [".github/workflows/deploy-development.yml"] and
@@ -206,13 +206,13 @@ jq -e '
     .rotation_cadence_days == 90 and .owner == "Zoey Seraphina Rose (Atrinik organization owner)"
   ) and
   ([$credentials[].secret_name] | sort) == [
-    "ATRINIK_DELIVERY_RESOURCE_READ_TOKEN", "ATRINIK_PRODUCTION_BUILDS_READ_TOKEN", "CLOUDFLARE_API_TOKEN"
+    "ATRINIK_DELIVERY_RESOURCE_READ_TOKEN", "CLOUDFLARE_API_TOKEN"
   ]
 ' "${root}/config/manual-settings.json" >/dev/null
 
 jq -e '
   [.github_actions_credentials[] | select(.environment == "production")] as $credentials |
-  ($credentials | length) == 3 and
+  ($credentials | length) == 2 and
   all($credentials[];
     .repository == "atrinik/metaserver-worker" and .repository_id == 1324297032 and
     .consumers == [".github/workflows/promote-production.yml"] and
@@ -223,7 +223,7 @@ jq -e '
     else .last_verified_on == "2026-10-11" and .rotate_by == "2027-01-09" end)
   ) and
   ([$credentials[].secret_name] | sort) == [
-    "ATRINIK_DELIVERY_RESOURCE_READ_TOKEN", "ATRINIK_PRODUCTION_BUILDS_READ_TOKEN", "CLOUDFLARE_API_TOKEN"
+    "ATRINIK_DELIVERY_RESOURCE_READ_TOKEN", "CLOUDFLARE_API_TOKEN"
   ]
 ' "${root}/config/manual-settings.json" >/dev/null
 
@@ -244,7 +244,8 @@ for invalid in \
   '.github_actions_credentials[-1].consumers = [".github/workflows/deploy-development.yml"]' \
   '.github_actions_credentials[-1].runbook = "README.md#metaserver-development-credentials"' \
   '.github_actions_credentials[-1].required_scopes += ["Workers Scripts Edit"]' \
-  '.github_actions_credentials[-1].credential_type = "cloudflare_account_token"'; do
+  '.github_actions_credentials[-1].credential_type = "cloudflare_user_token"' \
+  '.github_actions_credentials[-1] |= (.secret_name = "ATRINIK_PRODUCTION_BUILDS_READ_TOKEN" | .credential_type = "cloudflare_user_token" | .required_scopes = ["Workers CI Read", "Workers Scripts Read"])'; do
   jq "$invalid" "${temporary}/production-credentials.json" >"${temporary}/config/manual-settings.json"
   if ATRINIK_VALIDATION_TODAY=2026-10-18 "${temporary}/bin/validate" >/dev/null 2>&1; then
     echo "error: validator accepted malformed PROD credential lifecycle: ${invalid}" >&2

@@ -828,9 +828,6 @@ jq -e \
         elif .secret_name == "ATRINIK_DELIVERY_RESOURCE_READ_TOKEN" then
           .credential_type == "cloudflare_account_token" and
           .required_scopes == ["Workers Scripts Read"]
-        elif .secret_name == "ATRINIK_PRODUCTION_BUILDS_READ_TOKEN" then
-          .credential_type == "cloudflare_user_token" and
-          .required_scopes == ["Workers CI Read", "Workers Scripts Read"]
         else false end)
       end)
     ) and

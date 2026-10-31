@@ -468,7 +468,7 @@ issue-type change before the first mutation.
 ## Metaserver development credentials
 
 The `development` environment of `atrinik/metaserver-worker` (repository ID
-1324297032) holds the three value-free lifecycle entries consumed only by
+1324297032) holds the two value-free lifecycle entries consumed only by
 `.github/workflows/deploy-development.yml`. Zoey Seraphina Rose, an Atrinik
 organization owner, is accountable for verification and rotation.
 
@@ -476,11 +476,10 @@ organization owner, is accountable for verification and rotation.
 D1 Read permissions. Its account-wide edit authority can also edit PROD; the
 workflow's exact DEV configuration and resource fences provide the target
 boundary. `ATRINIK_DELIVERY_RESOURCE_READ_TOKEN` is account-owned with intended
-Workers Scripts Read. `ATRINIK_PRODUCTION_BUILDS_READ_TOKEN` is user-scoped
-with intended Workers CI Read and Workers Scripts Read for the retained-writer
-fence. Do not describe any of these credentials as restricted to one Worker.
+Workers Scripts Read. Do not describe either credential as restricted to one
+Worker.
 
-All three environment names were installed and verified on 2026-10-11; bounded
+Both retained credential names were installed and verified on 2026-10-11; bounded
 runtime GET checks passed. Effective provider permission metadata is unreadable,
 and the deployment token's write permission has not yet been proven by its
 owning workflow. Name metadata does not verify values, scope or expiry.
@@ -1226,9 +1225,9 @@ database identity. Required `Workers Scripts Edit` and `D1 Read` permissions
 remain the intended deployment contract; provider permission metadata and
 write capability are unproven. Provider creation and expiry remain unknown.
 Its 2027-01-10 rotation deadline is internal 90-day policy, not provider expiry.
-The two owner-authorized shared read-only control-plane credentials retain their
-2026-10-11 qualification and 2027-01-09 internal deadlines; expiry remains unknown.
-Their separate production lifecycle entries declare desired placement, not
+The owner-authorized shared `ATRINIK_DELIVERY_RESOURCE_READ_TOKEN` retains its
+2026-10-11 qualification and 2027-01-09 internal deadline; expiry remains unknown.
+Its separate production lifecycle entry declares desired placement, not
 installation or successful use by the production workflow. Provision and verify
 only after this inventory is reviewed and accepted.
 

@@ -619,17 +619,16 @@ repos/atrinik/metaserver-worker/environments/production)
   exit 79
   ;;
 "repos/atrinik/metaserver-worker/environments/production/secrets?per_page=100&page=1")
-  jq -n '{total_count: 8, secrets: [
+  jq -n '{total_count: 7, secrets: [
     {name: "ATRINIK_DELIVERY_RESOURCE_POLICY"}, {name: "ATRINIK_DELIVERY_RESOURCE_READ_TOKEN"},
-    {name: "ATRINIK_PRODUCTION_BUILDS_READ_TOKEN"}, {name: "ATRINIK_PRODUCTION_CORE_CONFIG"},
+    {name: "ATRINIK_PRODUCTION_CORE_CONFIG"},
     {name: "ATRINIK_PRODUCTION_PUBLISHER_CONFIG"}, {name: "ATRINIK_PRODUCTION_RENDEZVOUS_CONFIG"},
     {name: "CLOUDFLARE_ACCOUNT_ID"}, {name: "CLOUDFLARE_API_TOKEN"}
   ]}'
   ;;
 "repos/atrinik/metaserver-worker/environments/production/variables?per_page=100&page=1")
-  jq -n '{total_count: 2, variables: [
-    {name: "ATRINIK_PRODUCTION_RECOVERY_PUBLIC_KEY"},
-    {name: "ATRINIK_PRODUCTION_WRITER_FENCE_POLICY"}
+  jq -n '{total_count: 1, variables: [
+    {name: "ATRINIK_PRODUCTION_RECOVERY_PUBLIC_KEY"}
   ]}'
   ;;
 repos/atrinik/metaserver-worker/environments/development)
@@ -652,19 +651,18 @@ repos/atrinik/metaserver-worker/environments/development)
     jq -n '{total_count: 0, secrets: []}'
     exit 0
   fi
-  jq -n '{total_count: 8, secrets: [
+  jq -n '{total_count: 7, secrets: [
     {name: "ATRINIK_DELIVERY_RESOURCE_POLICY"},
     {name: "ATRINIK_DELIVERY_RESOURCE_READ_TOKEN"},
     {name: "ATRINIK_DEVELOPMENT_CORE_CONFIG"},
     {name: "ATRINIK_DEVELOPMENT_PUBLISHER_CONFIG"},
     {name: "ATRINIK_DEVELOPMENT_RENDEZVOUS_CONFIG"},
-    {name: "ATRINIK_PRODUCTION_BUILDS_READ_TOKEN"},
     {name: "CLOUDFLARE_ACCOUNT_ID"},
     {name: "CLOUDFLARE_API_TOKEN"}
   ] | map(. + {updated_at: "2026-10-11T00:00:00Z"})}'
   ;;
 "repos/atrinik/metaserver-worker/environments/development/variables?per_page=100&page=1")
-  jq -n '{total_count: 1, variables: [{name: "ATRINIK_PRODUCTION_WRITER_FENCE_POLICY"}]}'
+  jq -n '{total_count: 0, variables: []}'
   ;;
 repos/atrinik/classic/environments/discord-release)
   if [[ ${FAKE_GH_SCENARIO} == missing-environment ]]; then
