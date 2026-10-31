@@ -256,7 +256,7 @@ done
 for invalid in \
   '.github_actions_credentials[1].required_scopes = ["Workers Scripts Read"]' \
   '.github_actions_credentials[2].credential_type = "cloudflare_user_token"' \
-  '.github_actions_credentials[3].environment = "production"' \
+  '(.github_actions_credentials[] | select(.environment == "development" and .secret_name == "ATRINIK_DELIVERY_RESOURCE_READ_TOKEN")).environment = "production"' \
   '.github_actions_credentials[1].repository_id = 1' \
   '.github_actions_credentials[1].consumers = [".github/workflows/publish.yml"]' \
   '.github_actions_credentials[1].credential_value = "secret"'; do
