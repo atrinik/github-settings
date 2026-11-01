@@ -10,6 +10,7 @@ trap 'rm -rf "${temporary}"' EXIT
 root=${temporary}/fixture
 mkdir -p "${root}/config"
 cp -R "${source_root}/config/." "${root}/config/"
+cp -R "${source_root}/lib" "${root}/lib"
 sed -n '/^converge_organization_settings() {/,/^organization_metadata=/p' \
   "${source_root}/bin/publish" | sed '$d' >"${temporary}/functions.sh"
 sed -n '/^list_rulesets() {/,/^}/p' "${source_root}/bin/publish" >>"${temporary}/functions.sh"
@@ -55,6 +56,24 @@ github_api() {
     *) return 99 ;;
     esac
     ;;
+  orgs/atrinik/rulesets/1 | orgs/atrinik/rulesets/2 | orgs/atrinik/rulesets/4 | orgs/atrinik/rulesets/5)
+    local template
+    case ${endpoint##*/} in
+      1) template=default-branch-integrity ;;
+      2) template=default-branch-linear-history ;;
+      4) template=pull-request-gate ;;
+      5) template=immutable-release-tags ;;
+    esac
+    jq --argjson id "${endpoint##*/}" '
+      . + {id:$id,source_type:"Organization",source:"atrinik",enforcement:"disabled"} |
+      .conditions.repository_name = {include:[],exclude:[],protected:false}
+    ' "${root}/config/rulesets/${template}.json" ;;
+  orgs/atrinik/rulesets/31 | repos/atrinik/content-toolkit/rulesets/31)
+    local source_type=Repository source=atrinik/content-toolkit
+    if [[ ${endpoint} == orgs/* ]]; then source_type=Organization; source=atrinik; fi
+    jq --arg source_type "${source_type}" --arg source "${source}" '
+      . + {id:31,source_type:$source_type,source:$source,enforcement:"disabled"}
+    ' "${root}/config/rulesets/default-branch-integrity.json" ;;
   repos/atrinik/content-toolkit)
     echo '{"id":123,"full_name":"atrinik/content-toolkit","archived":false,"default_branch":"main"}' ;;
   repos/atrinik/content-toolkit/rulesets/3 | \

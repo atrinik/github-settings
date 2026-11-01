@@ -292,7 +292,7 @@ if [[ ${method} != GET ]]; then
 fi
 
 case "${endpoint}|${jq_filter}" in
-repos/atrinik/*/actions/permissions/workflow\|*)
+repos/atrinik/*/actions/permissions/workflow\|* | orgs/atrinik/actions/permissions/workflow\|*)
   printf '{"default_workflow_permissions":"read","can_approve_pull_request_reviews":false}\n'
   ;;
 "orgs/atrinik/actions/permissions/selected-actions|")
@@ -543,6 +543,11 @@ repos/atrinik/*/rulesets\?includes_parents=false\|*)
   else
     printf '[{"id":900,"name":"05 - Maintenance branch - content - retired"}]\n'
   fi
+  ;;
+repos/atrinik/*\|)
+  # Default-settings reads added by the delta-aware publisher. Other metadata
+  # endpoints with identity-specific contracts are handled above.
+  printf '{"default_branch":"main","allow_merge_commit":false,"allow_rebase_merge":false,"allow_squash_merge":true,"delete_branch_on_merge":true,"squash_merge_commit_title":"PR_TITLE","squash_merge_commit_message":"PR_BODY"}\n'
   ;;
 *)
   printf '[]\n'

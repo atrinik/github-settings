@@ -204,6 +204,14 @@
   must explicitly converge inventory repositories to default-setup
   `not-configured` and all other active repositories to `configured` without
   weakening dependency, secret-scanning, or vulnerability-reporting features.
+- Keep ordinary ruleset publication delta-aware using the shared audit/publisher
+  comparison contract. Normalize only documented actor-ID equivalence and
+  reviewed compatible PR/CI extension values; preserve existing writable
+  extension fields in every replacement payload. Reject unknown or conflicting
+  restrictions, including additional deployment gates, instead of discarding
+  them. Verify exact existing ruleset identity and re-read full state immediately
+  before PUT, refusing observed concurrent edits. Repository merge defaults and
+  organization workflow permissions write only their real managed-field drift.
 - Keep organization security publication delta-aware. Normalize GitHub's
   legacy aggregate security response before comparing desired configuration,
   update only real configuration/default drift, and never re-attach a

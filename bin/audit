@@ -234,24 +234,7 @@ organization_ruleset_scope() {
     else error("unknown managed ruleset scope") end'
 }
 
-ruleset_normalization='
-# Omitted request fields are expanded by GitHub to these exact defaults.
-# Preserve nondefault, malformed and unknown fields as observable drift.
-def normalize_rules:
-  map(if .type == "pull_request" then
-    .parameters |= (
-      if .required_reviewers == [] then del(.required_reviewers) else . end |
-      if .require_extra_approval_for_unattributed_changes == true then
-        del(.require_extra_approval_for_unattributed_changes) else . end |
-      if (.allowed_merge_methods | type) == "array" and
-        (.allowed_merge_methods | sort) == ["merge", "rebase", "squash"] then
-        del(.allowed_merge_methods) else . end)
-  elif .type == "required_status_checks" then
-    .parameters |= (
-      if .do_not_enforce_on_create == false then del(.do_not_enforce_on_create) else . end |
-      .required_status_checks |= sort_by(.context, .integration_id))
-  else . end) | sort_by(.type);
-'
+ruleset_normalization=$(cat "${root}/lib/ruleset-policy.jq")
 
 read_effective_rules() {
   local repository=$1 branch=$2 encoded
@@ -345,13 +328,6 @@ check_ruleset() {
     wanted=$(jq --argjson scope "${scope}" '.conditions.repository_name = $scope' <<<"${wanted}")
   fi
   if ! jq -e --argjson wanted "${wanted}" "${ruleset_normalization}"'
-      # GitHub returns null for OrganizationAdmin, whose desired actor ID is 1.
-      def normalize_bypass:
-        map(if .actor_type == "OrganizationAdmin" and .actor_id == null then
-          .actor_id = 1 else . end) | sort_by(.actor_type, .actor_id, .bypass_mode);
-      def normalize_conditions:
-        with_entries(if .key == "ref_name" or .key == "repository_name" then
-          .value.include |= sort | .value.exclude |= sort else . end);
       .enforcement == $wanted.enforcement and .target == $wanted.target and
       (.bypass_actors | normalize_bypass) == ($wanted.bypass_actors | normalize_bypass) and
       (.conditions | normalize_conditions) == ($wanted.conditions | normalize_conditions) and

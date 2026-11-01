@@ -7,6 +7,7 @@ temporary=$(mktemp -d)
 trap 'rm -rf "${temporary}"' EXIT
 mkdir -p "${temporary}/mock" "${temporary}/full/bin"
 cp -R "${root}/config" "${temporary}/full/config"
+cp -R "${root}/lib" "${temporary}/full/lib"
 cp "${root}/bin/audit" "${temporary}/full/bin/audit"
 # Schema validation has its own policy tests; these isolate live API evidence.
 printf '#!/usr/bin/env bash\nexit 0\n' >"${temporary}/full/bin/validate"
@@ -141,7 +142,7 @@ output=$(run_audit legacy-security)
 grep -Fq 'Governance audit passed:' <<<"${output}"
 output=$(run_audit repository-rulesets)
 grep -Fq 'Governance audit passed:' <<<"${output}"
-for scenario in api-defaults-omitted api-default-order scope-order inherited-tag-unaffected foreign-tag sha-enforced-on languages-readable languages-empty advanced-null-languages; do
+for scenario in owner-id-ignored api-defaults-omitted api-default-order scope-order inherited-tag-unaffected foreign-tag sha-enforced-on languages-readable languages-empty advanced-null-languages; do
   output=$(run_audit "${scenario}")
   grep -Fq 'Governance audit passed:' <<<"${output}"
 done
@@ -265,7 +266,6 @@ assert_drift organization-codeql-owner "managed security ruleset must be reposit
 assert_drift organization-dependency-owner "managed security ruleset must be repository-owned '07 - Dependency review'"
 assert_drift integrity-bypass "ruleset scope or policy drift '01 - Default branch integrity'"
 assert_drift pr-bypass "ruleset scope or policy drift '02 - Changes through pull requests'"
-assert_drift owner-id-drift "ruleset scope or policy drift '02 - Changes through pull requests'"
 assert_drift pending-wrong-dependency-scope "ruleset scope or policy drift '07 - Dependency review'"
 for scenario in wrong-app wrong-context strict-ci; do
   assert_drift "${scenario}" 'effective required CI contexts or app drift'

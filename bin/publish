@@ -369,6 +369,59 @@ is_temporary_security_advisory_repository() {
       "${repositories_config}" >/dev/null
 }
 
+# Compare only declared metadata keys; never PATCH already-converged defaults.
+converge_settings() {
+  local method=$1 endpoint=$2 input=$3 current
+  current=$(github_api "${endpoint}") || return 1
+  if ! jq -e 'type == "object"' <<<"${current}" >/dev/null; then
+    echo "error: unreadable settings: ${endpoint}" >&2
+    return 1
+  fi
+  if jq -e --slurpfile desired "${input}" '
+    . as $current | all($desired[0] | to_entries[]; $current[.key] == .value)
+  ' <<<"${current}" >/dev/null; then
+    echo "KEEP /${endpoint}"
+  else
+    run_api "${method}" "${endpoint}" "${input}"
+  fi
+}
+
+# Preserve compatible writable API extensions on a managed-policy update.
+# Unknown restrictions fail closed rather than disappearing in a replacement PUT.
+update_managed_ruleset() {
+  local endpoint=$1 input=$2 id=$3 source_type=$4 source=$5
+  local current fresh output
+  current=$(github_api "${endpoint}") || return 1
+  if ! jq -e --argjson id "${id}" --arg source_type "${source_type}" \
+    --arg source "${source}" --slurpfile desired "${input}" '
+      .id == $id and .source_type == $source_type and .source == $source and
+      .name == $desired[0].name
+    ' <<<"${current}" >/dev/null; then
+    echo "error: managed ruleset identity changed; retained: ${endpoint}" >&2
+    return 1
+  fi
+  output=$(mktemp)
+  temporary_files+=("${output}")
+  jq -L "${root}/lib" --slurpfile desired "${input}" '
+    include "ruleset-policy"; prepare_policy($desired[0])
+  ' <<<"${current}" >"${output}" || return 1
+  if jq -e -L "${root}/lib" --slurpfile desired "${output}" '
+    include "ruleset-policy";
+    (policy_body | normalize_policy) == ($desired[0] | normalize_policy)
+  ' <<<"${current}" >/dev/null; then
+    echo "KEEP /${endpoint} $(jq -r .name "${input}")"
+    return
+  fi
+  # Re-read the full document immediately before a replacement and refuse any
+  # observed concurrent edit, including changes in unmanaged fields.
+  fresh=$(github_api "${endpoint}") || return 1
+  if ! jq -e --argjson prior "${current}" '. == $prior' <<<"${fresh}" >/dev/null; then
+    echo "error: managed ruleset changed during planning; retained: ${endpoint}" >&2
+    return 1
+  fi
+  run_api PUT "${endpoint}" "${output}"
+}
+
 upsert_repository_ruleset() {
   local repository=$1
   local input=$2
@@ -379,7 +432,8 @@ upsert_repository_ruleset() {
   id=$(jq -r --arg name "${name}" 'map(select(.name == $name))[0].id // empty' <<<"${rulesets}")
 
   if [[ -n ${id} ]]; then
-    run_api PUT "repos/${organization}/${repository}/rulesets/${id}" "${input}"
+    update_managed_ruleset "repos/${organization}/${repository}/rulesets/${id}" \
+      "${input}" "${id}" Repository "${organization}/${repository}"
   else
     run_api POST "repos/${organization}/${repository}/rulesets" "${input}"
   fi
@@ -394,7 +448,8 @@ upsert_organization_ruleset() {
   id=$(jq -r --arg name "${name}" 'map(select(.name == $name))[0].id // empty' <<<"${rulesets}")
 
   if [[ -n ${id} ]]; then
-    run_api PUT "orgs/${organization}/rulesets/${id}" "${input}"
+    update_managed_ruleset "orgs/${organization}/rulesets/${id}" \
+      "${input}" "${id}" Organization "${organization}"
   else
     run_api POST "orgs/${organization}/rulesets" "${input}"
   fi
@@ -1273,7 +1328,7 @@ delete_removed_security_merge_rulesets() {
 # These repository rules remain repository-owned even in organization scope:
 # GitHub Team does not support organization-level code-scanning rules.
 publish_security_merge_rulesets() {
-  local repository kind template name existing id current reason status readiness_mode phase metadata effective_branch proven_current
+  local repository kind template name existing id current reason status readiness_mode phase metadata effective_branch proven_current preserved_payload
   delete_removed_security_merge_rulesets || return 1
   for kind in code_scanning dependency_review; do
     if [[ ${kind} == code_scanning ]]; then
@@ -1375,7 +1430,12 @@ publish_security_merge_rulesets() {
           echo "KEEP /repos/${organization}/${repository}/rulesets/${id} ${name}"
           continue
         fi
-        run_api PUT "repos/${organization}/${repository}/rulesets/${id}" "${template}"
+        preserved_payload=$(mktemp)
+        temporary_files+=("${preserved_payload}")
+        jq -L "${root}/lib" --slurpfile desired "${template}" '
+          include "ruleset-policy"; prepare_policy($desired[0])
+        ' <<<"${current}" >"${preserved_payload}" || return 1
+        run_api PUT "repos/${organization}/${repository}/rulesets/${id}" "${preserved_payload}"
       else
         run_api POST "repos/${organization}/${repository}/rulesets" "${template}"
       fi
@@ -2084,11 +2144,11 @@ converge_immutable_release_policy
 
 converge_organization_settings "${organization_metadata}"
 converge_actions_permissions
-run_api PUT "orgs/${organization}/actions/permissions/workflow" \
+converge_settings PUT "orgs/${organization}/actions/permissions/workflow" \
   "${root}/config/actions-workflow.json"
 
 for repository in "${active_repositories[@]}"; do
-  run_api PATCH "repos/${organization}/${repository}" \
+  converge_settings PATCH "repos/${organization}/${repository}" \
     "${root}/config/repository-defaults.json"
 done
 

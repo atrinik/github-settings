@@ -390,6 +390,26 @@ migration. Before changing immutable releases, it snapshots the exact current
 organization mode and selected repository IDs. A failed update or verification
 automatically restores and verifies that snapshot.
 
+Repository merge defaults and organization workflow permissions are written only
+when their declared fields differ. Ordinary ruleset updates compare normalized
+policy, treating the ignored `OrganizationAdmin.actor_id` and array ordering as
+semantically equivalent. Publisher and audit share the comparison contract in
+`lib/ruleset-policy.jq`.
+
+GitHub's additional PR/CI parameters are writable controls. Existing empty
+`required_reviewers`, all three `allowed_merge_methods`,
+`require_extra_approval_for_unattributed_changes: true`, and
+`do_not_enforce_on_create: false` are compatible with this policy and are copied
+unchanged into replacement payloads. Other values, unknown parameters, extra
+rules (including deployment gates), and unknown condition fields require manual
+review; the publisher stops instead of dropping them. Managed fields still
+converge on real drift. Existing ruleset updates verify the listed identity and
+re-read the full document before PUT, refusing observed concurrent changes.
+These reads are not an atomic API transaction. Review the complete plan before
+any authorized apply; normalization does not authorize rule retirement or a
+live policy change. Queue installation and verification still precede relaxed
+required CI.
+
 The organization security phase compares GitHub's normalized configuration,
 default, and repository-association state before writing. It updates only
 drifted configurations and attaches only repositories that are not already
