@@ -313,13 +313,10 @@
         "ATRINIK_DEVELOPMENT_CORE_CONFIG",
         "ATRINIK_DEVELOPMENT_PUBLISHER_CONFIG",
         "ATRINIK_DEVELOPMENT_RENDEZVOUS_CONFIG",
-        "ATRINIK_PRODUCTION_BUILDS_READ_TOKEN",
         "CLOUDFLARE_ACCOUNT_ID",
         "CLOUDFLARE_API_TOKEN"
       ],
-      "variable_names": [
-        "ATRINIK_PRODUCTION_WRITER_FENCE_POLICY"
-      ]
+      "variable_names": []
     },
     {
       "deployment_branch_policy": {
@@ -334,7 +331,6 @@
       "secret_names": [
         "ATRINIK_DELIVERY_RESOURCE_POLICY",
         "ATRINIK_DELIVERY_RESOURCE_READ_TOKEN",
-        "ATRINIK_PRODUCTION_BUILDS_READ_TOKEN",
         "ATRINIK_PRODUCTION_CORE_CONFIG",
         "ATRINIK_PRODUCTION_PUBLISHER_CONFIG",
         "ATRINIK_PRODUCTION_RENDEZVOUS_CONFIG",
@@ -342,14 +338,13 @@
         "CLOUDFLARE_API_TOKEN"
       ],
       "variable_names": [
-        "ATRINIK_PRODUCTION_RECOVERY_PUBLIC_KEY",
-        "ATRINIK_PRODUCTION_WRITER_FENCE_POLICY"
+        "ATRINIK_PRODUCTION_RECOVERY_PUBLIC_KEY"
       ]
     }
   ],
   "github_pages_sites": [
     {
-      "activation_marker": "actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e",
+      "activation_marker": "actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346",
       "build_type": "workflow",
       "environment": "github-pages",
       "https_enforced": true,
@@ -460,28 +455,6 @@
       "secret_scope": "environment"
     },
     {
-      "credential_type": "cloudflare_user_token",
-      "consumers": [
-        ".github/workflows/deploy-development.yml"
-      ],
-      "environment": "development",
-      "last_verified_on": "2026-10-11",
-      "owner": "Zoey Seraphina Rose (Atrinik organization owner)",
-      "purpose": "Read retained Builds and Worker settings to prove the stopped-writer fence without deployment.",
-      "repository": "atrinik/metaserver-worker",
-      "repository_id": 1324297032,
-      "required_scopes": [
-        "Workers CI Read",
-        "Workers Scripts Read"
-      ],
-      "rotate_by": "2027-01-09",
-      "rotation_cadence_days": 90,
-      "rotation_owner": "Zoey Seraphina Rose (Atrinik organization owner)",
-      "runbook": "README.md#metaserver-development-credentials",
-      "secret_name": "ATRINIK_PRODUCTION_BUILDS_READ_TOKEN",
-      "secret_scope": "environment"
-    },
-    {
       "consumers": [
         ".github/workflows/promote-production.yml"
       ],
@@ -522,28 +495,6 @@
       "rotation_owner": "Zoey Seraphina Rose (Atrinik organization owner)",
       "runbook": "README.md#metaserver-production-credentials",
       "secret_name": "ATRINIK_DELIVERY_RESOURCE_READ_TOKEN",
-      "secret_scope": "environment"
-    },
-    {
-      "consumers": [
-        ".github/workflows/promote-production.yml"
-      ],
-      "credential_type": "cloudflare_user_token",
-      "environment": "production",
-      "last_verified_on": "2026-10-11",
-      "owner": "Zoey Seraphina Rose (Atrinik organization owner)",
-      "purpose": "Read retained Builds and Worker settings to prove the stopped-writer fence without deployment. Reuse in the production control-plane workflow is owner-authorized; this record declares production placement, which remains pending. Provider expiry is unknown and rotate_by is internal policy.",
-      "repository": "atrinik/metaserver-worker",
-      "repository_id": 1324297032,
-      "required_scopes": [
-        "Workers CI Read",
-        "Workers Scripts Read"
-      ],
-      "rotate_by": "2027-01-09",
-      "rotation_cadence_days": 90,
-      "rotation_owner": "Zoey Seraphina Rose (Atrinik organization owner)",
-      "runbook": "README.md#metaserver-production-credentials",
-      "secret_name": "ATRINIK_PRODUCTION_BUILDS_READ_TOKEN",
       "secret_scope": "environment"
     }
   ],

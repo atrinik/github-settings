@@ -103,11 +103,10 @@ jq -e '
         "ATRINIK_DEVELOPMENT_CORE_CONFIG",
         "ATRINIK_DEVELOPMENT_PUBLISHER_CONFIG",
         "ATRINIK_DEVELOPMENT_RENDEZVOUS_CONFIG",
-        "ATRINIK_PRODUCTION_BUILDS_READ_TOKEN",
         "CLOUDFLARE_ACCOUNT_ID",
         "CLOUDFLARE_API_TOKEN"
       ],
-      variable_names: ["ATRINIK_PRODUCTION_WRITER_FENCE_POLICY"]
+      variable_names: []
     }) and
   any(.github_actions_environments[]; . == {
       deployment_branch_policy: {custom_branch_policies: false, patterns: [], protected_branches: true},
@@ -117,14 +116,14 @@ jq -e '
       required_reviewers: [],
       secret_names: [
         "ATRINIK_DELIVERY_RESOURCE_POLICY", "ATRINIK_DELIVERY_RESOURCE_READ_TOKEN",
-        "ATRINIK_PRODUCTION_BUILDS_READ_TOKEN", "ATRINIK_PRODUCTION_CORE_CONFIG",
+        "ATRINIK_PRODUCTION_CORE_CONFIG",
         "ATRINIK_PRODUCTION_PUBLISHER_CONFIG", "ATRINIK_PRODUCTION_RENDEZVOUS_CONFIG",
         "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN"
       ],
-      variable_names: ["ATRINIK_PRODUCTION_RECOVERY_PUBLIC_KEY", "ATRINIK_PRODUCTION_WRITER_FENCE_POLICY"]
+      variable_names: ["ATRINIK_PRODUCTION_RECOVERY_PUBLIC_KEY"]
     }) and
   .github_pages_sites == [{
-    activation_marker: "actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e",
+    activation_marker: "actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346",
     build_type: "workflow",
     environment: "github-pages",
     https_enforced: true,
