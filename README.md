@@ -103,7 +103,9 @@ expected.
   repository ruleset could tighten or loosen the unlisted ones unseen) or
   an organization ruleset that stopped targeting it. A rule that comes from
   a repository ruleset is fixed in that repository ruleset
-  (`repos/O/R/rulesets/ID`), never by rewriting the organization one. Tag
+  (`repos/O/R/rulesets/ID`), never by rewriting the organization one. When
+  a recorded organization ruleset's own baseline body disagrees with the
+  profile, the fix is to make the two agree in the baseline. Tag
   rules
   are checked for presence only, and a tag ruleset with ref excludes does
   not count; if a tag ruleset's body cannot be read, the tag check is one

@@ -200,14 +200,13 @@ def validate(base):
             errors.append(f"repository {repo}: checks must be a list of check names")
         overrides = entry.get("overrides", {})
         bad = shape_errors(f"repository {repo} override", overrides, SHAPES)
-        exceptions += len(overrides) if isinstance(overrides, dict) else 0
-        errors += bad
+        errors, exceptions = errors + bad, exceptions + (len(overrides) if isinstance(overrides, dict) else 0)
         if bad or entry["profile"] in bad_profiles:
             continue
         if overrides and not entry.get("why"):
             errors.append(f'repository {repo}: an override needs a "why"')
         wanted = profile_for(base, entry).get("security_configuration")
-        if wanted and wanted not in configs:
+        if wanted and isinstance(configs, dict) and wanted not in configs:  # a bad section is reported above
             errors.append(f"repository {repo}: security configuration {wanted!r} is not in the baseline")
     if exceptions > MAX_EXCEPTIONS:
         errors.append(f"{exceptions} per-repository exceptions; the limit is {MAX_EXCEPTIONS}")
@@ -284,8 +283,7 @@ class Checker:
 
     def check_actions(self):
         for section, want in self.base.get("actions", {}).items():
-            path = f"orgs/{self.org}/actions/permissions{ACTIONS_PATHS[section]}"
-            live = self.read(path, path)
+            live = self.read(path := f"orgs/{self.org}/actions/permissions{ACTIONS_PATHS[section]}", path)
             if live is not None:
                 self.compare_fields(path, want, live, lambda key, value, p=path, w=want: gh_command("PUT", p, w))
 
@@ -299,8 +297,7 @@ class Checker:
             if name not in self.live_ruleset_ids:
                 self.diff(f"orgs/{self.org}/rulesets", f"ruleset {name!r} is missing", self.ruleset_fix(name))
                 continue
-            path = f"orgs/{self.org}/rulesets/{self.live_ruleset_ids[name]}"
-            live = self.read(path, path)
+            live = self.read(path := f"orgs/{self.org}/rulesets/{self.live_ruleset_ids[name]}", path)
             if live is not None and not matches(want, live):
                 keys = ", ".join(k for k in sorted(want) if not matches(want[k], live.get(k)))
                 self.diff(path, f"ruleset {name!r} differs in {keys}", self.ruleset_fix(name))
@@ -382,15 +379,18 @@ class Checker:
                 return self.ruleset_fix(name)
         return f"add a {rule_type} rule to an organization ruleset in the baseline"
 
-    def org_rule_fix(self, name, rid):
-        """A rule from an organization ruleset is fixed in that ruleset: PUT its baseline body, or record it."""
+    def org_rule_fix(self, name, rid, rule_type, params=None):
+        """The fix for a rule from an organization ruleset, and whether check_rulesets reports that ruleset."""
         listing = self.gh.get(f"repos/{self.org}/{name}/rulesets?includes_parents=true&per_page=100", True)
         named = [{"id": i, "name": n} for n, i in (self.live_ruleset_ids or {}).items()] + (  # no admin:org needed
             listing if isinstance(listing, list) else [])
         rname, path = next((r["name"] for r in named if r["id"] == rid), None), f"orgs/{self.org}/rulesets/{rid}"
-        if rname in self.wanted_rulesets:
-            return f"{self.ruleset_cmd} {shlex.quote(rname)} | gh api --method PUT {path} --input -"
-        return f"record ruleset {rname or rid} in the baseline, or change the rule in {path}"
+        if rname not in self.wanted_rulesets:
+            return f"record ruleset {rname or rid} in the baseline, or change the rule in {path}", True
+        if any(r["type"] == rule_type and (params is None or not matches(params, r.get("parameters", {})))
+               for r in self.wanted_rulesets[rname]["rules"]):  # its PUT would send this same rule again
+            return f"make the profile and ruleset {rname!r} agree in the baseline", False
+        return f"{self.ruleset_cmd} {shlex.quote(rname)} | gh api --method PUT {path} --input -", True
 
     def repo_ruleset_fix(self, name, rid, verb):
         path = f"repos/{self.org}/{name}/rulesets/{rid}"
@@ -410,7 +410,7 @@ class Checker:
                    if not matches(params, r.get("parameters", {}))}
             for from_org, rid in sorted(bad, key=str):  # a repository ruleset is fixed there, not at the provider
                 self.diff(where, f"{rule_type} rule from {'' if from_org else 'repository '}ruleset {rid} is not "
-                          f"{show(params)}", self.org_rule_fix(name, rid) if from_org
+                          f"{show(params)}", self.org_rule_fix(name, rid, rule_type, params)[0] if from_org
                           else self.repo_ruleset_fix(name, rid, "change"))
         template = (self.base.get("required_check_ruleset") or {}).get("name", "").replace("{repository}", name)
         check_fix = self.ruleset_fix(template) if template else "change the ruleset that requires checks"
@@ -425,10 +425,10 @@ class Checker:
                              f"baseline {show(checks)}", check_fix)
         for rule in (r for r in live if r["type"] not in want_rules and r["type"] != "required_status_checks"):
             rid, from_org = rule.get("ruleset_id"), rule.get("ruleset_source_type") == "Organization"
-            if not from_org or rid not in (self.live_ruleset_ids or {}).values():  # else check_rulesets reports it
+            fix, reported = self.org_rule_fix(name, rid, rule["type"]) if from_org else (None, False)
+            if not reported or rid not in (self.live_ruleset_ids or {}).values():  # else check_rulesets reports it
                 self.diff(where, f"unexpected {rule['type']} rule from {'organization ' if from_org else ''}ruleset "
-                          f"{rid}", self.org_rule_fix(name, rid) if from_org else self.repo_ruleset_fix(name, rid,
-                                                                                                         "remove"))
+                          f"{rid}", fix or self.repo_ruleset_fix(name, rid, "remove"))
 
     def check_tag_rules(self, name, want):
         where, base = f"{self.org}/{name} tags {want['ref']}", f"repos/{self.org}/{name}/rulesets"

@@ -206,6 +206,30 @@ class CheckTest(unittest.TestCase):
         # The matching baseline ruleset 102 would be a no-op PUT, so it is never the fix.
         self.assertFalse(any("rulesets/102" in line for line in lines), lines)
 
+    def test_recorded_organization_ruleset_that_disagrees_with_the_profile_is_fixed_in_the_baseline(self):
+        recorded = self.base["rulesets"]["Changes through pull requests"]["rules"]
+        recorded[0]["parameters"]["require_code_owner_review"] = True
+        recorded.append({"type": "merge_queue", "parameters": {}})
+        self.api[f"orgs/{ORG}/rulesets/102"]["rules"] = copy.deepcopy(recorded)  # live matches its baseline body
+        for repo in ("docs", "engine"):
+            rules = self.api[f"repos/{ORG}/{repo}/rules/branches/main?per_page=100"]
+            next(r for r in rules if r["type"] == "pull_request")["parameters"]["require_code_owner_review"] = True
+            rules.append({"type": "merge_queue", "ruleset_id": 102, "ruleset_source_type": "Organization"})
+        for admin_org in (True, False):
+            if not admin_org:
+                for path in list(self.api):
+                    if path.startswith(f"orgs/{ORG}") and path != f"orgs/{ORG}/repos?per_page=100&type=all":
+                        self.api[path] = {"__error__": "Forbidden (HTTP 403)"}
+            with self.subTest(admin_org=admin_org):
+                code, lines = self.run_check()
+                self.assertEqual(code, 1)
+                agree = "fix: make the profile and ruleset 'Changes through pull requests' agree in the baseline"
+                self.assertLine(lines, f"{ORG}/engine main: pull_request rule from ruleset 102 is not", agree)
+                self.assertLine(lines, f"{ORG}/engine main: unexpected merge_queue rule from organization ruleset 102",
+                                agree)
+                # The PUT would send the body that is already live.
+                self.assertFalse(any("rulesets/102" in line for line in lines), lines)
+
     def test_unreadable_tag_ruleset_is_only_unverifiable(self):
         self.api[f"repos/{ORG}/docs/rulesets/103?includes_parents=true"] = {"__error__": "Forbidden (HTTP 403)"}
         code, lines = self.run_check()
@@ -321,6 +345,9 @@ class BaselineTest(unittest.TestCase):
                                 (lambda b: b["recorded"].update(teams=["x"]), "recorded must be"),
                                 (lambda b: b["recorded"].update(team={}), "recorded must be"),
                                 (lambda b: b["security_configurations"].update(x=1), "security_configurations must be"),
+                                (lambda b: b.update(security_configurations=3), "security_configurations must be"),
+                                (lambda b: b.update(security_configurations=None), "security_configurations must be"),
+                                (lambda b: b.update(security_configurations=True), "security_configurations must be"),
                                 (lambda b: b.update(organization_settings=[]), "organization_settings must be"),
                                 (lambda b: b["reminders"].append({"item": "x"}), "reminders must be"),
                                 (lambda b: b["required_check_ruleset"].update(name="CI"), "required_check_ruleset must"),
