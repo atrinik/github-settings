@@ -65,7 +65,8 @@ WEB_ONLY.update(two_factor_requirement_enabled="security", default_repository_br
 show = functools.partial(json.dumps, sort_keys=True)
 # Effective rules are GitHub's computed view of a branch or tag, so their lines name the ruleset and carry no command.
 SEE_RULESETS = ("an organization ruleset that is missing, unrecorded or different from the baseline has its own "
-                "line with the command; otherwise correct the ruleset by hand, or the baseline")
+                "line with the command (a could-not-verify line if it could not be read); otherwise correct the "
+                "ruleset by hand, or the baseline")
 
 
 class Unverifiable(Exception):
@@ -380,9 +381,9 @@ class Checker:
 
     def rule_source(self, name, rule):
         """Where an effective rule comes from, and its fix: a command only for a repository ruleset."""
-        rid = rule.get("ruleset_id")
-        if rule.get("ruleset_source_type") == "Organization":
-            return f"organization ruleset {rid}", SEE_RULESETS
+        rid, kind = rule.get("ruleset_id"), str(rule.get("ruleset_source_type") or "unknown").lower()
+        if kind != "repository":
+            return f"{kind} ruleset {rid}", SEE_RULESETS
         path = f"repos/{self.org}/{name}/rulesets/{rid}"
         return f"repository ruleset {rid}", (f"change the rule in {path} (read it, edit, PUT it back with --input -), "
                                              f"or {gh_command('DELETE', path)}")
@@ -396,7 +397,7 @@ class Checker:
         for rule_type in sorted(set(want_rules) - {r["type"] for r in live}):
             self.diff(where, f"no {rule_type} rule", SEE_RULESETS)
         required = [r for r in live if r["type"] == "required_status_checks"]
-        for rule in (r for r in live if r["type"] != "required_status_checks"):  # each must match, from any ruleset
+        for rule in (r for r in live if r not in required or r["type"] in want_rules):  # from any ruleset
             source, fix = self.rule_source(name, rule)
             if rule["type"] not in want_rules:
                 self.diff(where, f"unexpected {rule['type']} rule from {source}", fix)
@@ -532,7 +533,7 @@ def main(argv=None, github=None):
         return run(argv, github)
     except Exception:  # a baseline shape --validate does not know, an unexpected API response, or a bug
         traceback.print_exc()
-        print("could not run: unexpected error (traceback above); nothing was compared", file=sys.stderr)
+        print("could not run: unexpected error (traceback above); nothing was printed", file=sys.stderr)
         return 3
 
 

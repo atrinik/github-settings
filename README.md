@@ -108,9 +108,10 @@ expected.
   when that ruleset has a line of its own. They carry a command only for a
   repository ruleset (`repos/O/R/rulesets/ID`). For an organization ruleset
   the command is on that ruleset's own line, which exists when the ruleset
-  is missing, unrecorded or different from the baseline. When there is no
-  such line, the baseline's rulesets and the profile disagree, and the fix
-  is in the baseline. Tag rules are checked for presence only, and a tag
+  is missing, unrecorded or different from the baseline (a "could not
+  verify" line if it could not be read). When there is neither, the
+  baseline's rulesets and the profile disagree, and the fix is in the
+  baseline. Tag rules are checked for presence only, and a tag
   ruleset with ref excludes does not count; if a tag ruleset's body cannot
   be read, the tag check is one "could not verify" line;
 - security configurations, which one is the default for new repositories,

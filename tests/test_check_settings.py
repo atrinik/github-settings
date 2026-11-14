@@ -191,6 +191,25 @@ class CheckTest(unittest.TestCase):
         # The organization ruleset already matches, so its PUT would not fix this.
         self.assertFalse(any("orgs/example-org/rulesets" in line for line in lines), lines)
 
+    def test_required_status_checks_parameters_a_profile_names_are_compared(self):
+        self.base["profiles"]["standard"]["branch_rules"]["required_status_checks"] = {
+            "strict_required_status_checks_policy": True}
+        rules = self.api[f"repos/{ORG}/engine/rules/branches/main?per_page=100"]
+        rules.append({"type": "required_status_checks", "ruleset_id": 999, "ruleset_source_type": "Repository",
+                      "parameters": {"strict_required_status_checks_policy": False, "required_status_checks": [
+                          {"context": "Engine tests", "integration_id": 15368}]}})
+        code, lines = self.run_check()
+        self.assertEqual(code, 1)
+        self.assertLine(lines, f"{ORG}/engine main: required_status_checks rule from repository ruleset 999 is not",
+                        f"repos/{ORG}/engine/rulesets/999")
+
+    def test_a_rule_of_unknown_origin_gets_no_command(self):
+        self.api[f"repos/{ORG}/engine/rules/branches/main?per_page=100"].append({"type": "merge_queue"})
+        code, lines = self.run_check()
+        self.assertEqual(code, 1)
+        self.assertLine(lines, f"{ORG}/engine main: unexpected merge_queue rule from unknown ruleset None", POINTER)
+        self.assertFalse(any("gh api" in line for line in lines), lines)
+
     def test_differing_rule_from_an_unrecorded_organization_ruleset(self):
         rules = self.api[f"repos/{ORG}/engine/rules/branches/main?per_page=100"]
         other = copy.deepcopy(next(r for r in rules if r["type"] == "pull_request"))
