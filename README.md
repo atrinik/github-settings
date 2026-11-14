@@ -143,7 +143,7 @@ One JSON file per organization:
 | `required_check_ruleset`, `check_integration_id` | The template for the one-per-repository required-check ruleset (`{repository}` is replaced) and the App that must report the checks (15368 is GitHub Actions). |
 | `security_configurations` | Configurations by name, with `default_for_new_repos`. |
 | `profiles` | At most three repository profiles: `repository` (merge settings), `branch_rules`, `tag_rules`, `security_configuration`. |
-| `repositories` | Every repository: its `profile`, its required `checks`, and rarely `overrides` of profile keys with a `why`. An override of an object key, such as `repository`, changes only the entries it names. |
+| `repositories` | Every repository: its `profile`, its required `checks`, and rarely `overrides` of profile keys with a `why`. An override of an object key, such as `repository`, changes only the entries it names. The merge is one level deep: a `branch_rules` override replaces all the parameters of each rule type it names, so list them all; a `tag_rules` override needs both `ref` and `rules`; and an override cannot remove an entry. |
 | `recorded` | Names only: `teams`, `apps`, `environments`, `webhooks`, `organization_webhooks`. |
 | `reminders` | Plain notes about credentials and Apps, such as rotation dates. Never checked. |
 
