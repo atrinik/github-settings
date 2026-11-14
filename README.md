@@ -75,7 +75,11 @@ settings, effective rules on each default branch and the tag rules, security
 configuration attachment, team grants, environments and repository webhooks.
 Organization-level reads (Actions policy, organization rulesets, security
 configurations, teams, installed Apps) and settings GitHub hides from that
-login become "could not verify" lines. Organization webhooks need
+login become "could not verify" lines. When the login does see the whole
+response (an owner with `admin:org` for the organization, admin on the
+repository for merge settings, and always for Actions policy and security
+configurations), a baseline field the response lacks is a difference
+("is not in the API response"): usually a misspelled field name. Organization webhooks need
 `admin:org_hook`, which the everyday login does not have, so that line is
 expected.
 
@@ -96,7 +100,11 @@ expected.
   rule of a type must match the profile's parameters, and a rule type the
   profile does not name is a difference; so list every parameter of a rule
   in the profile, as `baselines/atrinik.json` does for `pull_request`, or a
-  repository ruleset could tighten or loosen the unlisted ones unseen) or an organization ruleset that stopped targeting it. Tag rules
+  repository ruleset could tighten or loosen the unlisted ones unseen) or
+  an organization ruleset that stopped targeting it. A rule that comes from
+  a repository ruleset is fixed in that repository ruleset
+  (`repos/O/R/rulesets/ID`), never by rewriting the organization one. Tag
+  rules
   are checked for presence only, and a tag ruleset with ref excludes does
   not count; if a tag ruleset's body cannot be read, the tag check is one
   "could not verify" line;

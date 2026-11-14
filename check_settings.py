@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """Read-only check of one GitHub organization against its baseline file.
 
-Usage: check_settings.py BASELINE.json [--validate | --ruleset NAME]. It runs only
-`gh api -X GET` as whoever is logged in to gh and writes nothing. It prints nothing
-when everything matches; otherwise one line per difference with a command that would
-fix it, then what it could not verify. Exit: 0 match, 1 differences, 2 only "could not
-verify", 3 could not run. Standard library only; README.md has the format and limits.
+Usage: check_settings.py BASELINE.json [--validate | --ruleset NAME]. It runs only `gh api -X GET` as whoever
+is logged in and writes nothing. Exit: 0 match, 1 differences, 2 only "could not verify", 3 could not run.
+README.md has the output, the baseline format and the limits.
 """
 
 import argparse
 import concurrent.futures
 import copy
+import functools
 import json
 import re
 import shlex
@@ -20,23 +19,47 @@ import urllib.parse
 
 MAX_PROFILES = 3
 MAX_EXCEPTIONS = 10
-TOP_KEYS = {"organization", "organization_settings", "actions", "rulesets", "required_check_ruleset",
-            "check_integration_id", "security_configurations", "profiles", "repositories", "recorded",
-            "reminders", "notes"}
-SHAPES = {"repository": ("an object of fields", lambda v: isinstance(v, dict)),  # profile keys, as the check reads them
-          "branch_rules": ("rule type to parameters", lambda v: isinstance(v, dict) and all(isinstance(p, dict) for p in
-                                                                                             v.values())),
-          "tag_rules": ('a "ref" and a list of rule types in "rules"', lambda v: isinstance(v, dict) and isinstance(
-              v.get("ref"), str) and isinstance(v.get("rules"), list) and all(isinstance(r, str) for r in v["rules"])),
-          "security_configuration": ("a name", lambda v: isinstance(v, str))}
-RECORDED_KEYS = {"teams", "apps", "environments", "webhooks", "organization_webhooks"}
+TOP_KEYS = {"organization", "organization_settings", "actions", "rulesets", "required_check_ruleset", "reminders",
+            "check_integration_id", "security_configurations", "profiles", "repositories", "recorded", "notes"}
 ACTIONS_PATHS = {"permissions": "", "selected_actions": "/selected-actions", "workflow": "/workflow"}
+
+
+def mapping(of=lambda v: True):
+    """A shape test: an object whose values all pass `of`."""
+    return lambda v: isinstance(v, dict) and all(of(x) for x in v.values())
+
+
+def names_list(v):
+    return isinstance(v, list) and all(isinstance(x, str) for x in v)
+
+
+SHAPES = {"repository": ("an object of fields", mapping()),  # profile keys, as the check reads them
+          "branch_rules": ("rule type to parameters", mapping(mapping())),
+          "tag_rules": ('a "ref" and a list of rule types in "rules"',
+                        lambda v: isinstance(v, dict) and isinstance(v.get("ref"), str) and names_list(v.get("rules"))),
+          "security_configuration": ("a name", lambda v: isinstance(v, str))}
+RECORDED = {"teams": mapping(mapping(lambda v: isinstance(v, str))), "apps": mapping(lambda v: isinstance(v, str)),
+            "environments": mapping(names_list), "webhooks": mapping(names_list), "organization_webhooks": names_list}
+RULESET = lambda v: (isinstance(v, dict) and {"target", "enforcement"} <= set(v) and isinstance(  # noqa: E731
+    v.get("rules"), list) and all(isinstance(r, dict) and isinstance(r.get("type"), str) for r in v["rules"]))
+SECTIONS = {"organization": ("the organization's login", lambda v: isinstance(v, str) and v != ""),
+            "organization_settings": ("an object of fields", mapping()),  # top-level sections the check reads
+            "rulesets": ("ruleset name to target, enforcement and rules that each have a type", mapping(RULESET)),
+            "required_check_ruleset": ("target, enforcement and rules that each have a type, and a name with "
+                                       "{repository}", lambda v: RULESET(v) and "{repository}" in str(v.get("name"))),
+            "reminders": ('a list of objects with an "item" and a "note"', lambda v: isinstance(v, list) and all(
+                isinstance(i, dict) and isinstance(i.get("item"), str) and isinstance(i.get("note"), str) for i in v)),
+            "actions": ("permissions, selected_actions or workflow, each an object of fields",
+                        lambda v: mapping(mapping())(v) and set(v) <= set(ACTIONS_PATHS)),
+            "security_configurations": ("configuration name to an object of fields", mapping(mapping())),
+            "recorded": (f"{', '.join(RECORDED)}, each in its shape (README.md)",
+                         lambda v: isinstance(v, dict) and all(k in RECORDED and RECORDED[k](x) for k, x in v.items()))}
 # Organization settings the REST API cannot change: the fix is this settings page.
 WEB_ONLY = dict.fromkeys(["members_can_delete_repositories", "members_can_change_repo_visibility",
                           "members_can_delete_issues", "members_can_invite_outside_collaborators",
                           "members_can_create_teams", "readers_can_create_discussions"], "member_privileges")
 WEB_ONLY.update(two_factor_requirement_enabled="security", default_repository_branch="repository_defaults")
-ATTACHED = {"attached", "enforced"}
+show = functools.partial(json.dumps, sort_keys=True)
 
 
 class Unverifiable(Exception):
@@ -83,8 +106,9 @@ class GitHub:
 
     def get(self, path, paginate=False):
         if path not in self.cache:
-            try:
-                self.cache[path] = self.fetch(path, paginate)
+            try:  # an empty response (204, such as no configuration attached) reads as {}
+                value = self.fetch(path, paginate)
+                self.cache[path] = {} if value is None else value
             except Unverifiable as error:
                 self.cache[path] = error
         return self.cache[path]
@@ -92,10 +116,6 @@ class GitHub:
     def prefetch(self, reads):
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
             list(pool.map(lambda read: self.get(*read), reads))
-
-
-def show(value):
-    return json.dumps(value, sort_keys=True)
 
 
 def gh_command(method, path, body=None):
@@ -133,12 +153,10 @@ def expected_rulesets(base):
             if not entry.get("checks"):
                 continue
             body = json.loads(json.dumps(template).replace("{repository}", repo))
-            for rule in body["rules"]:
-                if rule["type"] == "required_status_checks":
-                    rule.setdefault("parameters", {})["required_status_checks"] = [
-                        dict({"context": c}, **({"integration_id": base["check_integration_id"]}
-                                                if base.get("check_integration_id") else {}))
-                        for c in entry["checks"]]
+            app = {"integration_id": base["check_integration_id"]} if base.get("check_integration_id") else {}
+            for rule in (r for r in body["rules"] if r["type"] == "required_status_checks"):
+                rule.setdefault("parameters", {})["required_status_checks"] = [dict(app, context=c)
+                                                                               for c in entry["checks"]]
             rulesets[body["name"]] = body
     return rulesets
 
@@ -149,40 +167,40 @@ def profile_for(base, entry):
     return profile
 
 
-def profile_errors(where, profile):
+def shape_errors(where, value, shapes):
     """The shapes the checker reads, so a malformed baseline fails --validate instead of the live run."""
-    if not isinstance(profile, dict):
+    if not isinstance(value, dict):
         return [f"{where}: must be an object"]
-    return [f"{where}: unknown key {k!r}" for k in sorted(set(profile) - set(SHAPES))] + [
-        f"{where}: {k} must be {SHAPES[k][0]}" for k in sorted(set(profile) & set(SHAPES)) if not SHAPES[k][1](profile[k])]
+    return [f"{where}: unknown key {k!r}" for k in sorted(set(value) - set(shapes))] + [
+        f"{where}: {k} must be {shapes[k][0]}" for k in sorted(set(value) & set(shapes)) if not shapes[k][1](value[k])]
 
 
 def validate(base):
-    errors = []
     if not isinstance(base, dict):
         return ["the baseline must be a JSON object"]
-    errors += [f"unknown top-level key {k!r}" for k in sorted(set(base) - TOP_KEYS)]
-    if not isinstance(base.get("organization"), str) or not base.get("organization"):
-        errors.append('"organization" must name the organization')
+    errors = [f"unknown top-level key {k!r}" for k in sorted(set(base) - TOP_KEYS)]
+    errors += shape_errors("baseline", {k: v for k, v in dict({"organization": None}, **base).items() if k in SECTIONS},
+                           SECTIONS)
     profiles = base.get("profiles")
     if not isinstance(profiles, dict) or not 1 <= len(profiles) <= MAX_PROFILES:
         errors.append(f'"profiles" must hold 1 to {MAX_PROFILES} profiles')
         profiles = {}
+    bad_profiles = set()
     for name, profile in profiles.items():
-        errors += profile_errors(f"profile {name}", profile)
-    configs = base.get("security_configurations", {})
-    exceptions = 0
+        bad = shape_errors(f"profile {name}", profile, SHAPES)
+        errors, bad_profiles = errors + bad, bad_profiles | ({name} if bad else set())
+    configs, exceptions = base.get("security_configurations", {}), 0
     for repo, entry in sorted(base.get("repositories", {}).items()):
         if not isinstance(entry, dict) or entry.get("profile") not in profiles:
             errors.append(f"repository {repo}: needs a known profile")
             continue
-        if not isinstance(entry.get("checks", []), list) or not all(isinstance(c, str) for c in entry.get("checks", [])):
+        if not names_list(entry.get("checks", [])):
             errors.append(f"repository {repo}: checks must be a list of check names")
         overrides = entry.get("overrides", {})
         exceptions += len(overrides)
-        bad = profile_errors(f"repository {repo} override", overrides)
+        bad = shape_errors(f"repository {repo} override", overrides, SHAPES)
         errors += bad
-        if bad or profile_errors("", profiles[entry["profile"]]):
+        if bad or entry["profile"] in bad_profiles:
             continue
         if overrides and not entry.get("why"):
             errors.append(f'repository {repo}: an override needs a "why"')
@@ -191,19 +209,6 @@ def validate(base):
             errors.append(f"repository {repo}: security configuration {wanted!r} is not in the baseline")
     if exceptions > MAX_EXCEPTIONS:
         errors.append(f"{exceptions} per-repository exceptions; the limit is {MAX_EXCEPTIONS}")
-    template = base.get("required_check_ruleset")
-    for name, body in list(base.get("rulesets", {}).items()) + ([("required_check_ruleset", template)] if template
-                                                                 is not None else []):
-        if not isinstance(body, dict) or not {"target", "enforcement", "rules"} <= set(body) or not isinstance(
-                body["rules"], list) or not all(isinstance(r, dict) and isinstance(r.get("type"), str)
-                                                for r in body["rules"]):
-            errors.append(f"ruleset {name}: needs target, enforcement and rules that each have a type")
-    if isinstance(template, dict) and "{repository}" not in str(template.get("name", "")):
-        errors.append('"required_check_ruleset" name must contain {repository}')
-    errors += [f"recorded: unknown key {k!r}" for k in sorted(set(base.get("recorded", {})) - RECORDED_KEYS)]
-    for item in base.get("reminders", []):
-        if not (isinstance(item, dict) and isinstance(item.get("item"), str) and isinstance(item.get("note"), str)):
-            errors.append('each reminder needs an "item" and a "note"')
     return errors
 
 
@@ -213,8 +218,7 @@ class Checker:
         self.diffs, self.unverified = [], []
         self.ruleset_cmd = f"python3 {shlex.quote(script)} {shlex.quote(baseline)} --ruleset"
         self.wanted_rulesets = expected_rulesets(base)
-        self.live_ruleset_ids = None
-        self.config_ids = {}
+        self.live_ruleset_ids, self.config_ids, self.recorded = None, {}, base.get("recorded", {})
 
     def diff(self, where, text, fix):
         self.diffs.append(f"{where}: {text} | fix: {fix}")
@@ -240,26 +244,23 @@ class Checker:
 
     def ruleset_fix(self, name):
         """POST when the live list lacks it, PUT when known; ID stands in when the list could not be read."""
-        ids = self.live_ruleset_ids
-        method, rid = ("POST", "") if ids is not None and name not in ids else ("PUT", f"/{(ids or {}).get(name, 'ID')}")
-        return f"{self.ruleset_cmd} {shlex.quote(name)} | gh api --method {method} orgs/{self.org}/rulesets{rid} --input -"
+        known = self.live_ruleset_ids is None or name in self.live_ruleset_ids
+        path = f"orgs/{self.org}/rulesets" + (f"/{(self.live_ruleset_ids or {}).get(name, 'ID')}" if known else "")
+        return f"{self.ruleset_cmd} {shlex.quote(name)} | gh api --method {'PUT' if known else 'POST'} {path} --input -"
 
-    def compare_fields(self, where, want, have, fix_for):
-        hidden = sorted(set(want) - set(have))
-        if hidden:
-            self.cannot(where, f"{', '.join(hidden)} not visible to this login (needs admin:org?)")
+    def compare_fields(self, where, want, have, fix_for, needs=None):
+        """A field the response lacks is unverifiable when the login `needs` more access, else a baseline error."""
+        hidden = ", ".join(sorted(set(want) - set(have)))
+        if hidden and not needs:
+            self.diff(where, f"{hidden} is not in the API response", "correct the field name in the baseline")
+        elif hidden:
+            self.cannot(where, f"{hidden} not visible to this login (needs {needs}, or a field name is misspelled)")
         for key, value in want.items():
             if key in have and not matches(value, have[key]):
                 self.diff(where, f"{key} is {show(have[key])}, baseline {show(value)}", fix_for(key, value))
 
     def run(self):
-        org = self.org
-        self.gh.prefetch([(f"orgs/{org}", False), (f"orgs/{org}/rulesets?per_page=100", True),
-                          (f"orgs/{org}/code-security/configurations?per_page=100", True),
-                          (f"orgs/{org}/code-security/configurations/defaults", False),
-                          (f"orgs/{org}/teams?per_page=100", True), (f"orgs/{org}/installations?per_page=100", False),
-                          (f"orgs/{org}/hooks?per_page=100", True), (f"orgs/{org}/repos?per_page=100&type=all", True)]
-                         + [(f"orgs/{org}/actions/permissions{p}", False) for p in ACTIONS_PATHS.values()])
+        org = self.org  # organization reads run one by one; the per-repository ones run eight at a time
         self.check_organization()
         self.check_actions()
         self.check_rulesets()
@@ -273,9 +274,11 @@ class Checker:
     def check_organization(self):
         live, page = self.read(f"orgs/{self.org}", f"orgs/{self.org}"), f"https://github.com/organizations/{self.org}"
         if live is not None:
-            self.compare_fields(f"orgs/{self.org}", self.base.get("organization_settings", {}), live, lambda k, v:
-                                f"change it at {page}/settings/{WEB_ONLY[k]}" if k in WEB_ONLY
+            fix = lambda k, v: (f"change it at {page}/settings/{WEB_ONLY[k]}" if k in WEB_ONLY  # noqa: E731
                                 else gh_command("PATCH", f"orgs/{self.org}", {k: v}))
+            # Owners with admin:org see the member privileges; without them, hidden fields are unverifiable.
+            self.compare_fields(f"orgs/{self.org}", self.base.get("organization_settings", {}), live, fix,
+                                None if "members_can_create_repositories" in live else "admin:org")
 
     def check_actions(self):
         for section, want in self.base.get("actions", {}).items():
@@ -305,7 +308,6 @@ class Checker:
                                  f"record it, or {gh_command('DELETE', f'orgs/{self.org}/rulesets/{rid}')}")
 
     def check_security_configurations(self):
-        want_all = self.base.get("security_configurations", {})
         path = f"orgs/{self.org}/code-security/configurations"
         live = self.read("security configurations", f"{path}?per_page=100", True)
         defaults = self.read("security configuration defaults", f"{path}/defaults")
@@ -314,26 +316,22 @@ class Checker:
         live = {c["name"]: c for c in live if c.get("target_type") != "global"}
         self.config_ids = {name: c["id"] for name, c in live.items()}
         default_of = {d["configuration"]["id"]: d["default_for_new_repos"] for d in defaults or []}
-        for name, want in sorted(want_all.items()):
-            settings = {k: v for k, v in want.items() if k != "default_for_new_repos"}
+        for name, want in sorted(self.base.get("security_configurations", {}).items()):
+            want = dict({"default_for_new_repos": "none"}, **want)  # not a default unless the baseline says so
             if name not in live:
-                self.diff(path, f"security configuration {name!r} is missing",
-                                 gh_command("POST", path, dict(settings, name=name)))
+                body = {k: v for k, v in want.items() if k != "default_for_new_repos"}
+                self.diff(path, f"security configuration {name!r} is missing", gh_command("POST", path, body))
                 continue
-            cid = live[name]["id"]
-            wrong = {k: v for k, v in settings.items() if not matches(v, live[name].get(k))}
-            if wrong:
-                self.diff(f"{path}/{cid}", f"{name!r} differs in {', '.join(sorted(wrong))}",
-                                 gh_command("PATCH", f"{path}/{cid}", wrong))
-            want_default, have_default = want.get("default_for_new_repos", "none"), default_of.get(cid, "none")
-            if defaults is not None and want_default != have_default:
-                self.diff(f"{path}/{cid}", f"{name!r} is the default for {have_default!r} repositories, "
-                                 f"baseline {want_default!r}", gh_command("PUT", f"{path}/{cid}/defaults",
-                                                                          {"default_for_new_repos": want_default}))
-        for name in sorted(set(live) - set(want_all)):
+            target, have = f"{path}/{live[name]['id']}", dict(live[name], default_for_new_repos=default_of.get(
+                live[name]["id"], "none"))
+            if defaults is None:  # already a could-not-verify line
+                del want["default_for_new_repos"]
+            self.compare_fields(f"{target} ({name})", want, have, lambda k, v, t=target: gh_command(
+                "PUT", f"{t}/defaults", {k: v}) if k == "default_for_new_repos" else gh_command("PATCH", t, {k: v}))
+        for name in sorted(set(live) - set(self.base.get("security_configurations", {}))):
             target = f"{path}/{live[name]['id']}"
             self.diff(target, f"security configuration {name!r} is not in the baseline",
-                             f"record it, or {gh_command('DELETE', target)}")
+                      f"record it, or {gh_command('DELETE', target)}")
 
     def check_repositories(self, live_repos):
         org, wanted = self.org, self.base.get("repositories", {})
@@ -346,10 +344,9 @@ class Checker:
         for name in names:
             branch = urllib.parse.quote(live_repos[name]["default_branch"], safe="")
             base = f"repos/{org}/{name}"
-            reads += [(base, False), (f"{base}/rules/branches/{branch}?per_page=100", True),
-                      (f"{base}/rulesets?includes_parents=true&per_page=100", True),
-                      (f"{base}/code-security-configuration", False), (f"{base}/environments?per_page=100", False),
-                      (f"{base}/hooks?per_page=100", True), (f"{base}/teams?per_page=100", True)]
+            reads += [(base + p, False) for p in ("", "/code-security-configuration", "/environments?per_page=100")]
+            reads += [(base + p, True) for p in (f"/rules/branches/{branch}?per_page=100", "/hooks?per_page=100",
+                                                 "/rulesets?includes_parents=true&per_page=100", "/teams?per_page=100")]
         self.gh.prefetch(reads)
         grants, unread = {}, set()
         for name in names:
@@ -358,7 +355,8 @@ class Checker:
             if repo is None:
                 continue
             self.compare_fields(f"{org}/{name}", profile.get("repository", {}), repo,
-                                lambda key, value, n=name: gh_command("PATCH", f"repos/{org}/{n}", {key: value}))
+                                lambda key, value, n=name: gh_command("PATCH", f"repos/{org}/{n}", {key: value}),
+                                None if (repo.get("permissions") or {}).get("admin") else "admin on the repository")
             if "branch_rules" in profile:
                 self.check_branch_rules(name, repo, profile["branch_rules"], entry.get("checks", []))
             if "tag_rules" in profile:
@@ -370,19 +368,21 @@ class Checker:
             for team in teams or []:
                 grants.setdefault(team["slug"], {})[name] = team["permission"]
             self.check_environments(name)
-            self.check_webhooks(f"{org}/{name}", f"repos/{org}/{name}/hooks?per_page=100",
-                                self.base.get("recorded", {}).get("webhooks", {}).get(name, []),
-                                f"https://github.com/{org}/{name}/settings/hooks", f"repos/{org}/{name}/hooks")
+            self.check_webhooks(f"{org}/{name}", f"repos/{org}/{name}/hooks", f"https://github.com/{org}/{name}",
+                                self.recorded.get("webhooks", {}).get(name, []))
         self.check_teams(grants, set(names) - unread)
-        self.check_webhooks(f"orgs/{org}", f"orgs/{org}/hooks?per_page=100",
-                            self.base.get("recorded", {}).get("organization_webhooks", []),
-                            f"https://github.com/organizations/{org}/settings/hooks", f"orgs/{org}/hooks")
+        self.check_webhooks(f"orgs/{org}", f"orgs/{org}/hooks", f"https://github.com/organizations/{org}",
+                            self.recorded.get("organization_webhooks", []))
 
     def provider_fix(self, target, rule_type):
         for name, body in sorted(self.base.get("rulesets", {}).items()):
             if body.get("target") == target and any(r["type"] == rule_type for r in body["rules"]):
                 return self.ruleset_fix(name)
         return f"add a {rule_type} rule to an organization ruleset in the baseline"
+
+    def repo_ruleset_fix(self, name, rid, verb):
+        path = f"repos/{self.org}/{name}/rulesets/{rid}"
+        return f"{verb} the rule in {path} (read it, edit, PUT it back with --input -), or {gh_command('DELETE', path)}"
 
     def check_branch_rules(self, name, repo, want_rules, checks):
         where = f"{self.org}/{name} {repo['default_branch']}"
@@ -392,10 +392,14 @@ class Checker:
             return
         for rule_type, params in sorted(want_rules.items()):
             found = [r for r in live if r["type"] == rule_type]  # every one must match, repository rulesets too
-            bad = sorted({str(r.get("ruleset_id")) for r in found if not matches(params, r.get("parameters", {}))})
-            if bad or not found:
-                self.diff(where, f"{rule_type} rule from ruleset {', '.join(bad)} is not {show(params)}" if bad
-                          else f"no {rule_type} rule", self.provider_fix("branch", rule_type))
+            if not found:
+                self.diff(where, f"no {rule_type} rule", self.provider_fix("branch", rule_type))
+            bad = {(r.get("ruleset_source_type") == "Organization", r.get("ruleset_id")) for r in found
+                   if not matches(params, r.get("parameters", {}))}
+            for from_org, rid in sorted(bad, key=str):  # a repository ruleset is fixed there, not at the provider
+                self.diff(where, f"{rule_type} rule from {'' if from_org else 'repository '}ruleset {rid} is not "
+                          f"{show(params)}", self.provider_fix("branch", rule_type) if from_org
+                          else self.repo_ruleset_fix(name, rid, "change"))
         template = (self.base.get("required_check_ruleset") or {}).get("name", "").replace("{repository}", name)
         check_fix = self.ruleset_fix(template) if template else "change the ruleset that requires checks"
         app = self.base.get("check_integration_id")
@@ -411,8 +415,8 @@ class Checker:
         for rule in (r for r in live if r["type"] not in want_rules and r["type"] != "required_status_checks"):
             rid, kind = rule.get("ruleset_id"), rule["type"]
             if rule.get("ruleset_source_type") != "Organization":
-                self.diff(where, f"unexpected {kind} rule from ruleset {rid}", "remove it from that ruleset, or "
-                          + gh_command("DELETE", f"repos/{self.org}/{name}/rulesets/{rid}"))
+                self.diff(where, f"unexpected {kind} rule from ruleset {rid}", self.repo_ruleset_fix(name, rid,
+                                                                                                    "remove"))
             elif rid not in known.values():  # a listed organization ruleset is reported by check_rulesets
                 listing = self.gh.get(f"repos/{self.org}/{name}/rulesets?includes_parents=true&per_page=100", True)
                 rname = {r["id"]: r["name"] for r in (listing if isinstance(listing, list) else [])}.get(rid)
@@ -440,53 +444,50 @@ class Checker:
                 self.diff(where, f"no {rule_type} rule{note}", self.provider_fix("tag", rule_type))
 
     def check_attachment(self, name, repo, want):
-        where, live = f"{self.org}/{name}", self.gh.get(f"repos/{self.org}/{name}/code-security-configuration") or {}
-        if isinstance(live, Unverifiable):
-            return self.cannot(f"{where} security configuration", str(live))
+        where = f"{self.org}/{name}"
+        live = self.read(f"{where} security configuration", f"repos/{self.org}/{name}/code-security-configuration")
+        if live is None:
+            return
         have, status = (live.get("configuration") or {}).get("name"), live.get("status")
-        if have != want or status not in ATTACHED:
+        if have != want or status not in ("attached", "enforced"):
             cid = self.config_ids.get(want, "ID")
             self.diff(where, f"security configuration is {have!r} ({status}), baseline {want!r}",
                              gh_command("POST", f"orgs/{self.org}/code-security/configurations/{cid}/attach",
                                         {"scope": "selected", "selected_repository_ids[]": repo["id"]}))
 
     def check_environments(self, name):
-        live = self.read(f"{self.org}/{name} environments", f"repos/{self.org}/{name}/environments?per_page=100")
+        path = f"repos/{self.org}/{name}/environments"
+        live = self.read(f"{self.org}/{name} environments", f"{path}?per_page=100")
+        undo = lambda method: lambda env: gh_command(method, f"{path}/{urllib.parse.quote(env, safe='')}")  # noqa
         if live is not None:
-            path = f"repos/{self.org}/{name}/environments/"
             self.names(f"{self.org}/{name}", "environment", {e["name"] for e in live.get("environments", [])},
-                       self.base.get("recorded", {}).get("environments", {}).get(name, []),
-                       lambda env: gh_command("DELETE", path + urllib.parse.quote(env, safe="")),
-                       lambda env: gh_command("PUT", path + urllib.parse.quote(env, safe="")))
+                       self.recorded.get("environments", {}).get(name, []), undo("DELETE"), undo("PUT"))
 
-    def check_webhooks(self, where, path, recorded, page, hook_path):
-        live = self.read(f"{where} webhooks", path, True)
+    def check_webhooks(self, where, hook_path, page, recorded):
+        live = self.read(f"{where} webhooks", f"{hook_path}?per_page=100", True)
         if live is None:
             return
         hosts = {}
         for hook in live:
             url = (hook.get("config") or {}).get("url") or ""
             hosts.setdefault(urllib.parse.urlsplit(url).hostname or hook.get("name", "?"), []).append(hook["id"])
-        self.names(where, "webhook to", hosts, recorded, lambda host: " && ".join(
-            gh_command("DELETE", f"{hook_path}/{hid}") for hid in hosts[host]), lambda host: f"recreate it at {page}")
+        delete = lambda host: " && ".join(gh_command("DELETE", f"{hook_path}/{hid}") for hid in hosts[host])  # noqa
+        self.names(where, "webhook to", hosts, recorded, delete, lambda host: f"recreate it at {page}/settings/hooks")
 
     def check_teams(self, grants, checked):
         """Team names (organization read) and their grants on the repositories read in `checked`."""
-        org, recorded = self.org, self.base.get("recorded", {}).get("teams", {})
+        org, recorded = self.org, self.recorded.get("teams", {})
         teams = self.read("teams", f"orgs/{org}/teams?per_page=100", True)
-        skip = set()
-        if teams is not None:
-            live_names = {t["slug"] for t in teams}
-            self.names(f"orgs/{org}", "team", live_names, recorded,
-                       lambda team: gh_command("DELETE", f"orgs/{org}/teams/{team}"),
-                       lambda team: gh_command("POST", f"orgs/{org}/teams", {"name": team}))
-            skip = live_names ^ set(recorded)
-        for team in sorted((set(grants) | set(recorded)) - skip):
+        live = set(recorded) if teams is None else {t["slug"] for t in teams}
+        self.names(f"orgs/{org}", "team", live, recorded, lambda team: gh_command("DELETE", f"orgs/{org}/teams/{team}"),
+                   lambda team: gh_command("POST", f"orgs/{org}/teams", {"name": team}))
+        for team in sorted((set(grants) | set(recorded)) - (live ^ set(recorded))):  # new or gone teams: reported above
             have, want = grants.get(team, {}), recorded.get(team, {})
             for repo in sorted((set(have) | set(want)) & checked):
                 if have.get(repo) != want.get(repo):
                     path = f"orgs/{org}/teams/{team}/repos/{org}/{repo}"
-                    undo = gh_command("PUT", path, {"permission": want[repo]}) if repo in want else gh_command("DELETE", path)
+                    undo = gh_command("PUT", path, {"permission": want[repo]}) if repo in want else gh_command(
+                        "DELETE", path)
                     self.changed(f"{org}/{repo}", f"team {team!r} has {have.get(repo, 'no access')}, "
                                         f"recorded {want.get(repo, 'no access')}", undo)
 
@@ -495,21 +496,16 @@ class Checker:
         if live is None:
             return
         have = {i["app_slug"]: i["repository_selection"] for i in live.get("installations", [])}
-        recorded = self.base.get("recorded", {}).get("apps", {})
-        page = f"https://github.com/organizations/{self.org}/settings/installations"
+        recorded, page = self.recorded.get("apps", {}), f"https://github.com/organizations/{self.org}/settings"
         for app in sorted(set(have) | set(recorded)):
             if have.get(app) != recorded.get(app):
-                self.changed(f"orgs/{self.org}", f"app {app!r} reaches {have.get(app, 'nothing')} "
-                                    f"repositories, recorded {recorded.get(app, 'not installed')}", f"change it at {page}")
-
-
-class Parser(argparse.ArgumentParser):
-    def error(self, message):
-        self.exit(3, f"{self.format_usage()}check_settings.py: {message}\n")
+                self.changed(f"orgs/{self.org}", f"app {app!r} reaches {have.get(app, 'nothing')} repositories, "
+                             f"recorded {recorded.get(app, 'not installed')}", f"change it at {page}/installations")
 
 
 def main(argv=None, github=None):
-    parser = Parser(description="Read-only check of a GitHub organization against a baseline file.")
+    parser = argparse.ArgumentParser(description="Read-only check of a GitHub organization against a baseline file.")
+    parser.error = lambda message: parser.exit(3, f"{parser.format_usage()}check_settings.py: {message}\n")  # not 2
     parser.add_argument("baseline", help="the organization's baseline JSON file")
     parser.add_argument("--validate", action="store_true", help="only check the baseline file, offline")
     parser.add_argument("--ruleset", metavar="NAME", help="print the baseline body of one organization ruleset")
@@ -527,17 +523,15 @@ def main(argv=None, github=None):
         return 3 if errors else 0
     if args.ruleset:
         body = expected_rulesets(base).get(args.ruleset)
-        if body is None:
-            print(f"no ruleset {args.ruleset!r} in {args.baseline}", file=sys.stderr)
-            return 3
-        print(json.dumps(body, indent=2, sort_keys=True))
-        return 0
+        print(json.dumps(body, indent=2, sort_keys=True) if body else f"no ruleset {args.ruleset!r} in {args.baseline}",
+              file=sys.stdout if body else sys.stderr)
+        return 0 if body else 3
     checker = Checker(base, github or GitHub(), sys.argv[0] if argv is None else "check_settings.py", args.baseline)
     try:
         checker.run()
     except (CannotRun, FileNotFoundError, KeyError, TypeError, AttributeError, IndexError) as error:
-        reason = "gh is not installed or not on PATH" if isinstance(error, FileNotFoundError) else error if isinstance(
-            error, CannotRun) else f"unexpected API response ({error!r})"  # --validate checked the baseline's shape
+        reason = {CannotRun: error, FileNotFoundError: "gh is not installed or not on PATH"}.get(
+            type(error), f"unexpected API response ({error!r})")  # --validate already checked the baseline's shape
         print(f"could not run: {reason}", file=sys.stderr)
         return 3
     lines = checker.diffs + ([""] if checker.diffs and checker.unverified else []) + checker.unverified

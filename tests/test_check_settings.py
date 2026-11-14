@@ -185,7 +185,10 @@ class CheckTest(unittest.TestCase):
         rules.append(other)
         code, lines = self.run_check()
         self.assertEqual(code, 1)
-        self.assertLine(lines, f"{ORG}/engine main: pull_request rule from ruleset 999 is not")
+        self.assertLine(lines, f"{ORG}/engine main: pull_request rule from repository ruleset 999 is not",
+                        f"repos/{ORG}/engine/rulesets/999", f"gh api --method DELETE repos/{ORG}/engine/rulesets/999")
+        # The organization ruleset already matches, so its PUT would not fix this.
+        self.assertFalse(any("orgs/example-org/rulesets" in line for line in lines), lines)
 
     def test_unreadable_tag_ruleset_is_only_unverifiable(self):
         self.api[f"repos/{ORG}/docs/rulesets/103?includes_parents=true"] = {"__error__": "Forbidden (HTTP 403)"}
@@ -212,7 +215,8 @@ class CheckTest(unittest.TestCase):
         code, lines = self.run_check()
         self.assertEqual(code, 1)
         self.assertLine(lines, f"{ORG}/docs tags refs/tags/v[0-9]*: no deletion rule", "ruleset 103 has ref excludes")
-        self.assertLine(lines, f"{ORG}/engine main: pull_request rule from ruleset 777 is not")
+        self.assertLine(lines, f"{ORG}/engine main: pull_request rule from repository ruleset 777 is not",
+                        f"repos/{ORG}/engine/rulesets/777")
 
     def test_nothing_verified_exits_3(self):
         def logged_out(path, paginate):
@@ -236,11 +240,28 @@ class CheckTest(unittest.TestCase):
         self.assertIn("could not run: unexpected API response (KeyError('parameters'))", err.getvalue())
 
     def test_hidden_organization_fields_are_unverifiable(self):
-        del self.api[f"orgs/{ORG}"]["members_can_create_teams"]
+        for key in ("members_can_create_repositories", "members_can_create_teams", "two_factor_requirement_enabled"):
+            del self.api[f"orgs/{ORG}"][key]  # what a member without admin:org sees
         code, lines = self.run_check()
         self.assertEqual(code, 2)
-        self.assertEqual(lines, [f"could not verify: orgs/{ORG}: members_can_create_teams not visible to this login "
-                                 "(needs admin:org?)"])
+        self.assertEqual(lines, [f"could not verify: orgs/{ORG}: members_can_create_repositories, "
+                                 "members_can_create_teams, two_factor_requirement_enabled not visible to this login "
+                                 "(needs admin:org, or a field name is misspelled)"])
+
+    def test_misspelled_fields_are_baseline_errors_when_the_login_sees_everything(self):
+        self.base["organization_settings"]["members_can_create_team"] = False
+        self.base["profiles"]["standard"]["repository"]["allow_squash_merges"] = True
+        self.api[f"repos/{ORG}/engine"]["permissions"] = {"admin": True}
+        self.base["security_configurations"]["Example baseline"]["dependabot_alert"] = "enabled"
+        code, lines = self.run_check()
+        self.assertEqual(code, 1)
+        self.assertLine(lines, f"orgs/{ORG}: members_can_create_team is not in the API response",
+                        "correct the field name in the baseline")
+        self.assertLine(lines, f"{ORG}/engine: allow_squash_merges is not in the API response")
+        self.assertLine(lines, "(Example baseline): dependabot_alert is not in the API response")
+        # Without admin on the repository the field may be hidden, so it is unverifiable, never blamed on admin:org.
+        self.assertLine(lines, f"could not verify: {ORG}/docs: allow_squash_merges not visible to this login "
+                        "(needs admin on the repository, or a field name is misspelled)")
 
 
 class BaselineTest(unittest.TestCase):
@@ -277,7 +298,17 @@ class BaselineTest(unittest.TestCase):
                                 (lambda b: b["profiles"]["standard"].update(branch_rules=[]), "branch_rules must be"),
                                 (lambda b: b["repositories"]["engine"].update(overrides={"repository": 1}, why="x"),
                                  "engine override: repository must be"),
-                                (lambda b: next(iter(b["rulesets"].values()))["rules"].append({}), "rules that each have a type")]:
+                                (lambda b: next(iter(b["rulesets"].values()))["rules"].append({}),
+                                 "rules that each have a type"),
+                                (lambda b: b["actions"].update({"selected-actions": {}}), "actions must be"),
+                                (lambda b: b["actions"].update(workflow=[]), "actions must be"),
+                                (lambda b: b["recorded"].update(teams=["x"]), "recorded must be"),
+                                (lambda b: b["recorded"].update(team={}), "recorded must be"),
+                                (lambda b: b["security_configurations"].update(x=1), "security_configurations must be"),
+                                (lambda b: b.update(organization_settings=[]), "organization_settings must be"),
+                                (lambda b: b["reminders"].append({"item": "x"}), "reminders must be"),
+                                (lambda b: b["required_check_ruleset"].update(name="CI"), "required_check_ruleset must"),
+                                (lambda b: b.pop("organization"), "organization must be")]:
             base = copy.deepcopy(self.base)
             change(base)
             with self.subTest(message=message):
