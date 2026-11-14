@@ -248,6 +248,22 @@ class CheckTest(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertEqual(lines, [f"could not verify: {ORG}/docs tags refs/tags/v[0-9]*: Forbidden (HTTP 403)"])
 
+    def test_an_unreadable_repository_is_only_unverifiable(self):
+        """Its team grants were not read either, so they are not reported as gone."""
+        self.api[f"repos/{ORG}/docs"] = {"__error__": "net/http: TLS handshake timeout"}
+        code, lines = self.run_check()
+        self.assertEqual(code, 2)
+        self.assertEqual(lines, [f"could not verify: {ORG}/docs: net/http: TLS handshake timeout"])
+
+    def test_an_object_override_changes_only_the_fields_it_names(self):
+        self.base["repositories"]["engine"].update(overrides={"repository": {"delete_branch_on_merge": False}},
+                                                   why="test")
+        self.api[f"repos/{ORG}/engine"].update(delete_branch_on_merge=False, allow_merge_commit=True)
+        code, lines = self.run_check()
+        self.assertEqual(code, 1)
+        self.assertEqual(len(lines), 1, lines)
+        self.assertLine(lines, f"{ORG}/engine: allow_merge_commit is true, baseline false")
+
     def test_one_timeout_keeps_the_other_differences(self):
         self.api[f"orgs/{ORG}"]["members_can_create_teams"] = True
         self.api[f"repos/{ORG}/engine/hooks?per_page=100"] = {"__error__": "Get ...: dial tcp: i/o timeout"}
