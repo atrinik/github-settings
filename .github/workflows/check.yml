@@ -24,3 +24,9 @@ jobs:
 
       - name: Check repository files
         run: python3 .github/scripts/check_repository.py
+
+      - name: Test the settings check (offline fixtures)
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Validate Atrinik's baseline file
+        run: python3 check_settings.py --validate baselines/atrinik.json

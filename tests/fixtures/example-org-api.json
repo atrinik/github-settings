@@ -1,0 +1,920 @@
+{
+ "orgs/example-org": {
+  "default_repository_permission": "none",
+  "id": 42,
+  "login": "example-org",
+  "members_can_create_repositories": false,
+  "members_can_create_teams": false,
+  "two_factor_requirement_enabled": true,
+  "web_commit_signoff_required": false
+ },
+ "orgs/example-org/actions/permissions": {
+  "allowed_actions": "selected",
+  "enabled_repositories": "all",
+  "selected_actions_url": "https://api.github.com/organizations/42/actions/permissions/selected-actions",
+  "sha_pinning_required": true
+ },
+ "orgs/example-org/actions/permissions/selected-actions": {
+  "github_owned_allowed": true,
+  "patterns_allowed": [
+   "example-org/*",
+   "docker/login-action@*"
+  ],
+  "verified_allowed": false
+ },
+ "orgs/example-org/actions/permissions/workflow": {
+  "can_approve_pull_request_reviews": false,
+  "default_workflow_permissions": "read"
+ },
+ "orgs/example-org/code-security/configurations/defaults": [
+  {
+   "configuration": {
+    "advanced_security": "enabled",
+    "code_scanning_default_setup": "enabled",
+    "created_at": "2026-01-01T00:00:00Z",
+    "dependabot_alerts": "enabled",
+    "description": "Security features for every repository.",
+    "enforcement": "enforced",
+    "id": 501,
+    "name": "Example baseline",
+    "secret_scanning": "enabled",
+    "secret_scanning_push_protection": "enabled",
+    "target_type": "organization",
+    "url": "https://api.github.com/orgs/example-org/code-security/configurations/501"
+   },
+   "default_for_new_repos": "all"
+  }
+ ],
+ "orgs/example-org/code-security/configurations?per_page=100": [
+  {
+   "enforcement": "unenforced",
+   "id": 17,
+   "name": "GitHub recommended",
+   "target_type": "global"
+  },
+  {
+   "advanced_security": "enabled",
+   "code_scanning_default_setup": "enabled",
+   "created_at": "2026-01-01T00:00:00Z",
+   "dependabot_alerts": "enabled",
+   "description": "Security features for every repository.",
+   "enforcement": "enforced",
+   "id": 501,
+   "name": "Example baseline",
+   "secret_scanning": "enabled",
+   "secret_scanning_push_protection": "enabled",
+   "target_type": "organization",
+   "url": "https://api.github.com/orgs/example-org/code-security/configurations/501"
+  }
+ ],
+ "orgs/example-org/hooks?per_page=100": [
+  {
+   "active": true,
+   "config": {
+    "content_type": "json",
+    "url": "https://hooks.example.net/github"
+   },
+   "id": 77,
+   "name": "web"
+  }
+ ],
+ "orgs/example-org/installations?per_page=100": {
+  "installations": [
+   {
+    "app_slug": "example-ci",
+    "id": 1,
+    "repository_selection": "selected",
+    "target_type": "Organization"
+   },
+   {
+    "app_slug": "example-bot",
+    "id": 2,
+    "repository_selection": "all",
+    "target_type": "Organization"
+   }
+  ],
+  "total_count": 2
+ },
+ "orgs/example-org/repos?per_page=100&type=all": [
+  {
+   "archived": false,
+   "default_branch": "main",
+   "full_name": "example-org/engine",
+   "id": 9001,
+   "name": "engine",
+   "visibility": "public"
+  },
+  {
+   "archived": false,
+   "default_branch": "main",
+   "full_name": "example-org/docs",
+   "id": 9002,
+   "name": "docs",
+   "visibility": "public"
+  },
+  {
+   "archived": true,
+   "default_branch": "main",
+   "full_name": "example-org/legacy",
+   "id": 9003,
+   "name": "legacy",
+   "visibility": "public"
+  }
+ ],
+ "orgs/example-org/rulesets/101": {
+  "bypass_actors": [],
+  "conditions": {
+   "ref_name": {
+    "exclude": [],
+    "include": [
+     "~DEFAULT_BRANCH"
+    ]
+   },
+   "repository_name": {
+    "exclude": [],
+    "include": [
+     "~ALL"
+    ],
+    "protected": false
+   }
+  },
+  "created_at": "2026-01-01T00:00:00Z",
+  "enforcement": "active",
+  "id": 101,
+  "name": "Default branch integrity",
+  "node_id": "RRS_101",
+  "rules": [
+   {
+    "type": "deletion"
+   },
+   {
+    "type": "non_fast_forward"
+   }
+  ],
+  "source": "example-org",
+  "source_type": "Organization",
+  "target": "branch",
+  "updated_at": "2026-01-01T00:00:00Z"
+ },
+ "orgs/example-org/rulesets/102": {
+  "bypass_actors": [
+   {
+    "actor_id": null,
+    "actor_type": "OrganizationAdmin",
+    "bypass_mode": "pull_request"
+   }
+  ],
+  "conditions": {
+   "ref_name": {
+    "exclude": [],
+    "include": [
+     "~DEFAULT_BRANCH"
+    ]
+   },
+   "repository_name": {
+    "exclude": [],
+    "include": [
+     "~ALL"
+    ],
+    "protected": false
+   }
+  },
+  "created_at": "2026-01-01T00:00:00Z",
+  "enforcement": "active",
+  "id": 102,
+  "name": "Changes through pull requests",
+  "node_id": "RRS_102",
+  "rules": [
+   {
+    "parameters": {
+     "allowed_merge_methods": [
+      "squash"
+     ],
+     "dismiss_stale_reviews_on_push": false,
+     "required_approving_review_count": 0,
+     "required_review_thread_resolution": true,
+     "require_code_owner_review": false,
+     "require_last_push_approval": false,
+     "required_reviewers": []
+    },
+    "type": "pull_request"
+   }
+  ],
+  "source": "example-org",
+  "source_type": "Organization",
+  "target": "branch",
+  "updated_at": "2026-01-01T00:00:00Z"
+ },
+ "orgs/example-org/rulesets/103": {
+  "bypass_actors": [],
+  "conditions": {
+   "ref_name": {
+    "exclude": [],
+    "include": [
+     "refs/tags/v[0-9]*"
+    ]
+   },
+   "repository_name": {
+    "exclude": [],
+    "include": [
+     "~ALL"
+    ],
+    "protected": false
+   }
+  },
+  "created_at": "2026-01-01T00:00:00Z",
+  "enforcement": "active",
+  "id": 103,
+  "name": "Release tags",
+  "node_id": "RRS_103",
+  "rules": [
+   {
+    "type": "deletion"
+   },
+   {
+    "type": "non_fast_forward"
+   },
+   {
+    "type": "update"
+   }
+  ],
+  "source": "example-org",
+  "source_type": "Organization",
+  "target": "tag",
+  "updated_at": "2026-01-01T00:00:00Z"
+ },
+ "orgs/example-org/rulesets/104": {
+  "bypass_actors": [
+   {
+    "actor_id": null,
+    "actor_type": "OrganizationAdmin",
+    "bypass_mode": "pull_request"
+   }
+  ],
+  "conditions": {
+   "ref_name": {
+    "exclude": [],
+    "include": [
+     "~DEFAULT_BRANCH"
+    ]
+   },
+   "repository_name": {
+    "exclude": [],
+    "include": [
+     "engine"
+    ],
+    "protected": false
+   }
+  },
+  "created_at": "2026-01-01T00:00:00Z",
+  "enforcement": "active",
+  "id": 104,
+  "name": "Required CI - engine",
+  "node_id": "RRS_104",
+  "rules": [
+   {
+    "parameters": {
+     "do_not_enforce_on_create": false,
+     "required_status_checks": [
+      {
+       "context": "Engine tests",
+       "integration_id": 15368
+      },
+      {
+       "context": "PR title",
+       "integration_id": 15368
+      }
+     ],
+     "strict_required_status_checks_policy": true
+    },
+    "type": "required_status_checks"
+   }
+  ],
+  "source": "example-org",
+  "source_type": "Organization",
+  "target": "branch",
+  "updated_at": "2026-01-01T00:00:00Z"
+ },
+ "orgs/example-org/rulesets?per_page=100": [
+  {
+   "enforcement": "active",
+   "id": 101,
+   "name": "Default branch integrity",
+   "source": "example-org",
+   "source_type": "Organization",
+   "target": "branch"
+  },
+  {
+   "enforcement": "active",
+   "id": 102,
+   "name": "Changes through pull requests",
+   "source": "example-org",
+   "source_type": "Organization",
+   "target": "branch"
+  },
+  {
+   "enforcement": "active",
+   "id": 103,
+   "name": "Release tags",
+   "source": "example-org",
+   "source_type": "Organization",
+   "target": "tag"
+  },
+  {
+   "enforcement": "active",
+   "id": 104,
+   "name": "Required CI - engine",
+   "source": "example-org",
+   "source_type": "Organization",
+   "target": "branch"
+  }
+ ],
+ "orgs/example-org/teams?per_page=100": [
+  {
+   "name": "maintainers",
+   "permission": "pull",
+   "slug": "maintainers"
+  },
+  {
+   "name": "readers",
+   "slug": "readers"
+  }
+ ],
+ "repos/example-org/docs": {
+  "allow_merge_commit": false,
+  "allow_rebase_merge": false,
+  "allow_squash_merge": true,
+  "archived": false,
+  "default_branch": "main",
+  "delete_branch_on_merge": true,
+  "full_name": "example-org/docs",
+  "id": 9002,
+  "name": "docs",
+  "squash_merge_commit_message": "PR_BODY",
+  "squash_merge_commit_title": "PR_TITLE",
+  "visibility": "public"
+ },
+ "repos/example-org/docs/code-security-configuration": {
+  "configuration": {
+   "id": 501,
+   "name": "Example baseline"
+  },
+  "status": "enforced"
+ },
+ "repos/example-org/docs/environments?per_page=100": {
+  "environments": [],
+  "total_count": 0
+ },
+ "repos/example-org/docs/hooks?per_page=100": [],
+ "repos/example-org/docs/rules/branches/main?per_page=100": [
+  {
+   "ruleset_id": 101,
+   "ruleset_source": "example-org",
+   "ruleset_source_type": "Organization",
+   "type": "deletion"
+  },
+  {
+   "ruleset_id": 101,
+   "ruleset_source": "example-org",
+   "ruleset_source_type": "Organization",
+   "type": "non_fast_forward"
+  },
+  {
+   "parameters": {
+    "allowed_merge_methods": [
+     "squash"
+    ],
+    "dismiss_stale_reviews_on_push": false,
+    "required_approving_review_count": 0,
+    "required_review_thread_resolution": true,
+    "require_code_owner_review": false,
+    "require_last_push_approval": false,
+    "required_reviewers": []
+   },
+   "ruleset_id": 102,
+   "ruleset_source": "example-org",
+   "ruleset_source_type": "Organization",
+   "type": "pull_request"
+  }
+ ],
+ "repos/example-org/docs/rulesets/101?includes_parents=true": {
+  "conditions": {
+   "ref_name": {
+    "exclude": [],
+    "include": [
+     "~DEFAULT_BRANCH"
+    ]
+   }
+  },
+  "enforcement": "active",
+  "id": 101,
+  "name": "Default branch integrity",
+  "rules": [
+   {
+    "type": "deletion"
+   },
+   {
+    "type": "non_fast_forward"
+   }
+  ],
+  "source_type": "Organization",
+  "target": "branch"
+ },
+ "repos/example-org/docs/rulesets/102?includes_parents=true": {
+  "conditions": {
+   "ref_name": {
+    "exclude": [],
+    "include": [
+     "~DEFAULT_BRANCH"
+    ]
+   }
+  },
+  "enforcement": "active",
+  "id": 102,
+  "name": "Changes through pull requests",
+  "rules": [
+   {
+    "parameters": {
+     "allowed_merge_methods": [
+      "squash"
+     ],
+     "dismiss_stale_reviews_on_push": false,
+     "required_approving_review_count": 0,
+     "required_review_thread_resolution": true,
+     "require_code_owner_review": false,
+     "require_last_push_approval": false,
+     "required_reviewers": []
+    },
+    "type": "pull_request"
+   }
+  ],
+  "source_type": "Organization",
+  "target": "branch"
+ },
+ "repos/example-org/docs/rulesets/103?includes_parents=true": {
+  "conditions": {
+   "ref_name": {
+    "exclude": [],
+    "include": [
+     "refs/tags/v[0-9]*"
+    ]
+   }
+  },
+  "enforcement": "active",
+  "id": 103,
+  "name": "Release tags",
+  "rules": [
+   {
+    "type": "deletion"
+   },
+   {
+    "type": "non_fast_forward"
+   },
+   {
+    "type": "update"
+   }
+  ],
+  "source_type": "Organization",
+  "target": "tag"
+ },
+ "repos/example-org/docs/rulesets?includes_parents=true&per_page=100": [
+  {
+   "enforcement": "active",
+   "id": 101,
+   "name": "Default branch integrity",
+   "source": "example-org",
+   "source_type": "Organization",
+   "target": "branch"
+  },
+  {
+   "enforcement": "active",
+   "id": 102,
+   "name": "Changes through pull requests",
+   "source": "example-org",
+   "source_type": "Organization",
+   "target": "branch"
+  },
+  {
+   "enforcement": "active",
+   "id": 103,
+   "name": "Release tags",
+   "source": "example-org",
+   "source_type": "Organization",
+   "target": "tag"
+  }
+ ],
+ "repos/example-org/docs/teams?per_page=100": [
+  {
+   "permission": "maintain",
+   "slug": "maintainers"
+  }
+ ],
+ "repos/example-org/engine": {
+  "allow_merge_commit": false,
+  "allow_rebase_merge": false,
+  "allow_squash_merge": true,
+  "archived": false,
+  "default_branch": "main",
+  "delete_branch_on_merge": true,
+  "full_name": "example-org/engine",
+  "id": 9001,
+  "name": "engine",
+  "squash_merge_commit_message": "PR_BODY",
+  "squash_merge_commit_title": "PR_TITLE",
+  "visibility": "public"
+ },
+ "repos/example-org/engine/code-security-configuration": {
+  "configuration": {
+   "id": 501,
+   "name": "Example baseline"
+  },
+  "status": "enforced"
+ },
+ "repos/example-org/engine/environments?per_page=100": {
+  "environments": [
+   {
+    "id": 1,
+    "name": "release"
+   }
+  ],
+  "total_count": 1
+ },
+ "repos/example-org/engine/hooks?per_page=100": [
+  {
+   "config": {
+    "url": "https://ci.example.com/hook"
+   },
+   "id": 88,
+   "name": "web"
+  }
+ ],
+ "repos/example-org/engine/rules/branches/main?per_page=100": [
+  {
+   "ruleset_id": 101,
+   "ruleset_source": "example-org",
+   "ruleset_source_type": "Organization",
+   "type": "deletion"
+  },
+  {
+   "ruleset_id": 101,
+   "ruleset_source": "example-org",
+   "ruleset_source_type": "Organization",
+   "type": "non_fast_forward"
+  },
+  {
+   "parameters": {
+    "allowed_merge_methods": [
+     "squash"
+    ],
+    "dismiss_stale_reviews_on_push": false,
+    "required_approving_review_count": 0,
+    "required_review_thread_resolution": true,
+    "require_code_owner_review": false,
+    "require_last_push_approval": false,
+    "required_reviewers": []
+   },
+   "ruleset_id": 102,
+   "ruleset_source": "example-org",
+   "ruleset_source_type": "Organization",
+   "type": "pull_request"
+  },
+  {
+   "parameters": {
+    "do_not_enforce_on_create": false,
+    "required_status_checks": [
+     {
+      "context": "Engine tests",
+      "integration_id": 15368
+     },
+     {
+      "context": "PR title",
+      "integration_id": 15368
+     }
+    ],
+    "strict_required_status_checks_policy": true
+   },
+   "ruleset_id": 104,
+   "ruleset_source": "example-org",
+   "ruleset_source_type": "Organization",
+   "type": "required_status_checks"
+  }
+ ],
+ "repos/example-org/engine/rulesets/101?includes_parents=true": {
+  "conditions": {
+   "ref_name": {
+    "exclude": [],
+    "include": [
+     "~DEFAULT_BRANCH"
+    ]
+   }
+  },
+  "enforcement": "active",
+  "id": 101,
+  "name": "Default branch integrity",
+  "rules": [
+   {
+    "type": "deletion"
+   },
+   {
+    "type": "non_fast_forward"
+   }
+  ],
+  "source_type": "Organization",
+  "target": "branch"
+ },
+ "repos/example-org/engine/rulesets/102?includes_parents=true": {
+  "conditions": {
+   "ref_name": {
+    "exclude": [],
+    "include": [
+     "~DEFAULT_BRANCH"
+    ]
+   }
+  },
+  "enforcement": "active",
+  "id": 102,
+  "name": "Changes through pull requests",
+  "rules": [
+   {
+    "parameters": {
+     "allowed_merge_methods": [
+      "squash"
+     ],
+     "dismiss_stale_reviews_on_push": false,
+     "required_approving_review_count": 0,
+     "required_review_thread_resolution": true,
+     "require_code_owner_review": false,
+     "require_last_push_approval": false,
+     "required_reviewers": []
+    },
+    "type": "pull_request"
+   }
+  ],
+  "source_type": "Organization",
+  "target": "branch"
+ },
+ "repos/example-org/engine/rulesets/103?includes_parents=true": {
+  "conditions": {
+   "ref_name": {
+    "exclude": [],
+    "include": [
+     "refs/tags/v[0-9]*"
+    ]
+   }
+  },
+  "enforcement": "active",
+  "id": 103,
+  "name": "Release tags",
+  "rules": [
+   {
+    "type": "deletion"
+   },
+   {
+    "type": "non_fast_forward"
+   },
+   {
+    "type": "update"
+   }
+  ],
+  "source_type": "Organization",
+  "target": "tag"
+ },
+ "repos/example-org/engine/rulesets/104?includes_parents=true": {
+  "conditions": {
+   "ref_name": {
+    "exclude": [],
+    "include": [
+     "~DEFAULT_BRANCH"
+    ]
+   }
+  },
+  "enforcement": "active",
+  "id": 104,
+  "name": "Required CI - engine",
+  "rules": [
+   {
+    "parameters": {
+     "do_not_enforce_on_create": false,
+     "required_status_checks": [
+      {
+       "context": "Engine tests",
+       "integration_id": 15368
+      },
+      {
+       "context": "PR title",
+       "integration_id": 15368
+      }
+     ],
+     "strict_required_status_checks_policy": true
+    },
+    "type": "required_status_checks"
+   }
+  ],
+  "source_type": "Organization",
+  "target": "branch"
+ },
+ "repos/example-org/engine/rulesets?includes_parents=true&per_page=100": [
+  {
+   "enforcement": "active",
+   "id": 101,
+   "name": "Default branch integrity",
+   "source": "example-org",
+   "source_type": "Organization",
+   "target": "branch"
+  },
+  {
+   "enforcement": "active",
+   "id": 102,
+   "name": "Changes through pull requests",
+   "source": "example-org",
+   "source_type": "Organization",
+   "target": "branch"
+  },
+  {
+   "enforcement": "active",
+   "id": 103,
+   "name": "Release tags",
+   "source": "example-org",
+   "source_type": "Organization",
+   "target": "tag"
+  },
+  {
+   "enforcement": "active",
+   "id": 104,
+   "name": "Required CI - engine",
+   "source": "example-org",
+   "source_type": "Organization",
+   "target": "branch"
+  }
+ ],
+ "repos/example-org/engine/teams?per_page=100": [
+  {
+   "permission": "maintain",
+   "slug": "maintainers"
+  }
+ ],
+ "repos/example-org/legacy": {
+  "allow_merge_commit": true,
+  "allow_rebase_merge": true,
+  "allow_squash_merge": true,
+  "archived": true,
+  "default_branch": "main",
+  "delete_branch_on_merge": false,
+  "full_name": "example-org/legacy",
+  "id": 9003,
+  "name": "legacy",
+  "squash_merge_commit_message": "PR_BODY",
+  "squash_merge_commit_title": "PR_TITLE",
+  "visibility": "public"
+ },
+ "repos/example-org/legacy/code-security-configuration": {
+  "configuration": {
+   "id": 501,
+   "name": "Example baseline"
+  },
+  "status": "enforced"
+ },
+ "repos/example-org/legacy/environments?per_page=100": {
+  "environments": [],
+  "total_count": 0
+ },
+ "repos/example-org/legacy/hooks?per_page=100": [],
+ "repos/example-org/legacy/rules/branches/main?per_page=100": [
+  {
+   "ruleset_id": 101,
+   "ruleset_source": "example-org",
+   "ruleset_source_type": "Organization",
+   "type": "deletion"
+  },
+  {
+   "ruleset_id": 101,
+   "ruleset_source": "example-org",
+   "ruleset_source_type": "Organization",
+   "type": "non_fast_forward"
+  },
+  {
+   "parameters": {
+    "allowed_merge_methods": [
+     "squash"
+    ],
+    "dismiss_stale_reviews_on_push": false,
+    "required_approving_review_count": 0,
+    "required_review_thread_resolution": true,
+    "require_code_owner_review": false,
+    "require_last_push_approval": false,
+    "required_reviewers": []
+   },
+   "ruleset_id": 102,
+   "ruleset_source": "example-org",
+   "ruleset_source_type": "Organization",
+   "type": "pull_request"
+  }
+ ],
+ "repos/example-org/legacy/rulesets/101?includes_parents=true": {
+  "conditions": {
+   "ref_name": {
+    "exclude": [],
+    "include": [
+     "~DEFAULT_BRANCH"
+    ]
+   }
+  },
+  "enforcement": "active",
+  "id": 101,
+  "name": "Default branch integrity",
+  "rules": [
+   {
+    "type": "deletion"
+   },
+   {
+    "type": "non_fast_forward"
+   }
+  ],
+  "source_type": "Organization",
+  "target": "branch"
+ },
+ "repos/example-org/legacy/rulesets/102?includes_parents=true": {
+  "conditions": {
+   "ref_name": {
+    "exclude": [],
+    "include": [
+     "~DEFAULT_BRANCH"
+    ]
+   }
+  },
+  "enforcement": "active",
+  "id": 102,
+  "name": "Changes through pull requests",
+  "rules": [
+   {
+    "parameters": {
+     "allowed_merge_methods": [
+      "squash"
+     ],
+     "dismiss_stale_reviews_on_push": false,
+     "required_approving_review_count": 0,
+     "required_review_thread_resolution": true,
+     "require_code_owner_review": false,
+     "require_last_push_approval": false,
+     "required_reviewers": []
+    },
+    "type": "pull_request"
+   }
+  ],
+  "source_type": "Organization",
+  "target": "branch"
+ },
+ "repos/example-org/legacy/rulesets/103?includes_parents=true": {
+  "conditions": {
+   "ref_name": {
+    "exclude": [],
+    "include": [
+     "refs/tags/v[0-9]*"
+    ]
+   }
+  },
+  "enforcement": "active",
+  "id": 103,
+  "name": "Release tags",
+  "rules": [
+   {
+    "type": "deletion"
+   },
+   {
+    "type": "non_fast_forward"
+   },
+   {
+    "type": "update"
+   }
+  ],
+  "source_type": "Organization",
+  "target": "tag"
+ },
+ "repos/example-org/legacy/rulesets?includes_parents=true&per_page=100": [
+  {
+   "enforcement": "active",
+   "id": 101,
+   "name": "Default branch integrity",
+   "source": "example-org",
+   "source_type": "Organization",
+   "target": "branch"
+  },
+  {
+   "enforcement": "active",
+   "id": 102,
+   "name": "Changes through pull requests",
+   "source": "example-org",
+   "source_type": "Organization",
+   "target": "branch"
+  },
+  {
+   "enforcement": "active",
+   "id": 103,
+   "name": "Release tags",
+   "source": "example-org",
+   "source_type": "Organization",
+   "target": "tag"
+  }
+ ],
+ "repos/example-org/legacy/teams?per_page=100": []
+}

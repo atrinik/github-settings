@@ -1,0 +1,273 @@
+{
+  "organization": "example-org",
+  "notes": [
+    "Invented test data for check_settings.py. It describes no real organization."
+  ],
+  "organization_settings": {
+    "default_repository_permission": "none",
+    "members_can_create_repositories": false,
+    "two_factor_requirement_enabled": true,
+    "members_can_create_teams": false
+  },
+  "actions": {
+    "permissions": {
+      "enabled_repositories": "all",
+      "allowed_actions": "selected",
+      "sha_pinning_required": true
+    },
+    "selected_actions": {
+      "github_owned_allowed": true,
+      "verified_allowed": false,
+      "patterns_allowed": [
+        "docker/login-action@*",
+        "example-org/*"
+      ]
+    },
+    "workflow": {
+      "default_workflow_permissions": "read",
+      "can_approve_pull_request_reviews": false
+    }
+  },
+  "rulesets": {
+    "Default branch integrity": {
+      "target": "branch",
+      "enforcement": "active",
+      "conditions": {
+        "ref_name": {
+          "include": [
+            "~DEFAULT_BRANCH"
+          ],
+          "exclude": []
+        },
+        "repository_name": {
+          "include": [
+            "~ALL"
+          ],
+          "exclude": [],
+          "protected": false
+        }
+      },
+      "rules": [
+        {
+          "type": "deletion"
+        },
+        {
+          "type": "non_fast_forward"
+        }
+      ],
+      "bypass_actors": []
+    },
+    "Changes through pull requests": {
+      "target": "branch",
+      "enforcement": "active",
+      "conditions": {
+        "ref_name": {
+          "include": [
+            "~DEFAULT_BRANCH"
+          ],
+          "exclude": []
+        },
+        "repository_name": {
+          "include": [
+            "~ALL"
+          ],
+          "exclude": [],
+          "protected": false
+        }
+      },
+      "rules": [
+        {
+          "type": "pull_request",
+          "parameters": {
+            "allowed_merge_methods": [
+              "squash"
+            ],
+            "required_approving_review_count": 0,
+            "required_review_thread_resolution": true,
+            "dismiss_stale_reviews_on_push": false,
+            "require_code_owner_review": false,
+            "require_last_push_approval": false,
+            "required_reviewers": []
+          }
+        }
+      ],
+      "bypass_actors": [
+        {
+          "actor_id": null,
+          "actor_type": "OrganizationAdmin",
+          "bypass_mode": "pull_request"
+        }
+      ]
+    },
+    "Release tags": {
+      "target": "tag",
+      "enforcement": "active",
+      "conditions": {
+        "ref_name": {
+          "include": [
+            "refs/tags/v[0-9]*"
+          ],
+          "exclude": []
+        },
+        "repository_name": {
+          "include": [
+            "~ALL"
+          ],
+          "exclude": [],
+          "protected": false
+        }
+      },
+      "rules": [
+        {
+          "type": "deletion"
+        },
+        {
+          "type": "non_fast_forward"
+        },
+        {
+          "type": "update"
+        }
+      ],
+      "bypass_actors": []
+    }
+  },
+  "required_check_ruleset": {
+    "name": "Required CI - {repository}",
+    "target": "branch",
+    "enforcement": "active",
+    "conditions": {
+      "ref_name": {
+        "include": [
+          "~DEFAULT_BRANCH"
+        ],
+        "exclude": []
+      },
+      "repository_name": {
+        "include": [
+          "{repository}"
+        ],
+        "exclude": [],
+        "protected": false
+      }
+    },
+    "rules": [
+      {
+        "type": "required_status_checks",
+        "parameters": {
+          "do_not_enforce_on_create": false,
+          "strict_required_status_checks_policy": true
+        }
+      }
+    ],
+    "bypass_actors": [
+      {
+        "actor_id": null,
+        "actor_type": "OrganizationAdmin",
+        "bypass_mode": "pull_request"
+      }
+    ]
+  },
+  "check_integration_id": 15368,
+  "security_configurations": {
+    "Example baseline": {
+      "description": "Security features for every repository.",
+      "advanced_security": "enabled",
+      "secret_scanning": "enabled",
+      "secret_scanning_push_protection": "enabled",
+      "dependabot_alerts": "enabled",
+      "code_scanning_default_setup": "enabled",
+      "enforcement": "enforced",
+      "default_for_new_repos": "all"
+    }
+  },
+  "profiles": {
+    "standard": {
+      "repository": {
+        "archived": false,
+        "allow_squash_merge": true,
+        "allow_merge_commit": false,
+        "allow_rebase_merge": false,
+        "delete_branch_on_merge": true,
+        "squash_merge_commit_title": "PR_TITLE",
+        "squash_merge_commit_message": "PR_BODY"
+      },
+      "branch_rules": {
+        "deletion": {},
+        "non_fast_forward": {},
+        "pull_request": {
+          "allowed_merge_methods": [
+            "squash"
+          ],
+          "required_review_thread_resolution": true,
+          "dismiss_stale_reviews_on_push": false,
+          "require_code_owner_review": false,
+          "require_last_push_approval": false,
+          "required_approving_review_count": 0,
+          "required_reviewers": []
+        }
+      },
+      "tag_rules": {
+        "ref": "refs/tags/v[0-9]*",
+        "rules": [
+          "deletion",
+          "non_fast_forward",
+          "update"
+        ]
+      },
+      "security_configuration": "Example baseline"
+    },
+    "archived": {
+      "repository": {
+        "archived": true
+      }
+    }
+  },
+  "repositories": {
+    "docs": {
+      "profile": "standard",
+      "checks": []
+    },
+    "engine": {
+      "profile": "standard",
+      "checks": [
+        "Engine tests",
+        "PR title"
+      ]
+    },
+    "legacy": {
+      "profile": "archived"
+    }
+  },
+  "recorded": {
+    "teams": {
+      "maintainers": {
+        "docs": "maintain",
+        "engine": "maintain"
+      },
+      "readers": {}
+    },
+    "apps": {
+      "example-bot": "all",
+      "example-ci": "selected"
+    },
+    "environments": {
+      "engine": [
+        "release"
+      ]
+    },
+    "webhooks": {
+      "engine": [
+        "ci.example.com"
+      ]
+    },
+    "organization_webhooks": [
+      "hooks.example.net"
+    ]
+  },
+  "reminders": [
+    {
+      "item": "App example-ci key",
+      "note": "Rotate it around 2027-01-01. A note only; nothing fails on it."
+    }
+  ]
+}

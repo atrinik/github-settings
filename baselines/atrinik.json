@@ -1,0 +1,603 @@
+{
+  "organization": "atrinik",
+  "notes": [
+    "Atrinik's settings baseline, read by check_settings.py. Written from the live organization on 2026-11-14, after the changes the owner approved that day.",
+    "Live state wins: change the setting first, run the check, then update this file in a pull request that quotes the clean output.",
+    "\"recorded\" holds names only. A difference there means something changed since it was last recorded, not that it is wrong.",
+    "\"reminders\" are plain notes for the owner. The check never reads them and never fails on a date."
+  ],
+  "organization_settings": {
+    "default_repository_permission": "none",
+    "members_can_create_repositories": false,
+    "members_can_create_public_repositories": false,
+    "members_can_create_private_repositories": false,
+    "members_can_create_internal_repositories": false,
+    "members_can_fork_private_repositories": false,
+    "members_can_delete_repositories": false,
+    "members_can_change_repo_visibility": false,
+    "members_can_invite_outside_collaborators": true,
+    "members_can_delete_issues": false,
+    "members_can_create_teams": false,
+    "members_can_create_pages": true,
+    "web_commit_signoff_required": false,
+    "deploy_keys_enabled_for_repositories": false,
+    "two_factor_requirement_enabled": true,
+    "default_repository_branch": "main"
+  },
+  "actions": {
+    "permissions": {
+      "enabled_repositories": "all",
+      "allowed_actions": "selected",
+      "sha_pinning_required": true
+    },
+    "selected_actions": {
+      "github_owned_allowed": true,
+      "patterns_allowed": [
+        "atrinik/*",
+        "docker/login-action@*",
+        "docker/setup-buildx-action@*",
+        "docker/build-push-action@*",
+        "codecov/codecov-action@*",
+        "rust-lang/crates-io-auth-action@*"
+      ],
+      "verified_allowed": false
+    },
+    "workflow": {
+      "default_workflow_permissions": "read",
+      "can_approve_pull_request_reviews": false
+    }
+  },
+  "rulesets": {
+    "01 - Default branch integrity": {
+      "target": "branch",
+      "enforcement": "active",
+      "conditions": {
+        "ref_name": {
+          "exclude": [],
+          "include": [
+            "~DEFAULT_BRANCH"
+          ]
+        },
+        "repository_name": {
+          "exclude": [],
+          "include": [
+            "~ALL"
+          ],
+          "protected": false
+        }
+      },
+      "rules": [
+        {
+          "type": "deletion"
+        },
+        {
+          "type": "non_fast_forward"
+        }
+      ],
+      "bypass_actors": []
+    },
+    "01 - Default branch linear history": {
+      "target": "branch",
+      "enforcement": "active",
+      "conditions": {
+        "ref_name": {
+          "exclude": [],
+          "include": [
+            "~DEFAULT_BRANCH"
+          ]
+        },
+        "repository_name": {
+          "exclude": [],
+          "include": [
+            "~ALL"
+          ],
+          "protected": false
+        }
+      },
+      "rules": [
+        {
+          "type": "required_linear_history"
+        }
+      ],
+      "bypass_actors": [
+        {
+          "actor_id": null,
+          "actor_type": "OrganizationAdmin",
+          "bypass_mode": "pull_request"
+        }
+      ]
+    },
+    "02 - Changes through pull requests": {
+      "target": "branch",
+      "enforcement": "active",
+      "conditions": {
+        "ref_name": {
+          "exclude": [],
+          "include": [
+            "~DEFAULT_BRANCH"
+          ]
+        },
+        "repository_name": {
+          "exclude": [],
+          "include": [
+            "~ALL"
+          ],
+          "protected": false
+        }
+      },
+      "rules": [
+        {
+          "type": "pull_request",
+          "parameters": {
+            "required_approving_review_count": 0,
+            "dismiss_stale_reviews_on_push": false,
+            "required_reviewers": [],
+            "require_code_owner_review": false,
+            "require_last_push_approval": false,
+            "required_review_thread_resolution": true,
+            "require_extra_approval_for_unattributed_changes": true,
+            "allowed_merge_methods": [
+              "squash"
+            ]
+          }
+        }
+      ],
+      "bypass_actors": [
+        {
+          "actor_id": null,
+          "actor_type": "OrganizationAdmin",
+          "bypass_mode": "pull_request"
+        }
+      ]
+    },
+    "04 - Immutable release tags": {
+      "target": "tag",
+      "enforcement": "active",
+      "conditions": {
+        "ref_name": {
+          "exclude": [],
+          "include": [
+            "refs/tags/v[0-9]*"
+          ]
+        },
+        "repository_name": {
+          "exclude": [],
+          "include": [
+            "~ALL"
+          ],
+          "protected": false
+        }
+      },
+      "rules": [
+        {
+          "type": "deletion"
+        },
+        {
+          "type": "non_fast_forward"
+        },
+        {
+          "type": "update"
+        }
+      ],
+      "bypass_actors": []
+    }
+  },
+  "required_check_ruleset": {
+    "name": "03 - Required CI - {repository}",
+    "target": "branch",
+    "enforcement": "active",
+    "conditions": {
+      "ref_name": {
+        "exclude": [],
+        "include": [
+          "~DEFAULT_BRANCH"
+        ]
+      },
+      "repository_name": {
+        "exclude": [],
+        "include": [
+          "{repository}"
+        ],
+        "protected": false
+      }
+    },
+    "rules": [
+      {
+        "type": "required_status_checks",
+        "parameters": {
+          "strict_required_status_checks_policy": true,
+          "do_not_enforce_on_create": false
+        }
+      }
+    ],
+    "bypass_actors": [
+      {
+        "actor_id": null,
+        "actor_type": "OrganizationAdmin",
+        "bypass_mode": "pull_request"
+      }
+    ]
+  },
+  "check_integration_id": 15368,
+  "security_configurations": {
+    "Atrinik security baseline": {
+      "description": "Required security features for all Atrinik repositories.",
+      "advanced_security": "enabled",
+      "dependency_graph": "enabled",
+      "dependency_graph_autosubmit_action": "disabled",
+      "dependency_graph_autosubmit_action_options": {
+        "labeled_runners": false
+      },
+      "dependabot_alerts": "enabled",
+      "dependabot_security_updates": "enabled",
+      "dependabot_delegated_alert_dismissal": "disabled",
+      "code_scanning_options": {
+        "allow_advanced": false
+      },
+      "code_scanning_default_setup": "enabled",
+      "code_scanning_default_setup_options": {
+        "runner_type": "not_set",
+        "runner_label": null
+      },
+      "code_scanning_delegated_alert_dismissal": "disabled",
+      "secret_scanning": "enabled",
+      "secret_scanning_push_protection": "enabled",
+      "secret_scanning_delegated_bypass": "disabled",
+      "secret_scanning_non_provider_patterns": "disabled",
+      "secret_scanning_delegated_alert_dismissal": "disabled",
+      "enforcement": "enforced",
+      "private_vulnerability_reporting": "enabled",
+      "secret_scanning_validity_checks": "enabled",
+      "secret_scanning_extended_metadata": "disabled",
+      "secret_scanning_generic_secrets": "disabled",
+      "secret_scanning_generic_secrets_push_protection": "disabled",
+      "default_for_new_repos": "all"
+    },
+    "Atrinik advanced CodeQL baseline": {
+      "description": "Atrinik security baseline for repositories with governed CodeQL advanced setup.",
+      "advanced_security": "enabled",
+      "dependency_graph": "enabled",
+      "dependency_graph_autosubmit_action": "disabled",
+      "dependency_graph_autosubmit_action_options": {
+        "labeled_runners": false
+      },
+      "dependabot_alerts": "enabled",
+      "dependabot_security_updates": "enabled",
+      "dependabot_delegated_alert_dismissal": "disabled",
+      "code_scanning_options": {
+        "allow_advanced": true
+      },
+      "code_scanning_default_setup": "enabled",
+      "code_scanning_default_setup_options": {
+        "runner_type": "not_set",
+        "runner_label": null
+      },
+      "code_scanning_delegated_alert_dismissal": "disabled",
+      "secret_scanning": "enabled",
+      "secret_scanning_push_protection": "enabled",
+      "secret_scanning_delegated_bypass": "disabled",
+      "secret_scanning_non_provider_patterns": "disabled",
+      "secret_scanning_delegated_alert_dismissal": "disabled",
+      "enforcement": "enforced",
+      "private_vulnerability_reporting": "enabled",
+      "secret_scanning_validity_checks": "enabled",
+      "secret_scanning_extended_metadata": "disabled",
+      "secret_scanning_generic_secrets": "disabled",
+      "secret_scanning_generic_secrets_push_protection": "disabled"
+    }
+  },
+  "profiles": {
+    "standard": {
+      "repository": {
+        "allow_squash_merge": true,
+        "allow_merge_commit": false,
+        "allow_rebase_merge": false,
+        "delete_branch_on_merge": true,
+        "squash_merge_commit_title": "PR_TITLE",
+        "squash_merge_commit_message": "PR_BODY",
+        "archived": false
+      },
+      "branch_rules": {
+        "deletion": {},
+        "non_fast_forward": {},
+        "required_linear_history": {},
+        "pull_request": {
+          "required_approving_review_count": 0,
+          "dismiss_stale_reviews_on_push": false,
+          "required_reviewers": [],
+          "require_code_owner_review": false,
+          "require_last_push_approval": false,
+          "required_review_thread_resolution": true,
+          "require_extra_approval_for_unattributed_changes": true,
+          "allowed_merge_methods": [
+            "squash"
+          ]
+        }
+      },
+      "tag_rules": {
+        "ref": "refs/tags/v[0-9]*",
+        "rules": [
+          "deletion",
+          "non_fast_forward",
+          "update"
+        ]
+      },
+      "security_configuration": "Atrinik security baseline"
+    },
+    "archived": {
+      "repository": {
+        "archived": true
+      },
+      "security_configuration": "Atrinik security baseline"
+    }
+  },
+  "repositories": {
+    ".github": {
+      "profile": "standard",
+      "checks": []
+    },
+    "agent-integrations": {
+      "profile": "standard",
+      "checks": [
+        "Required checks",
+        "Conventional PR title"
+      ]
+    },
+    "atrinik": {
+      "profile": "standard",
+      "checks": [
+        "Integration validation",
+        "Conventional PR title"
+      ]
+    },
+    "classic": {
+      "profile": "standard",
+      "checks": [
+        "Classic validation",
+        "CodeQL validation",
+        "Conventional PR title"
+      ],
+      "overrides": {
+        "security_configuration": "Atrinik advanced CodeQL baseline"
+      },
+      "why": "Classic runs CodeQL itself (advanced setup in .github/workflows/codeql.yml, whose CodeQL validation job is a required check), which the default-setup configuration does not allow."
+    },
+    "client": {
+      "profile": "standard",
+      "checks": [
+        "Client validation",
+        "Conventional PR title"
+      ]
+    },
+    "content": {
+      "profile": "standard",
+      "checks": [
+        "Content validation",
+        "Conventional PR title"
+      ]
+    },
+    "content-toolkit": {
+      "profile": "standard",
+      "checks": [
+        "Content toolkit validation",
+        "Conventional PR title"
+      ]
+    },
+    "deploy-control": {
+      "profile": "standard",
+      "checks": [
+        "Deploy-control validation",
+        "Conventional PR title"
+      ]
+    },
+    "devcontainer": {
+      "profile": "standard",
+      "checks": [
+        "Required checks",
+        "Conventional PR title"
+      ]
+    },
+    "github-settings": {
+      "profile": "standard",
+      "checks": [
+        "Policy validation",
+        "Conventional PR title"
+      ]
+    },
+    "metaserver-worker": {
+      "profile": "standard",
+      "checks": [
+        "verify",
+        "Conventional PR title"
+      ]
+    },
+    "nawerhals": {
+      "profile": "archived"
+    },
+    "observatory": {
+      "profile": "standard",
+      "checks": [
+        "Validate dashboard and Workers",
+        "Conventional PR title"
+      ]
+    },
+    "pathfinder": {
+      "profile": "standard",
+      "checks": [
+        "Pathfinder validation",
+        "Conventional PR title"
+      ]
+    },
+    "playtester": {
+      "profile": "standard",
+      "checks": [
+        "Playtester validation",
+        "Conventional PR title"
+      ]
+    },
+    "protocol": {
+      "profile": "standard",
+      "checks": [
+        "Protocol validation",
+        "Conventional PR title"
+      ]
+    },
+    "resources": {
+      "profile": "standard",
+      "checks": [
+        "Asset validation",
+        "Conventional PR title"
+      ]
+    },
+    "server": {
+      "profile": "standard",
+      "checks": [
+        "Server validation",
+        "Conventional PR title"
+      ]
+    },
+    "service-updater": {
+      "profile": "standard",
+      "checks": [
+        "Updater validation",
+        "Conventional PR title"
+      ]
+    },
+    "sound": {
+      "profile": "standard",
+      "checks": [
+        "Asset validation",
+        "Conventional PR title"
+      ]
+    },
+    "tools": {
+      "profile": "standard",
+      "checks": [
+        "Tools validation",
+        "Conventional PR title"
+      ]
+    },
+    "web-platform": {
+      "profile": "standard",
+      "checks": []
+    },
+    "website": {
+      "profile": "standard",
+      "checks": [
+        "Website validation",
+        "Conventional PR title"
+      ]
+    }
+  },
+  "recorded": {
+    "teams": {
+      "admins": {
+        "atrinik": "admin",
+        "nawerhals": "admin",
+        "observatory": "admin",
+        "sound": "admin"
+      },
+      "developers": {},
+      "maintainers": {
+        ".github": "maintain",
+        "agent-integrations": "maintain",
+        "atrinik": "maintain",
+        "classic": "maintain",
+        "client": "maintain",
+        "content": "maintain",
+        "content-toolkit": "maintain",
+        "deploy-control": "maintain",
+        "devcontainer": "maintain",
+        "github-settings": "maintain",
+        "metaserver-worker": "maintain",
+        "observatory": "maintain",
+        "pathfinder": "maintain",
+        "playtester": "maintain",
+        "protocol": "maintain",
+        "resources": "maintain",
+        "server": "maintain",
+        "service-updater": "maintain",
+        "sound": "maintain",
+        "tools": "maintain",
+        "web-platform": "maintain",
+        "website": "maintain"
+      },
+      "testers": {}
+    },
+    "apps": {
+      "atrinik-classic-dependency-updater": "selected",
+      "atrinik-crate-dependency-update": "selected",
+      "claude": "all",
+      "cloudflare-workers-and-pages": "selected",
+      "codecov": "selected"
+    },
+    "environments": {
+      "classic": [
+        "discord-release",
+        "github-pages"
+      ],
+      "content-toolkit": [
+        "crates-io-release"
+      ],
+      "metaserver-worker": [
+        "development",
+        "production"
+      ],
+      "observatory": [
+        "production"
+      ],
+      "protocol": [
+        "crates-io-bootstrap",
+        "crates-io-release"
+      ]
+    },
+    "webhooks": {
+      "classic": [
+        "atrinik.org"
+      ]
+    },
+    "organization_webhooks": []
+  },
+  "reminders": [
+    {
+      "item": "App atrinik-classic-dependency-updater (classic: variable DEPENDENCY_UPDATE_APP_ID, secret DEPENDENCY_UPDATE_APP_PRIVATE_KEY)",
+      "note": "Key rotation was due 2026-11-09. The key still works. Rotate it next time you are at Lyra, or decide it can wait."
+    },
+    {
+      "item": "App atrinik-crate-dependency-update (client: variable CRATE_DEPENDENCY_UPDATE_APP_ID, secret CRATE_DEPENDENCY_UPDATE_APP_PRIVATE_KEY)",
+      "note": "Key created 2026-10-11. Rotate it around 2027-01-09."
+    },
+    {
+      "item": "metaserver-worker environments development and production: secrets CLOUDFLARE_API_TOKEN and ATRINIK_DELIVERY_RESOURCE_READ_TOKEN",
+      "note": "Cloudflare API tokens, separate for each environment. Rotate them around 2027-01-09."
+    },
+    {
+      "item": "observatory environment production: secrets CLOUDFLARE_DEPLOY_API_TOKEN and CLOUDFLARE_D1_API_TOKEN",
+      "note": "Cloudflare API tokens. No rotation date is recorded; note one here when you next rotate them. Deployments wait for approval by zoeyrose."
+    },
+    {
+      "item": "App cloudflare-workers-and-pages (selected repositories)",
+      "note": "Last recorded on website and metaserver-worker; its review was due 2026-11-13. The gh login cannot read which repositories an App reaches; look once in the organization's GitHub Apps settings."
+    },
+    {
+      "item": "App codecov (selected repositories)",
+      "note": "Last recorded on atrinik, classic, client, content-toolkit, protocol and server. Confirm in the organization's GitHub Apps settings."
+    },
+    {
+      "item": "App claude (all repositories)",
+      "note": "The Claude GitHub App reaches every repository, including new ones."
+    },
+    {
+      "item": "crates.io trusted publishing",
+      "note": "protocol publishes atrinik-protocol and content-toolkit publishes atrinik-artifact, atrinik-catalog, atrinik-diagnostics, atrinik-schema and atrinik-source, each from its crates-io-release environment. On crates.io, remove atrinik/renderer as a trusted publisher: that repository is no longer in the organization."
+    },
+    {
+      "item": "Retired credential ATRINIK_SETTINGS_TOKEN",
+      "note": "Deleted from github-settings on 2026-11-14. Delete its entry at github.com/settings/tokens too; deleting the secret does not revoke the token."
+    },
+    {
+      "item": "Organization webhooks",
+      "note": "The gh login cannot read them (needs admin:org_hook), so the check reports them as could not verify. Recorded as none; look once at the organization's Webhooks page and correct the list if needed."
+    }
+  ]
+}
