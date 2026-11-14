@@ -52,6 +52,7 @@ SECTIONS = {"organization": ("the organization's login", lambda v: isinstance(v,
             "actions": ("permissions, selected_actions or workflow, each an object of fields",
                         lambda v: mapping(mapping())(v) and set(v) <= set(ACTIONS_PATHS)),
             "security_configurations": ("configuration name to an object of fields", mapping(mapping())),
+            "repositories": ("repository name to an object with a profile", mapping(lambda v: isinstance(v, dict))),
             "recorded": (f"{', '.join(RECORDED)}, each in its shape (README.md)",
                          lambda v: isinstance(v, dict) and all(k in RECORDED and RECORDED[k](x) for k, x in v.items()))}
 # Organization settings the REST API cannot change: the fix is this settings page.
@@ -190,15 +191,16 @@ def validate(base):
         bad = shape_errors(f"profile {name}", profile, SHAPES)
         errors, bad_profiles = errors + bad, bad_profiles | ({name} if bad else set())
     configs, exceptions = base.get("security_configurations", {}), 0
-    for repo, entry in sorted(base.get("repositories", {}).items()):
-        if not isinstance(entry, dict) or entry.get("profile") not in profiles:
+    repos = base.get("repositories")  # a section of the wrong shape is reported above
+    for repo, entry in sorted(repos.items() if isinstance(repos, dict) else []):
+        if not isinstance(entry, dict) or entry.get("profile") not in list(profiles):  # list: value may be unhashable
             errors.append(f"repository {repo}: needs a known profile")
             continue
         if not names_list(entry.get("checks", [])):
             errors.append(f"repository {repo}: checks must be a list of check names")
         overrides = entry.get("overrides", {})
-        exceptions += len(overrides)
         bad = shape_errors(f"repository {repo} override", overrides, SHAPES)
+        exceptions += len(overrides) if isinstance(overrides, dict) else 0
         errors += bad
         if bad or entry["profile"] in bad_profiles:
             continue
@@ -380,6 +382,16 @@ class Checker:
                 return self.ruleset_fix(name)
         return f"add a {rule_type} rule to an organization ruleset in the baseline"
 
+    def org_rule_fix(self, name, rid):
+        """A rule from an organization ruleset is fixed in that ruleset: PUT its baseline body, or record it."""
+        listing = self.gh.get(f"repos/{self.org}/{name}/rulesets?includes_parents=true&per_page=100", True)
+        named = [{"id": i, "name": n} for n, i in (self.live_ruleset_ids or {}).items()] + (  # no admin:org needed
+            listing if isinstance(listing, list) else [])
+        rname, path = next((r["name"] for r in named if r["id"] == rid), None), f"orgs/{self.org}/rulesets/{rid}"
+        if rname in self.wanted_rulesets:
+            return f"{self.ruleset_cmd} {shlex.quote(rname)} | gh api --method PUT {path} --input -"
+        return f"record ruleset {rname or rid} in the baseline, or change the rule in {path}"
+
     def repo_ruleset_fix(self, name, rid, verb):
         path = f"repos/{self.org}/{name}/rulesets/{rid}"
         return f"{verb} the rule in {path} (read it, edit, PUT it back with --input -), or {gh_command('DELETE', path)}"
@@ -398,7 +410,7 @@ class Checker:
                    if not matches(params, r.get("parameters", {}))}
             for from_org, rid in sorted(bad, key=str):  # a repository ruleset is fixed there, not at the provider
                 self.diff(where, f"{rule_type} rule from {'' if from_org else 'repository '}ruleset {rid} is not "
-                          f"{show(params)}", self.provider_fix("branch", rule_type) if from_org
+                          f"{show(params)}", self.org_rule_fix(name, rid) if from_org
                           else self.repo_ruleset_fix(name, rid, "change"))
         template = (self.base.get("required_check_ruleset") or {}).get("name", "").replace("{repository}", name)
         check_fix = self.ruleset_fix(template) if template else "change the ruleset that requires checks"
@@ -411,18 +423,12 @@ class Checker:
             self.diff(where, f"required checks are {show([c for c, _ in have])}"
                              f"{' (or from another app)' if [c for c, _ in have] == [c for c, _ in want] else ''}, "
                              f"baseline {show(checks)}", check_fix)
-        known = self.live_ruleset_ids or {}
         for rule in (r for r in live if r["type"] not in want_rules and r["type"] != "required_status_checks"):
-            rid, kind = rule.get("ruleset_id"), rule["type"]
-            if rule.get("ruleset_source_type") != "Organization":
-                self.diff(where, f"unexpected {kind} rule from ruleset {rid}", self.repo_ruleset_fix(name, rid,
-                                                                                                    "remove"))
-            elif rid not in known.values():  # a listed organization ruleset is reported by check_rulesets
-                listing = self.gh.get(f"repos/{self.org}/{name}/rulesets?includes_parents=true&per_page=100", True)
-                rname = {r["id"]: r["name"] for r in (listing if isinstance(listing, list) else [])}.get(rid)
-                self.diff(where, f"unexpected {kind} rule from organization ruleset {rid}", f"{self.ruleset_cmd} "
-                          f"{shlex.quote(rname)} | gh api --method PUT orgs/{self.org}/rulesets/{rid} --input -"
-                          if rname in self.wanted_rulesets else f"record ruleset {rname or rid} in the baseline")
+            rid, from_org = rule.get("ruleset_id"), rule.get("ruleset_source_type") == "Organization"
+            if not from_org or rid not in (self.live_ruleset_ids or {}).values():  # else check_rulesets reports it
+                self.diff(where, f"unexpected {rule['type']} rule from {'organization ' if from_org else ''}ruleset "
+                          f"{rid}", self.org_rule_fix(name, rid) if from_org else self.repo_ruleset_fix(name, rid,
+                                                                                                         "remove"))
 
     def check_tag_rules(self, name, want):
         where, base = f"{self.org}/{name} tags {want['ref']}", f"repos/{self.org}/{name}/rulesets"

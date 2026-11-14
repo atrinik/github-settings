@@ -190,6 +190,22 @@ class CheckTest(unittest.TestCase):
         # The organization ruleset already matches, so its PUT would not fix this.
         self.assertFalse(any("orgs/example-org/rulesets" in line for line in lines), lines)
 
+    def test_differing_rule_from_unrecorded_organization_ruleset_names_that_ruleset(self):
+        rules = self.api[f"repos/{ORG}/engine/rules/branches/main?per_page=100"]
+        other = copy.deepcopy(next(r for r in rules if r["type"] == "pull_request"))
+        other.update(ruleset_id=555, ruleset_source_type="Organization")
+        other["parameters"]["require_code_owner_review"] = True
+        rules.append(other)
+        self.api[f"orgs/{ORG}/rulesets?per_page=100"].append({"id": 555, "name": "Extra review", "target": "branch"})
+        self.api[f"orgs/{ORG}/rulesets/555"] = {"id": 555, "name": "Extra review", "target": "branch"}
+        code, lines = self.run_check()
+        self.assertEqual(code, 1)
+        self.assertLine(lines, f"{ORG}/engine main: pull_request rule from ruleset 555 is not",
+                        "fix: record ruleset Extra review in the baseline", f"orgs/{ORG}/rulesets/555")
+        self.assertLine(lines, "ruleset 'Extra review' is not in the baseline")
+        # The matching baseline ruleset 102 would be a no-op PUT, so it is never the fix.
+        self.assertFalse(any("rulesets/102" in line for line in lines), lines)
+
     def test_unreadable_tag_ruleset_is_only_unverifiable(self):
         self.api[f"repos/{ORG}/docs/rulesets/103?includes_parents=true"] = {"__error__": "Forbidden (HTTP 403)"}
         code, lines = self.run_check()
@@ -308,7 +324,11 @@ class BaselineTest(unittest.TestCase):
                                 (lambda b: b.update(organization_settings=[]), "organization_settings must be"),
                                 (lambda b: b["reminders"].append({"item": "x"}), "reminders must be"),
                                 (lambda b: b["required_check_ruleset"].update(name="CI"), "required_check_ruleset must"),
-                                (lambda b: b.pop("organization"), "organization must be")]:
+                                (lambda b: b.pop("organization"), "organization must be"),
+                                (lambda b: b.update(repositories=[]), "repositories must be"),
+                                (lambda b: b["repositories"]["docs"].update(profile=["x"]), "docs: needs a known"),
+                                (lambda b: b["repositories"]["docs"].update(overrides=3, why="x"),
+                                 "docs override: must be an object")]:
             base = copy.deepcopy(self.base)
             change(base)
             with self.subTest(message=message):
