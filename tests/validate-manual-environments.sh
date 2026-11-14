@@ -113,7 +113,7 @@ jq -e '
       environment: "production",
       repository: "atrinik/metaserver-worker",
       repository_id: 1324297032,
-      required_reviewers: [],
+      required_reviewers: [{id: 3865595, type: "User"}],
       secret_names: [
         "ATRINIK_DELIVERY_RESOURCE_POLICY", "ATRINIK_DELIVERY_RESOURCE_READ_TOKEN",
         "ATRINIK_PRODUCTION_CORE_CONFIG",
@@ -161,6 +161,94 @@ reset_manual_settings
 rewrite_manual_settings \
   '.github_actions_environments[0].required_reviewers = [{type: "User", id: 1}]'
 assert_invalid 'a required reviewer outside the declared empty set'
+reset_manual_settings
+
+rewrite_manual_settings \
+  '.github_actions_environments[0].required_reviewers = [{type: "User", id: 3865595}]'
+assert_invalid 'the organization owner as reviewer outside metaserver production'
+reset_manual_settings
+
+assert_invalid_production_reviewers() {
+  local reviewers=$1
+  local description=$2
+
+  cp "${root}/config/manual-settings.json" \
+    "${temporary}/config/manual-settings.json"
+  rewrite_manual_settings "
+    (.github_actions_environments[] |
+      select(.repository == \"atrinik/metaserver-worker\" and
+        .environment == \"production\") |
+      .required_reviewers) = ${reviewers}
+  "
+  assert_invalid "${description}"
+}
+
+assert_invalid_production_reviewers '[]' \
+  'metaserver production without its required owner reviewer'
+assert_invalid_production_reviewers '[{type: "User", id: 1}]' \
+  'metaserver production with a different required reviewer'
+assert_invalid_production_reviewers '[{type: "Team", id: 3865595}]' \
+  'metaserver production with a Team required reviewer'
+assert_invalid_production_reviewers \
+  '[{type: "User", id: 3865595}, {type: "User", id: 1}]' \
+  'metaserver production with an extra required reviewer'
+assert_invalid_production_reviewers \
+  '[{type: "User", id: 3865595}, {type: "User", id: 3865595}]' \
+  'metaserver production with a duplicate required reviewer'
+assert_invalid_production_reviewers '[{type: "User", id: "3865595"}]' \
+  'metaserver production with a string reviewer ID'
+assert_invalid_production_reviewers '[{type: "User"}]' \
+  'metaserver production with a reviewer without an ID'
+assert_invalid_production_reviewers \
+  '[{type: "User", id: 3865595, login: "zoeyrose"}]' \
+  'metaserver production with an unrecorded reviewer field'
+assert_invalid_production_reviewers '[3865595]' \
+  'metaserver production with a bare reviewer ID'
+assert_invalid_production_reviewers 'null' \
+  'metaserver production without a reviewer set'
+assert_invalid_production_reviewers '{type: "User", id: 3865595}' \
+  'metaserver production with a reviewer object instead of a set'
+
+cp "${root}/config/manual-settings.json" \
+  "${temporary}/config/manual-settings.json"
+rewrite_manual_settings '
+  (.github_actions_environments[] |
+    select(.repository == "atrinik/metaserver-worker" and
+      .environment == "development") |
+    .required_reviewers) = [{type: "User", id: 3865595}]
+'
+assert_invalid 'the production owner reviewer on metaserver development'
+
+reset_manual_settings
+rewrite_manual_settings '
+  .github_actions_environments[0] += {
+    environment: "production",
+    repository: "atrinik/metaserver-worker",
+    repository_id: 1324297032,
+    required_reviewers: [{type: "User", id: 3865595}]
+  }
+'
+"${temporary}/bin/validate" >/dev/null
+rewrite_manual_settings \
+  '.github_actions_environments[0].environment = "staging"'
+assert_invalid 'the production owner reviewer on another metaserver environment'
+rewrite_manual_settings '
+  .github_actions_environments[0].environment = "production" |
+  .github_actions_environments[0].repository = "atrinik/classic" |
+  .github_actions_environments[0].repository_id = 1327289971
+'
+assert_invalid 'the production owner reviewer on another repository'
+rewrite_manual_settings \
+  '.github_actions_environments[0].repository_id = 1324297032'
+assert_invalid 'the production owner reviewer under another repository name'
+rewrite_manual_settings '
+  .github_actions_environments[0].repository = "atrinik/metaserver-worker" |
+  .github_actions_environments[0].repository_id = 1
+'
+assert_invalid 'the production owner reviewer under another repository ID'
+rewrite_manual_settings \
+  '.github_actions_environments[0].required_reviewers = []'
+assert_invalid 'metaserver production without a reviewer under another repository ID'
 reset_manual_settings
 
 rewrite_manual_settings '

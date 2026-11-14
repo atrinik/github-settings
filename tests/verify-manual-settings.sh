@@ -610,9 +610,32 @@ repos/atrinik/classic/pages)
   }'
   ;;
 repos/atrinik/metaserver-worker/environments/production)
-  jq -n '{name: "production", deployment_branch_policy: {
+  reviewers='[{type: "User", reviewer: {id: 3865595, login: "zoeyrose"}}]'
+  case ${FAKE_GH_SCENARIO} in
+  production-reviewer-different)
+    reviewers='[{type: "User", reviewer: {id: 1, login: "reviewer"}}]'
+    ;;
+  production-reviewer-team)
+    reviewers='[{type: "Team", reviewer: {id: 3865595, slug: "maintainers"}}]'
+    ;;
+  production-reviewer-extra)
+    reviewers='[{type: "User", reviewer: {id: 3865595, login: "zoeyrose"}},
+      {type: "User", reviewer: {id: 1, login: "reviewer"}}]'
+    ;;
+  esac
+  if [[ ${FAKE_GH_SCENARIO} == production-reviewer-missing ]]; then
+    rules='[{type: "branch_policy"}]'
+  elif [[ ${FAKE_GH_SCENARIO} == production-reviewer-duplicate-rule ]]; then
+    rules="[{type: \"branch_policy\"},
+      {type: \"required_reviewers\", reviewers: ${reviewers}},
+      {type: \"required_reviewers\", reviewers: ${reviewers}}]"
+  else
+    rules="[{type: \"branch_policy\"}, {type: \"required_reviewers\",
+      prevent_self_review: false, reviewers: ${reviewers}}]"
+  fi
+  jq -n "{name: \"production\", deployment_branch_policy: {
     protected_branches: true, custom_branch_policies: false
-  }, protection_rules: [{type: "branch_policy"}]}'
+  }, protection_rules: ${rules}}"
   ;;
 "repos/atrinik/metaserver-worker/environments/production/deployment-branch-policies?per_page=100&page=1")
   echo "error: protected production environment must not request custom policies" >&2
@@ -1169,6 +1192,11 @@ environment_failures=(
   branch-mode-drift
   branch-policy-drift
   extra-reviewer
+  production-reviewer-missing
+  production-reviewer-different
+  production-reviewer-team
+  production-reviewer-extra
+  production-reviewer-duplicate-rule
   wait-timer
   custom-protection-rule
   missing-environment-secret
@@ -1202,6 +1230,12 @@ grep -Fq 'deployment branch mode drift' \
 grep -Fq 'deployment branch policy drift' \
   "${temporary}/branch-policy-drift.err"
 grep -Fq 'required reviewer drift' "${temporary}/extra-reviewer.err"
+for scenario in production-reviewer-missing production-reviewer-different \
+  production-reviewer-team production-reviewer-extra \
+  production-reviewer-duplicate-rule; do
+  grep -Fq 'required reviewer drift for atrinik/metaserver-worker production' \
+    "${temporary}/${scenario}.err"
+done
 grep -Fq 'protection rule drift' "${temporary}/wait-timer.err"
 grep -Fq 'protection rule drift' "${temporary}/custom-protection-rule.err"
 grep -Fq 'environment secret-name drift' \

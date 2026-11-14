@@ -1187,8 +1187,15 @@ provenance for the promotion review.
 
 The names-only `production` environment inventory declares the reviewed
 production-promotion contract: protected branches enabled,
-custom policies disabled, no custom patterns and no required reviewers. Solo
-owner dispatch of the exact reviewed inputs remains the approval boundary.
+custom policies disabled, no custom patterns, and the organization owner
+(`zoeyrose`, user ID `3865595`) as the single required reviewer, by owner
+decision of 2026-11-14. Her dispatch of the exact reviewed inputs and her
+approval of the resulting pending deployment together form the approval
+boundary. `bin/validate` rejects any other reviewer set for this environment,
+and every other recorded environment keeps an empty set;
+`bin/verify-manual-settings` fails on live reviewer drift in either direction.
+Neither records nor verifies `prevent_self_review` or administrator bypass for
+this environment.
 The seven secret names and one variable name are desired state, not proof that
 the environment or effective credentials exist. The recovery public-key input
 remains pending the owning workflow merge; provision it only after that reviewed

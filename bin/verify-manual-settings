@@ -586,8 +586,10 @@ while IFS= read -r environment_record; do
     exit 1
   fi
 
+  # Project both sides to the same key order; the strings are compared below.
   expected_reviewers=$(jq -c \
-    '.required_reviewers | sort_by(.type, .id)' <<<"${environment_record}")
+    '[.required_reviewers[] | {type, id}] | sort_by(.type, .id)' \
+    <<<"${environment_record}")
   reviewer_rule_count=$(jq \
     '[.protection_rules[] | select(.type == "required_reviewers")] | length' \
     "${environment_file}")

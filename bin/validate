@@ -1183,7 +1183,16 @@ jq -e \
       length <= 255 and
       test("^[a-z0-9][a-z0-9-]*[a-z0-9]$")
     ) and
-    (.required_reviewers == []) and
+    # Only metaserver production has a required reviewer: the organization
+    # owner, by owner decision of 2026-11-14. Every other environment has none.
+    (
+      if .repository == "atrinik/metaserver-worker" and
+        .environment == "production"
+      then
+        .repository_id == 1324297032 and
+        .required_reviewers == [{type: "User", id: 3865595}]
+      else .required_reviewers == [] end
+    ) and
     (
       .deployment_branch_policy |
       (keys == [

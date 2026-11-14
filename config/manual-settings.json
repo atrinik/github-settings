@@ -327,7 +327,12 @@
       "environment": "production",
       "repository": "atrinik/metaserver-worker",
       "repository_id": 1324297032,
-      "required_reviewers": [],
+      "required_reviewers": [
+        {
+          "id": 3865595,
+          "type": "User"
+        }
+      ],
       "secret_names": [
         "ATRINIK_DELIVERY_RESOURCE_POLICY",
         "ATRINIK_DELIVERY_RESOURCE_READ_TOKEN",
