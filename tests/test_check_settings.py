@@ -164,9 +164,42 @@ class CheckTest(unittest.TestCase):
                 self.api[path] = {"__error__": "Forbidden (HTTP 403)"}
         code, lines = self.run_check()
         self.assertEqual(code, 1)
+        # The name comes from the repository's ruleset listing, which needs no admin:org.
         self.assertLine(lines, f"{ORG}/docs main: unexpected merge_queue rule from organization ruleset 102",
-                        "--ruleset NAME", f"gh api --method PUT orgs/{ORG}/rulesets/102 --input -")
-        self.assertFalse(any("DELETE" in line for line in lines), lines)
+                        "--ruleset 'Changes through pull requests'", f"gh api --method PUT orgs/{ORG}/rulesets/102 --input -")
+        self.assertFalse(any("DELETE" in line or "NAME" in line for line in lines), lines)
+        for repo in ("docs", "engine"):
+            self.api[f"repos/{ORG}/{repo}/rules/branches/main?per_page=100"][-1]["ruleset_id"] = 106
+            self.api[f"repos/{ORG}/{repo}/rulesets?includes_parents=true&per_page=100"].append(
+                {"id": 106, "name": "Hand-made", "target": "branch", "enforcement": "active"})
+        code, lines = self.run_check()
+        self.assertLine(lines, f"{ORG}/docs main: unexpected merge_queue rule from organization ruleset 106",
+                        "fix: record ruleset Hand-made in the baseline")
+        self.assertFalse(any("PUT" in line for line in lines if "106" in line), lines)
+
+    def test_repository_pull_request_rule_is_compared_in_full(self):
+        rules = self.api[f"repos/{ORG}/engine/rules/branches/main?per_page=100"]
+        other = copy.deepcopy(next(r for r in rules if r["type"] == "pull_request"))
+        other.update(ruleset_id=999, ruleset_source_type="Repository")
+        other["parameters"].update(require_code_owner_review=True, required_reviewers=[{"reviewer": {"id": 1}}])
+        rules.append(other)
+        code, lines = self.run_check()
+        self.assertEqual(code, 1)
+        self.assertLine(lines, f"{ORG}/engine main: pull_request rule from ruleset 999 is not")
+
+    def test_unreadable_tag_ruleset_is_only_unverifiable(self):
+        self.api[f"repos/{ORG}/docs/rulesets/103?includes_parents=true"] = {"__error__": "Forbidden (HTTP 403)"}
+        code, lines = self.run_check()
+        self.assertEqual(code, 2)
+        self.assertEqual(lines, [f"could not verify: {ORG}/docs tags refs/tags/v[0-9]*: Forbidden (HTTP 403)"])
+
+    def test_one_timeout_keeps_the_other_differences(self):
+        self.api[f"orgs/{ORG}"]["members_can_create_teams"] = True
+        self.api[f"repos/{ORG}/engine/hooks?per_page=100"] = {"__error__": "Get ...: dial tcp: i/o timeout"}
+        code, lines = self.run_check()
+        self.assertEqual(code, 1)
+        self.assertLine(lines, "members_can_create_teams is true")
+        self.assertLine(lines, f"could not verify: {ORG}/engine webhooks: Get ...: dial tcp: i/o timeout")
 
     def test_tag_excludes_and_other_repository_rules_are_differences(self):
         self.api[f"repos/{ORG}/docs/rulesets/103?includes_parents=true"]["conditions"]["ref_name"]["exclude"] = [
@@ -239,6 +272,17 @@ class BaselineTest(unittest.TestCase):
         self.assertIn('engine: an override needs a "why"', errors)
         self.assertIn("unknown key 'expires'", errors)
 
+    def test_rejects_shapes_the_check_cannot_read(self):
+        for change, message in [(lambda b: b["profiles"]["standard"]["tag_rules"].pop("ref"), "standard: tag_rules must be"),
+                                (lambda b: b["profiles"]["standard"].update(branch_rules=[]), "branch_rules must be"),
+                                (lambda b: b["repositories"]["engine"].update(overrides={"repository": 1}, why="x"),
+                                 "engine override: repository must be"),
+                                (lambda b: next(iter(b["rulesets"].values()))["rules"].append({}), "rules that each have a type")]:
+            base = copy.deepcopy(self.base)
+            change(base)
+            with self.subTest(message=message):
+                self.assertIn(message, " ".join(check_settings.validate(base)))
+
     def test_ruleset_option_expands_the_template(self):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
@@ -275,12 +319,15 @@ class ReadOnlyTest(unittest.TestCase):
                 check_settings.gh_fetch("orgs/x/hooks", True)
 
     def test_logged_out_or_offline_cannot_run(self):
-        for stderr in ("To get started with GitHub CLI, please run:  gh auth login\n",
-                       "error connecting to api.github.com\n", "gh: Bad credentials (HTTP 401)\n"):
+        for stderr in ("To get started with GitHub CLI, please run:  gh auth login\n", "gh: Bad credentials (HTTP 401)\n"):
             result = subprocess.CompletedProcess([], 1, stdout="", stderr=stderr)
             with self.subTest(stderr=stderr), mock.patch.object(check_settings.subprocess, "run", return_value=result):
                 with self.assertRaises(check_settings.CannotRun):
                     check_settings.gh_fetch("orgs/x", False)
+        result = subprocess.CompletedProcess([], 1, stdout="", stderr="Get \"https://api.github.com\": dial tcp: i/o timeout\n")
+        with mock.patch.object(check_settings.subprocess, "run", return_value=result):
+            with self.assertRaises(check_settings.Unverifiable):  # one slow read must not stop the run
+                check_settings.gh_fetch("repos/x/y/hooks", True)
 
     def test_pages_are_joined(self):
         self.assertEqual(check_settings.parse_output('[1, 2]\n[3]\n'), [1, 2, 3])

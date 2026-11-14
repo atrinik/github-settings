@@ -23,7 +23,12 @@ MAX_EXCEPTIONS = 10
 TOP_KEYS = {"organization", "organization_settings", "actions", "rulesets", "required_check_ruleset",
             "check_integration_id", "security_configurations", "profiles", "repositories", "recorded",
             "reminders", "notes"}
-PROFILE_KEYS = {"repository", "branch_rules", "tag_rules", "security_configuration"}
+SHAPES = {"repository": ("an object of fields", lambda v: isinstance(v, dict)),  # profile keys, as the check reads them
+          "branch_rules": ("rule type to parameters", lambda v: isinstance(v, dict) and all(isinstance(p, dict) for p in
+                                                                                             v.values())),
+          "tag_rules": ('a "ref" and a list of rule types in "rules"', lambda v: isinstance(v, dict) and isinstance(
+              v.get("ref"), str) and isinstance(v.get("rules"), list) and all(isinstance(r, str) for r in v["rules"])),
+          "security_configuration": ("a name", lambda v: isinstance(v, str))}
 RECORDED_KEYS = {"teams", "apps", "environments", "webhooks", "organization_webhooks"}
 ACTIONS_PATHS = {"permissions": "", "selected_actions": "/selected-actions", "workflow": "/workflow"}
 # Organization settings the REST API cannot change: the fix is this settings page.
@@ -39,8 +44,7 @@ class Unverifiable(Exception):
 
 
 class CannotRun(Exception):
-    """gh is not logged in, the network failed, or the repository list could not be read."""
-
+    """gh is not logged in, or the repository list could not be read."""
 
 
 def parse_output(text):
@@ -62,9 +66,8 @@ def gh_fetch(path, paginate):
         return parse_output(proc.stdout)
     message = (proc.stderr.strip().splitlines() or ["gh api failed"])[0].removeprefix("gh: ")[:160]
     scope = re.search(r'needs the "([^"]+)" scope', proc.stderr)
-    if not scope and re.search(r"gh auth login|HTTP 401|Bad credentials|error connecting|could not resolve|dial tcp|"
-                               r"timed? ?out|connection (refused|reset)", proc.stderr, re.IGNORECASE):
-        raise CannotRun(message)
+    if not scope and re.search(r"gh auth login|HTTP 401|Bad credentials", proc.stderr, re.IGNORECASE):
+        raise CannotRun(message)  # no read can succeed; a timeout on one read is only "could not verify"
     if scope:
         message += f" (the login lacks the {scope.group(1)} scope)"
     elif path.startswith("orgs/") and re.search(r"HTTP 40[34]", message):
@@ -73,7 +76,7 @@ def gh_fetch(path, paginate):
 
 
 class GitHub:
-    """Cached GET reads. `fetch(path, paginate)` returns parsed JSON or raises Unverifiable."""
+    """Cached GET reads. `get` returns parsed JSON, or the Unverifiable a failed `fetch` raised."""
 
     def __init__(self, fetch=gh_fetch):
         self.fetch, self.cache = fetch, {}
@@ -84,18 +87,11 @@ class GitHub:
                 self.cache[path] = self.fetch(path, paginate)
             except Unverifiable as error:
                 self.cache[path] = error
-        if isinstance(self.cache[path], Unverifiable):
-            raise self.cache[path]
         return self.cache[path]
 
     def prefetch(self, reads):
-        def load(read):
-            try:
-                self.get(*read)
-            except Unverifiable:
-                pass
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-            list(pool.map(load, reads))
+            list(pool.map(lambda read: self.get(*read), reads))
 
 
 def show(value):
@@ -107,12 +103,8 @@ def gh_command(method, path, body=None):
     if body is None:
         return command
     if all(isinstance(v, (str, bool, int)) or v is None for v in body.values()):
-        fields = []
-        for key, value in body.items():
-            flag = "-f" if isinstance(value, str) else "-F"
-            text = value if isinstance(value, str) else json.dumps(value)
-            fields.append(f"{flag} {shlex.quote(f'{key}={text}')}")
-        return " ".join([command] + fields)
+        return " ".join([command] + [("-f " if isinstance(v, str) else "-F ") + shlex.quote(
+            f"{k}={v if isinstance(v, str) else json.dumps(v)}") for k, v in body.items()])
     return f"echo {shlex.quote(json.dumps(body, separators=(',', ':')))} | {command} --input -"
 
 
@@ -157,6 +149,14 @@ def profile_for(base, entry):
     return profile
 
 
+def profile_errors(where, profile):
+    """The shapes the checker reads, so a malformed baseline fails --validate instead of the live run."""
+    if not isinstance(profile, dict):
+        return [f"{where}: must be an object"]
+    return [f"{where}: unknown key {k!r}" for k in sorted(set(profile) - set(SHAPES))] + [
+        f"{where}: {k} must be {SHAPES[k][0]}" for k in sorted(set(profile) & set(SHAPES)) if not SHAPES[k][1](profile[k])]
+
+
 def validate(base):
     errors = []
     if not isinstance(base, dict):
@@ -169,7 +169,7 @@ def validate(base):
         errors.append(f'"profiles" must hold 1 to {MAX_PROFILES} profiles')
         profiles = {}
     for name, profile in profiles.items():
-        errors += [f"profile {name}: unknown key {k!r}" for k in sorted(set(profile) - PROFILE_KEYS)]
+        errors += profile_errors(f"profile {name}", profile)
     configs = base.get("security_configurations", {})
     exceptions = 0
     for repo, entry in sorted(base.get("repositories", {}).items()):
@@ -180,7 +180,10 @@ def validate(base):
             errors.append(f"repository {repo}: checks must be a list of check names")
         overrides = entry.get("overrides", {})
         exceptions += len(overrides)
-        errors += [f"repository {repo}: unknown override {k!r}" for k in sorted(set(overrides) - PROFILE_KEYS)]
+        bad = profile_errors(f"repository {repo} override", overrides)
+        errors += bad
+        if bad or profile_errors("", profiles[entry["profile"]]):
+            continue
         if overrides and not entry.get("why"):
             errors.append(f'repository {repo}: an override needs a "why"')
         wanted = profile_for(base, entry).get("security_configuration")
@@ -188,11 +191,14 @@ def validate(base):
             errors.append(f"repository {repo}: security configuration {wanted!r} is not in the baseline")
     if exceptions > MAX_EXCEPTIONS:
         errors.append(f"{exceptions} per-repository exceptions; the limit is {MAX_EXCEPTIONS}")
-    for name, body in base.get("rulesets", {}).items():
-        if not isinstance(body, dict) or not {"target", "enforcement", "rules"} <= set(body):
-            errors.append(f"ruleset {name}: needs target, enforcement and rules")
     template = base.get("required_check_ruleset")
-    if template is not None and "{repository}" not in str(template.get("name", "")):
+    for name, body in list(base.get("rulesets", {}).items()) + ([("required_check_ruleset", template)] if template
+                                                                 is not None else []):
+        if not isinstance(body, dict) or not {"target", "enforcement", "rules"} <= set(body) or not isinstance(
+                body["rules"], list) or not all(isinstance(r, dict) and isinstance(r.get("type"), str)
+                                                for r in body["rules"]):
+            errors.append(f"ruleset {name}: needs target, enforcement and rules that each have a type")
+    if isinstance(template, dict) and "{repository}" not in str(template.get("name", "")):
         errors.append('"required_check_ruleset" name must contain {repository}')
     errors += [f"recorded: unknown key {k!r}" for k in sorted(set(base.get("recorded", {})) - RECORDED_KEYS)]
     for item in base.get("reminders", []):
@@ -221,11 +227,10 @@ class Checker:
         self.unverified.append(f"could not verify: {where}: {reason}")
 
     def read(self, where, path, paginate=False):
-        try:
-            return self.gh.get(path, paginate)
-        except Unverifiable as error:
-            self.cannot(where, str(error))
-            return None
+        value = self.gh.get(path, paginate)
+        if isinstance(value, Unverifiable):
+            return self.cannot(where, str(value))
+        return value
 
     def names(self, where, label, have, recorded, undo_new, undo_gone):
         for name in sorted(set(have) - set(recorded)):
@@ -259,10 +264,9 @@ class Checker:
         self.check_actions()
         self.check_rulesets()
         self.check_security_configurations()
-        try:
-            repos = self.gh.get(f"orgs/{org}/repos?per_page=100&type=all", True)
-        except Unverifiable as error:
-            raise CannotRun(f"cannot list the repositories, so none was checked: {error}") from error
+        repos = self.gh.get(f"orgs/{org}/repos?per_page=100&type=all", True)
+        if isinstance(repos, Unverifiable):
+            raise CannotRun(f"cannot list the repositories, so none was checked: {repos}")
         self.check_repositories({r["name"]: r for r in repos})
         self.check_apps()
 
@@ -334,11 +338,9 @@ class Checker:
     def check_repositories(self, live_repos):
         org, wanted = self.org, self.base.get("repositories", {})
         for name in sorted(set(live_repos) - set(wanted)):
-            self.diff(f"{org}/{name}", "repository is not classified",
-                             'add it under "repositories" in the baseline with a profile')
+            self.diff(f"{org}/{name}", "repository is not classified", 'add it under "repositories" with a profile')
         for name in sorted(set(wanted) - set(live_repos)):
-            self.diff(f"{org}/{name}", "repository is in the baseline but not in the organization",
-                             "remove it from the baseline")
+            self.diff(f"{org}/{name}", "repository is in the baseline only", "remove it from the baseline")
         names = sorted(set(live_repos) & set(wanted))
         reads = []
         for name in names:
@@ -412,9 +414,11 @@ class Checker:
                 self.diff(where, f"unexpected {kind} rule from ruleset {rid}", "remove it from that ruleset, or "
                           + gh_command("DELETE", f"repos/{self.org}/{name}/rulesets/{rid}"))
             elif rid not in known.values():  # a listed organization ruleset is reported by check_rulesets
-                rname = next((n for n, i in known.items() if i == rid), "NAME")
+                listing = self.gh.get(f"repos/{self.org}/{name}/rulesets?includes_parents=true&per_page=100", True)
+                rname = {r["id"]: r["name"] for r in (listing if isinstance(listing, list) else [])}.get(rid)
                 self.diff(where, f"unexpected {kind} rule from organization ruleset {rid}", f"{self.ruleset_cmd} "
-                          f"{shlex.quote(rname)} | gh api --method PUT orgs/{self.org}/rulesets/{rid} --input -")
+                          f"{shlex.quote(rname)} | gh api --method PUT orgs/{self.org}/rulesets/{rid} --input -"
+                          if rname in self.wanted_rulesets else f"record ruleset {rname or rid} in the baseline")
 
     def check_tag_rules(self, name, want):
         where, base = f"{self.org}/{name} tags {want['ref']}", f"repos/{self.org}/{name}/rulesets"
@@ -423,7 +427,9 @@ class Checker:
             return
         found, excluded = set(), []
         for item in (i for i in listing if i.get("target") == "tag" and i.get("enforcement") == "active"):
-            body = self.read(where, f"{base}/{item['id']}?includes_parents=true") or {}
+            body = self.read(where, f"{base}/{item['id']}?includes_parents=true")
+            if body is None:  # an unreadable body is "could not verify", not missing rules
+                return
             ref_name = (body.get("conditions") or {}).get("ref_name", {})
             if {want["ref"], "~ALL"} & set(ref_name.get("include", [])):  # a ruleset with ref excludes does not count
                 excluded += [str(item["id"])] if ref_name.get("exclude") else []
@@ -434,11 +440,9 @@ class Checker:
                 self.diff(where, f"no {rule_type} rule{note}", self.provider_fix("tag", rule_type))
 
     def check_attachment(self, name, repo, want):
-        where = f"{self.org}/{name}"
-        try:
-            live = self.gh.get(f"repos/{self.org}/{name}/code-security-configuration") or {}
-        except Unverifiable as error:
-            return self.cannot(f"{where} security configuration", str(error))
+        where, live = f"{self.org}/{name}", self.gh.get(f"repos/{self.org}/{name}/code-security-configuration") or {}
+        if isinstance(live, Unverifiable):
+            return self.cannot(f"{where} security configuration", str(live))
         have, status = (live.get("configuration") or {}).get("name"), live.get("status")
         if have != want or status not in ATTACHED:
             cid = self.config_ids.get(want, "ID")
@@ -482,8 +486,7 @@ class Checker:
             for repo in sorted((set(have) | set(want)) & checked):
                 if have.get(repo) != want.get(repo):
                     path = f"orgs/{org}/teams/{team}/repos/{org}/{repo}"
-                    undo = gh_command("PUT", path, {"permission": want[repo]}) if repo in want else \
-                        gh_command("DELETE", path)
+                    undo = gh_command("PUT", path, {"permission": want[repo]}) if repo in want else gh_command("DELETE", path)
                     self.changed(f"{org}/{repo}", f"team {team!r} has {have.get(repo, 'no access')}, "
                                         f"recorded {want.get(repo, 'no access')}", undo)
 
@@ -532,12 +535,10 @@ def main(argv=None, github=None):
     checker = Checker(base, github or GitHub(), sys.argv[0] if argv is None else "check_settings.py", args.baseline)
     try:
         checker.run()
-    except FileNotFoundError:
-        print("gh is not installed or not on PATH", file=sys.stderr)
-        return 3
-    except (CannotRun, KeyError, TypeError, AttributeError, IndexError) as error:
-        print(f"could not run: {error if isinstance(error, CannotRun) else f'unexpected API response ({error!r})'}",
-              file=sys.stderr)
+    except (CannotRun, FileNotFoundError, KeyError, TypeError, AttributeError, IndexError) as error:
+        reason = "gh is not installed or not on PATH" if isinstance(error, FileNotFoundError) else error if isinstance(
+            error, CannotRun) else f"unexpected API response ({error!r})"  # --validate checked the baseline's shape
+        print(f"could not run: {reason}", file=sys.stderr)
         return 3
     lines = checker.diffs + ([""] if checker.diffs and checker.unverified else []) + checker.unverified
     if lines:

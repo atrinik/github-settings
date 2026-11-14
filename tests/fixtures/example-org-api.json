@@ -192,7 +192,10 @@
      ],
      "dismiss_stale_reviews_on_push": false,
      "required_approving_review_count": 0,
-     "required_review_thread_resolution": true
+     "required_review_thread_resolution": true,
+     "require_code_owner_review": false,
+     "require_last_push_approval": false,
+     "required_reviewers": []
     },
     "type": "pull_request"
    }
@@ -383,7 +386,10 @@
     ],
     "dismiss_stale_reviews_on_push": false,
     "required_approving_review_count": 0,
-    "required_review_thread_resolution": true
+    "required_review_thread_resolution": true,
+    "require_code_owner_review": false,
+    "require_last_push_approval": false,
+    "required_reviewers": []
    },
    "ruleset_id": 102,
    "ruleset_source": "example-org",
@@ -434,7 +440,10 @@
      ],
      "dismiss_stale_reviews_on_push": false,
      "required_approving_review_count": 0,
-     "required_review_thread_resolution": true
+     "required_review_thread_resolution": true,
+     "require_code_owner_review": false,
+     "require_last_push_approval": false,
+     "required_reviewers": []
     },
     "type": "pull_request"
    }
@@ -559,7 +568,10 @@
     ],
     "dismiss_stale_reviews_on_push": false,
     "required_approving_review_count": 0,
-    "required_review_thread_resolution": true
+    "required_review_thread_resolution": true,
+    "require_code_owner_review": false,
+    "require_last_push_approval": false,
+    "required_reviewers": []
    },
    "ruleset_id": 102,
    "ruleset_source": "example-org",
@@ -630,7 +642,10 @@
      ],
      "dismiss_stale_reviews_on_push": false,
      "required_approving_review_count": 0,
-     "required_review_thread_resolution": true
+     "required_review_thread_resolution": true,
+     "require_code_owner_review": false,
+     "require_last_push_approval": false,
+     "required_reviewers": []
     },
     "type": "pull_request"
    }
@@ -784,7 +799,10 @@
     ],
     "dismiss_stale_reviews_on_push": false,
     "required_approving_review_count": 0,
-    "required_review_thread_resolution": true
+    "required_review_thread_resolution": true,
+    "require_code_owner_review": false,
+    "require_last_push_approval": false,
+    "required_reviewers": []
    },
    "ruleset_id": 102,
    "ruleset_source": "example-org",
@@ -835,7 +853,10 @@
      ],
      "dismiss_stale_reviews_on_push": false,
      "required_approving_review_count": 0,
-     "required_review_thread_resolution": true
+     "required_review_thread_resolution": true,
+     "require_code_owner_review": false,
+     "require_last_push_approval": false,
+     "required_reviewers": []
     },
     "type": "pull_request"
    }

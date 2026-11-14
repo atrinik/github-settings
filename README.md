@@ -41,7 +41,7 @@ could not verify: orgs/atrinik webhooks: Not Found (HTTP 404) (the login lacks t
 | 0 | Everything matches. |
 | 1 | At least one difference. |
 | 2 | No difference, but something could not be verified. |
-| 3 | The check could not run: bad arguments, an invalid baseline, no `gh`, `gh` not logged in, a network failure, an unreadable repository list or an unexpected API response. Nothing was verified. |
+| 3 | The check could not run: bad arguments, an invalid baseline, no `gh`, `gh` not logged in or its token rejected, an unreadable repository list or an unexpected API response. The run stopped and printed nothing on standard output, so any difference it had found is not shown: fix the cause and rerun it. A single read that fails or times out (for example one network blip) is a "could not verify" line instead, and the run goes on. |
 
 The check never runs a fix itself. A fix command is a suggestion: when live
 state is right and the record is out of date, update the baseline instead.
@@ -49,7 +49,7 @@ state is right and the record is out of date, update the baseline instead.
 Other uses:
 
 ```sh
-python3 check_settings.py --validate baselines/atrinik.json   # the file only, offline
+python3 check_settings.py --validate baselines/atrinik.json   # the file only (keys, shapes, limits), offline
 python3 check_settings.py baselines/atrinik.json --ruleset '02 - Changes through pull requests'
 ```
 
@@ -93,10 +93,13 @@ expected.
   checks, and the rules on its release tags (`branch_rules`, `checks`,
   `tag_rules`). Branch rules come from GitHub's own view of what applies to
   the default branch, so they also catch a repository-level ruleset (every
-  rule of a type must match, and a rule type the profile does not name is a
-  difference) or an organization ruleset that stopped targeting it. Tag rules
+  rule of a type must match the profile's parameters, and a rule type the
+  profile does not name is a difference; so list every parameter of a rule
+  in the profile, as `baselines/atrinik.json` does for `pull_request`, or a
+  repository ruleset could tighten or loosen the unlisted ones unseen) or an organization ruleset that stopped targeting it. Tag rules
   are checked for presence only, and a tag ruleset with ref excludes does
-  not count;
+  not count; if a tag ruleset's body cannot be read, the tag check is one
+  "could not verify" line;
 - security configurations, which one is the default for new repositories,
   and which one each repository has attached (`security_configurations`,
   `security_configuration`);
