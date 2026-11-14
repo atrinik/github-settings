@@ -2,7 +2,9 @@ name: Dependency review
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, edited]
+    # No "edited": a body or title edit would start a run that cancels the
+    # in-progress run for the same head and leaves a cancelled check on it.
+    types: [opened, synchronize, reopened]
 
 concurrency:
   group: dependency-review-${{ github.event.pull_request.number || github.ref }}
