@@ -1,8 +1,0 @@
-{
-  "description": "A cooperative, open-source fantasy world founded by Zoey Seraphina Rose (https://zoeysr.com). Playable in Classic and rebuilding for the future.",
-  "blog": "https://atrinik.org",
-  "default_repository_permission": "none",
-  "members_can_create_repositories": false,
-  "members_can_create_public_repositories": false,
-  "members_can_create_private_repositories": false
-}

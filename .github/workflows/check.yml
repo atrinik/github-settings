@@ -13,22 +13,14 @@ permissions:
 
 jobs:
   policy:
+    # The ruleset "03 - Required CI - github-settings" requires this exact job name.
     name: Policy validation
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - name: Install workflow verification dependencies
-        run: python3 -m pip install --requirement requirements-validation.txt
-
-      - name: Validate configuration
-        run: bin/validate
-
-      - name: Check governance scripts
-        run: shellcheck bin/* tests/*.sh
-
-      - name: Test governance policy
-        run: |
-          for test in tests/*.sh; do
-            "${test}"
-          done
+      - name: Check repository files
+        run: python3 .github/scripts/check_repository.py

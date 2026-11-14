@@ -1,2 +1,0 @@
-# YAML parsing for executable publication and CodeQL workflow verification.
-PyYAML==6.0.3
