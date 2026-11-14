@@ -15,6 +15,7 @@ import re
 import shlex
 import subprocess
 import sys
+import traceback
 import urllib.parse
 
 MAX_PROFILES = 3
@@ -62,6 +63,9 @@ WEB_ONLY = dict.fromkeys(["members_can_delete_repositories", "members_can_change
                           "members_can_create_teams", "readers_can_create_discussions"], "member_privileges")
 WEB_ONLY.update(two_factor_requirement_enabled="security", default_repository_branch="repository_defaults")
 show = functools.partial(json.dumps, sort_keys=True)
+# Effective rules are GitHub's computed view of a branch or tag, so their lines name the ruleset and carry no command.
+SEE_RULESETS = ("an organization ruleset that is missing, unrecorded or different from the baseline has its own "
+                "line with the command; otherwise correct the ruleset by hand, or the baseline")
 
 
 class Unverifiable(Exception):
@@ -374,28 +378,14 @@ class Checker:
         self.check_webhooks(f"orgs/{org}", f"orgs/{org}/hooks", f"https://github.com/organizations/{org}",
                             self.recorded.get("organization_webhooks", []))
 
-    def provider_fix(self, target, rule_type):
-        for name, body in sorted(self.base.get("rulesets", {}).items()):
-            if body.get("target") == target and any(r["type"] == rule_type for r in body["rules"]):
-                return self.ruleset_fix(name)
-        return f"add a {rule_type} rule to an organization ruleset in the baseline"
-
-    def org_rule_fix(self, name, rid, rule_type, params=None):
-        """The fix for a rule from an organization ruleset, and whether check_rulesets reports that ruleset."""
-        listing = self.gh.get(f"repos/{self.org}/{name}/rulesets?includes_parents=true&per_page=100", True)
-        named = [{"id": i, "name": n} for n, i in (self.live_ruleset_ids or {}).items()] + (  # no admin:org needed
-            listing if isinstance(listing, list) else [])
-        rname, path = next((r["name"] for r in named if r["id"] == rid), None), f"orgs/{self.org}/rulesets/{rid}"
-        if rname not in self.wanted_rulesets:
-            return f"record ruleset {rname or rid} in the baseline, or change the rule in {path}", True
-        if any(r["type"] == rule_type and (params is None or not matches(params, r.get("parameters", {})))
-               for r in self.wanted_rulesets[rname]["rules"]):  # its PUT would send this same rule again
-            return f"make the profile and ruleset {rname!r} agree in the baseline", False
-        return f"{self.ruleset_cmd} {shlex.quote(rname)} | gh api --method PUT {path} --input -", True
-
-    def repo_ruleset_fix(self, name, rid, verb):
+    def rule_source(self, name, rule):
+        """Where an effective rule comes from, and its fix: a command only for a repository ruleset."""
+        rid = rule.get("ruleset_id")
+        if rule.get("ruleset_source_type") == "Organization":
+            return f"organization ruleset {rid}", SEE_RULESETS
         path = f"repos/{self.org}/{name}/rulesets/{rid}"
-        return f"{verb} the rule in {path} (read it, edit, PUT it back with --input -), or {gh_command('DELETE', path)}"
+        return f"repository ruleset {rid}", (f"change the rule in {path} (read it, edit, PUT it back with --input -), "
+                                             f"or {gh_command('DELETE', path)}")
 
     def check_branch_rules(self, name, repo, want_rules, checks):
         where = f"{self.org}/{name} {repo['default_branch']}"
@@ -403,33 +393,24 @@ class Checker:
         live = self.read(where, f"repos/{self.org}/{name}/rules/branches/{branch}?per_page=100", True)
         if live is None:
             return
-        for rule_type, params in sorted(want_rules.items()):
-            found = [r for r in live if r["type"] == rule_type]  # every one must match, repository rulesets too
-            if not found:
-                self.diff(where, f"no {rule_type} rule", self.provider_fix("branch", rule_type))
-            bad = {(r.get("ruleset_source_type") == "Organization", r.get("ruleset_id")) for r in found
-                   if not matches(params, r.get("parameters", {}))}
-            for from_org, rid in sorted(bad, key=str):  # a repository ruleset is fixed there, not at the provider
-                self.diff(where, f"{rule_type} rule from {'' if from_org else 'repository '}ruleset {rid} is not "
-                          f"{show(params)}", self.org_rule_fix(name, rid, rule_type, params)[0] if from_org
-                          else self.repo_ruleset_fix(name, rid, "change"))
-        template = (self.base.get("required_check_ruleset") or {}).get("name", "").replace("{repository}", name)
-        check_fix = self.ruleset_fix(template) if template else "change the ruleset that requires checks"
+        for rule_type in sorted(set(want_rules) - {r["type"] for r in live}):
+            self.diff(where, f"no {rule_type} rule", SEE_RULESETS)
+        required = [r for r in live if r["type"] == "required_status_checks"]
+        for rule in (r for r in live if r["type"] != "required_status_checks"):  # each must match, from any ruleset
+            source, fix = self.rule_source(name, rule)
+            if rule["type"] not in want_rules:
+                self.diff(where, f"unexpected {rule['type']} rule from {source}", fix)
+            elif not matches(want_rules[rule["type"]], rule.get("parameters", {})):
+                self.diff(where, f"{rule['type']} rule from {source} is not {show(want_rules[rule['type']])}", fix)
         app = self.base.get("check_integration_id")
-        have = sorted({(c["context"], c.get("integration_id") if app else None) for r in live
-                       if r["type"] == "required_status_checks"
+        have = sorted({(c["context"], c.get("integration_id") if app else None) for r in required
                        for c in r["parameters"]["required_status_checks"]}, key=str)
         want = sorted({(c, app) for c in checks}, key=str)
         if have != want:
+            sources = ", ".join(sorted({self.rule_source(name, r)[0] for r in required})) or "no ruleset"
             self.diff(where, f"required checks are {show([c for c, _ in have])}"
-                             f"{' (or from another app)' if [c for c, _ in have] == [c for c, _ in want] else ''}, "
-                             f"baseline {show(checks)}", check_fix)
-        for rule in (r for r in live if r["type"] not in want_rules and r["type"] != "required_status_checks"):
-            rid, from_org = rule.get("ruleset_id"), rule.get("ruleset_source_type") == "Organization"
-            fix, reported = self.org_rule_fix(name, rid, rule["type"]) if from_org else (None, False)
-            if not reported or not isinstance(self.gh.cache.get(f"orgs/{self.org}/rulesets/{rid}"), dict):
-                self.diff(where, f"unexpected {rule['type']} rule from {'organization ' if from_org else ''}ruleset "
-                          f"{rid}", fix or self.repo_ruleset_fix(name, rid, "remove"))
+                             f"{' (or from another app)' if [c for c, _ in have] == [c for c, _ in want] else ''} "
+                             f"from {sources}, baseline {show(checks)}", SEE_RULESETS)
 
     def check_tag_rules(self, name, want):
         where, base = f"{self.org}/{name} tags {want['ref']}", f"repos/{self.org}/{name}/rulesets"
@@ -448,7 +429,7 @@ class Checker:
         note = f" (ruleset {', '.join(excluded)} has ref excludes, so it does not count)" if excluded else ""
         for rule_type in want["rules"]:
             if rule_type not in found:
-                self.diff(where, f"no {rule_type} rule{note}", self.provider_fix("tag", rule_type))
+                self.diff(where, f"no {rule_type} rule{note}", SEE_RULESETS)
 
     def check_attachment(self, name, repo, want):
         where = f"{self.org}/{name}"
@@ -509,7 +490,7 @@ class Checker:
                              f"recorded {recorded.get(app, 'not installed')}", f"change it at {page}/installations")
 
 
-def main(argv=None, github=None):
+def run(argv, github):
     parser = argparse.ArgumentParser(description="Read-only check of a GitHub organization against a baseline file.")
     parser.error = lambda message: parser.exit(3, f"{parser.format_usage()}check_settings.py: {message}\n")  # not 2
     parser.add_argument("baseline", help="the organization's baseline JSON file")
@@ -535,15 +516,24 @@ def main(argv=None, github=None):
     checker = Checker(base, github or GitHub(), sys.argv[0] if argv is None else "check_settings.py", args.baseline)
     try:
         checker.run()
-    except (CannotRun, FileNotFoundError, KeyError, TypeError, AttributeError, IndexError) as error:
-        reason = {CannotRun: error, FileNotFoundError: "gh is not installed or not on PATH"}.get(
-            type(error), f"unexpected API response ({error!r})")  # --validate already checked the baseline's shape
+    except (CannotRun, FileNotFoundError) as error:
+        reason = "gh is not installed or not on PATH" if isinstance(error, FileNotFoundError) else error
         print(f"could not run: {reason}", file=sys.stderr)
         return 3
     lines = checker.diffs + ([""] if checker.diffs and checker.unverified else []) + checker.unverified
     if lines:
         print("\n".join(lines))
     return 1 if checker.diffs else 2 if checker.unverified else 0
+
+
+def main(argv=None, github=None):
+    """Exit 1 means "differences", so nothing else may end in it: any unexpected error is exit 3."""
+    try:
+        return run(argv, github)
+    except Exception:  # a baseline shape --validate does not know, an unexpected API response, or a bug
+        traceback.print_exc()
+        print("could not run: unexpected error (traceback above); nothing was compared", file=sys.stderr)
+        return 3
 
 
 if __name__ == "__main__":

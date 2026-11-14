@@ -17,6 +17,7 @@ import check_settings  # noqa: E402
 
 FIXTURES = ROOT / "tests" / "fixtures"
 ORG = "example-org"
+POINTER = check_settings.SEE_RULESETS
 
 
 def load(name):
@@ -79,10 +80,10 @@ class CheckTest(unittest.TestCase):
         self.assertLine(lines, f"gh api --method PATCH orgs/{ORG} -f default_repository_permission=none")
         self.assertLine(lines, "'Release tags' differs in rules", "--ruleset 'Release tags'",
                         f"gh api --method PUT orgs/{ORG}/rulesets/103 --input -")
-        self.assertLine(lines, f"{ORG}/docs tags refs/tags/v[0-9]*: no update rule", "rulesets/103")
+        self.assertLine(lines, f"{ORG}/docs tags refs/tags/v[0-9]*: no update rule", POINTER)
         self.assertLine(lines, f"{ORG}/docs: security configuration is None", "configurations/501/attach",
                         "-f scope=selected -F 'selected_repository_ids[]=9002'")
-        self.assertLine(lines, "unexpected merge_queue rule from ruleset 999",
+        self.assertLine(lines, "unexpected merge_queue rule from repository ruleset 999",
                         f"gh api --method DELETE repos/{ORG}/docs/rulesets/999")
         self.assertFalse(any(line.startswith("could not verify") for line in lines))
 
@@ -93,10 +94,12 @@ class CheckTest(unittest.TestCase):
         self.base["repositories"]["docs"]["checks"] = ["Docs build"]
         code, lines = self.run_check()
         self.assertEqual(code, 1)
-        self.assertLine(lines, f"{ORG}/engine main: required checks", "(or from another app)", "rulesets/104")
-        self.assertLine(lines, f"{ORG}/docs main: required checks are [], baseline [\"Docs build\"]",
-                        "--ruleset 'Required CI - docs'", f"gh api --method POST orgs/{ORG}/rulesets --input -")
-        self.assertLine(lines, "ruleset 'Required CI - docs' is missing")
+        self.assertLine(lines, f"{ORG}/engine main: required checks", "(or from another app) from organization "
+                        "ruleset 104", POINTER)
+        self.assertLine(lines, f"{ORG}/docs main: required checks are [] from no ruleset, baseline [\"Docs build\"]",
+                        POINTER)
+        self.assertLine(lines, "ruleset 'Required CI - docs' is missing", "--ruleset 'Required CI - docs'",
+                        f"gh api --method POST orgs/{ORG}/rulesets --input -")
 
     def test_unclassified_and_unknown_objects_fail(self):
         repos = self.api[f"orgs/{ORG}/repos?per_page=100&type=all"]
@@ -147,47 +150,33 @@ class CheckTest(unittest.TestCase):
         code, lines = self.run_check()
         self.assertEqual(code, 1)
         self.assertLine(lines, "delete_branch_on_merge is false")
-        self.assertLine(lines, f"{ORG}/engine main: no deletion rule", f"rulesets/ID --input -")
+        self.assertLine(lines, f"{ORG}/engine main: no deletion rule", POINTER)
         self.assertLine(lines, "could not verify: teams")
 
-    def test_unexpected_rule_is_reported_when_its_organization_ruleset_cannot_be_read(self):
-        extra = {"type": "merge_queue", "ruleset_id": 102, "ruleset_source_type": "Organization", "parameters": {}}
-        self.api[f"orgs/{ORG}/rulesets/102"] = {"__error__": "timed out"}
-        for repo in ("docs", "engine"):
-            self.api[f"repos/{ORG}/{repo}/rules/branches/main?per_page=100"].append(dict(extra))
-        code, lines = self.run_check()
-        self.assertEqual(code, 1)
-        self.assertLine(lines, f"could not verify: orgs/{ORG}/rulesets/102")
-        for repo in ("docs", "engine"):
-            self.assertLine(lines, f"{ORG}/{repo} main: unexpected merge_queue rule from organization ruleset 102",
-                            f"gh api --method PUT orgs/{ORG}/rulesets/102 --input -")
-
-    def test_organization_rule_changes_never_suggest_deleting_the_ruleset(self):
+    def test_rules_from_an_organization_ruleset_are_always_reported_and_carry_no_command(self):
+        """Its own line has the command when it differs; the per-repository lines never guess one."""
         extra = {"type": "merge_queue", "ruleset_id": 102, "ruleset_source_type": "Organization", "parameters": {}}
         self.api[f"orgs/{ORG}/rulesets/102"]["rules"].append({"type": "merge_queue", "parameters": {}})
         for repo in ("docs", "engine"):
             self.api[f"repos/{ORG}/{repo}/rules/branches/main?per_page=100"].append(dict(extra))
-        code, lines = self.run_check()
-        self.assertEqual(code, 1)
-        self.assertLine(lines, "'Changes through pull requests' differs in rules")
-        self.assertFalse(any("DELETE" in line or "unexpected" in line for line in lines), lines)
-        for path in list(self.api):
-            if path.startswith(f"orgs/{ORG}") and path != f"orgs/{ORG}/repos?per_page=100&type=all":
+        states = {"read": None, "unreadable": {f"orgs/{ORG}/rulesets/102"}, "no admin:org": {
+            path for path in self.api if path.startswith(f"orgs/{ORG}") and "/repos?" not in path}}
+        for state, failing in states.items():
+            for path in failing or ():
                 self.api[path] = {"__error__": "Forbidden (HTTP 403)"}
-        code, lines = self.run_check()
-        self.assertEqual(code, 1)
-        # The name comes from the repository's ruleset listing, which needs no admin:org.
-        self.assertLine(lines, f"{ORG}/docs main: unexpected merge_queue rule from organization ruleset 102",
-                        "--ruleset 'Changes through pull requests'", f"gh api --method PUT orgs/{ORG}/rulesets/102 --input -")
-        self.assertFalse(any("DELETE" in line or "NAME" in line for line in lines), lines)
-        for repo in ("docs", "engine"):
-            self.api[f"repos/{ORG}/{repo}/rules/branches/main?per_page=100"][-1]["ruleset_id"] = 106
-            self.api[f"repos/{ORG}/{repo}/rulesets?includes_parents=true&per_page=100"].append(
-                {"id": 106, "name": "Hand-made", "target": "branch", "enforcement": "active"})
-        code, lines = self.run_check()
-        self.assertLine(lines, f"{ORG}/docs main: unexpected merge_queue rule from organization ruleset 106",
-                        "fix: record ruleset Hand-made in the baseline")
-        self.assertFalse(any("PUT" in line for line in lines if "106" in line), lines)
+            with self.subTest(state=state):
+                code, lines = self.run_check()
+                self.assertEqual(code, 1)
+                for repo in ("docs", "engine"):
+                    self.assertLine(lines, f"{ORG}/{repo} main: unexpected merge_queue rule from organization "
+                                    "ruleset 102", f"fix: {POINTER}")
+                own = [line for line in lines if line.startswith(f"orgs/{ORG}/rulesets/102: ")]
+                self.assertEqual(len(own), 1 if state == "read" else 0, lines)
+                if own:
+                    self.assertIn(f"gh api --method PUT orgs/{ORG}/rulesets/102 --input -", own[0])
+                else:
+                    self.assertLine(lines, "could not verify: ", "HTTP 403")
+                self.assertFalse(any("DELETE" in line for line in lines), lines)
 
     def test_repository_pull_request_rule_is_compared_in_full(self):
         rules = self.api[f"repos/{ORG}/engine/rules/branches/main?per_page=100"]
@@ -202,7 +191,7 @@ class CheckTest(unittest.TestCase):
         # The organization ruleset already matches, so its PUT would not fix this.
         self.assertFalse(any("orgs/example-org/rulesets" in line for line in lines), lines)
 
-    def test_differing_rule_from_unrecorded_organization_ruleset_names_that_ruleset(self):
+    def test_differing_rule_from_an_unrecorded_organization_ruleset(self):
         rules = self.api[f"repos/{ORG}/engine/rules/branches/main?per_page=100"]
         other = copy.deepcopy(next(r for r in rules if r["type"] == "pull_request"))
         other.update(ruleset_id=555, ruleset_source_type="Organization")
@@ -212,13 +201,13 @@ class CheckTest(unittest.TestCase):
         self.api[f"orgs/{ORG}/rulesets/555"] = {"id": 555, "name": "Extra review", "target": "branch"}
         code, lines = self.run_check()
         self.assertEqual(code, 1)
-        self.assertLine(lines, f"{ORG}/engine main: pull_request rule from ruleset 555 is not",
-                        "fix: record ruleset Extra review in the baseline", f"orgs/{ORG}/rulesets/555")
-        self.assertLine(lines, "ruleset 'Extra review' is not in the baseline")
+        self.assertLine(lines, f"{ORG}/engine main: pull_request rule from organization ruleset 555 is not",
+                        f"fix: {POINTER}")
+        self.assertLine(lines, "ruleset 'Extra review' is not in the baseline", f"DELETE orgs/{ORG}/rulesets/555")
         # The matching baseline ruleset 102 would be a no-op PUT, so it is never the fix.
         self.assertFalse(any("rulesets/102" in line for line in lines), lines)
 
-    def test_recorded_organization_ruleset_that_disagrees_with_the_profile_is_fixed_in_the_baseline(self):
+    def test_recorded_organization_ruleset_that_disagrees_with_the_profile(self):
         recorded = self.base["rulesets"]["Changes through pull requests"]["rules"]
         recorded[0]["parameters"]["require_code_owner_review"] = True
         recorded.append({"type": "merge_queue", "parameters": {}})
@@ -227,20 +216,12 @@ class CheckTest(unittest.TestCase):
             rules = self.api[f"repos/{ORG}/{repo}/rules/branches/main?per_page=100"]
             next(r for r in rules if r["type"] == "pull_request")["parameters"]["require_code_owner_review"] = True
             rules.append({"type": "merge_queue", "ruleset_id": 102, "ruleset_source_type": "Organization"})
-        for admin_org in (True, False):
-            if not admin_org:
-                for path in list(self.api):
-                    if path.startswith(f"orgs/{ORG}") and path != f"orgs/{ORG}/repos?per_page=100&type=all":
-                        self.api[path] = {"__error__": "Forbidden (HTTP 403)"}
-            with self.subTest(admin_org=admin_org):
-                code, lines = self.run_check()
-                self.assertEqual(code, 1)
-                agree = "fix: make the profile and ruleset 'Changes through pull requests' agree in the baseline"
-                self.assertLine(lines, f"{ORG}/engine main: pull_request rule from ruleset 102 is not", agree)
-                self.assertLine(lines, f"{ORG}/engine main: unexpected merge_queue rule from organization ruleset 102",
-                                agree)
-                # The PUT would send the body that is already live.
-                self.assertFalse(any("rulesets/102" in line for line in lines), lines)
+        code, lines = self.run_check()
+        self.assertEqual(code, 1)
+        self.assertLine(lines, f"{ORG}/engine main: pull_request rule from organization ruleset 102 is not", POINTER)
+        self.assertLine(lines, f"{ORG}/engine main: unexpected merge_queue rule from organization ruleset 102", POINTER)
+        # No ruleset line and no command: a PUT would send the body that is already live.
+        self.assertFalse(any("gh api" in line for line in lines), lines)
 
     def test_unreadable_tag_ruleset_is_only_unverifiable(self):
         self.api[f"repos/{ORG}/docs/rulesets/103?includes_parents=true"] = {"__error__": "Forbidden (HTTP 403)"}
@@ -289,7 +270,17 @@ class CheckTest(unittest.TestCase):
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             self.assertEqual(self.run_check()[0], 3)
-        self.assertIn("could not run: unexpected API response (KeyError('parameters'))", err.getvalue())
+        self.assertIn("KeyError: 'parameters'", err.getvalue())
+        self.assertIn("could not run: unexpected error", err.getvalue())
+
+    def test_a_crash_exits_3_and_never_1(self):
+        """Exit 1 means "differences", so a baseline shape --validate does not know must not end in it."""
+        self.base["check_integration_id"] = {"not": "an id"}  # passes --validate, breaks the comparison
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(self.run_check(), (3, []))
+        self.assertIn("TypeError", err.getvalue())
+        self.assertIn("could not run: unexpected error", err.getvalue())
 
     def test_hidden_organization_fields_are_unverifiable(self):
         for key in ("members_can_create_repositories", "members_can_create_teams", "two_factor_requirement_enabled"):

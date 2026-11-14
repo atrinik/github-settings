@@ -27,9 +27,9 @@ python3 check_settings.py baselines/atrinik.json
 ```
 
 It prints nothing and exits 0 when everything matches. Otherwise it prints one
-line per difference, each ending with `| fix:` and a command that would make
-the live organization match the baseline, then a blank line and the things it
-could not verify:
+line per difference, each ending with `| fix:` and what would make the live
+organization match the baseline, usually a command, then a blank line and the
+things it could not verify:
 
 ```text
 atrinik/pathfinder: allow_merge_commit is true, baseline false | fix: gh api --method PATCH repos/atrinik/pathfinder -F allow_merge_commit=false
@@ -41,7 +41,7 @@ could not verify: orgs/atrinik webhooks: Not Found (HTTP 404) (the login lacks t
 | 0 | Everything matches. |
 | 1 | At least one difference. |
 | 2 | No difference, but something could not be verified. |
-| 3 | The check could not run: bad arguments, an invalid baseline, no `gh`, `gh` not logged in or its token rejected, an unreadable repository list or an unexpected API response. The run stopped and printed nothing on standard output, so any difference it had found is not shown: fix the cause and rerun it. A single read that fails or times out (for example one network blip) is a "could not verify" line instead, and the run goes on. |
+| 3 | The check could not run: bad arguments, an invalid baseline, no `gh`, `gh` not logged in or its token rejected, an unreadable repository list, or any unexpected error, such as an API response or a baseline shape it does not know (the traceback goes to standard error). Exit 1 always means differences, never a crash. The run stopped and printed nothing on standard output, so any difference it had found is not shown: fix the cause and rerun it. A single read that fails or times out (for example one network blip) is a "could not verify" line instead, and the run goes on. |
 
 The check never runs a fix itself. A fix command is a suggestion: when live
 state is right and the record is out of date, update the baseline instead.
@@ -53,8 +53,10 @@ python3 check_settings.py --validate baselines/atrinik.json   # the file only (k
 python3 check_settings.py baselines/atrinik.json --ruleset '02 - Changes through pull requests'
 ```
 
-`--ruleset` prints a ruleset's body from the baseline. The fix commands for
-rulesets pipe it into `gh api --method PUT|POST ... --input -`.
+`--validate` catches the usual mistakes in a baseline file. A shape it does
+not know still ends in exit 3 at the live run. `--ruleset` prints a ruleset's
+body from the baseline. The fix commands for rulesets pipe it into
+`gh api --method PUT|POST ... --input -`.
 
 ### Another organization
 
@@ -96,20 +98,21 @@ expected.
 - each repository's effective rules on its default branch, its required
   checks, and the rules on its release tags (`branch_rules`, `checks`,
   `tag_rules`). Branch rules come from GitHub's own view of what applies to
-  the default branch, so they also catch a repository-level ruleset (every
-  rule of a type must match the profile's parameters, and a rule type the
-  profile does not name is a difference; so list every parameter of a rule
-  in the profile, as `baselines/atrinik.json` does for `pull_request`, or a
-  repository ruleset could tighten or loosen the unlisted ones unseen) or
-  an organization ruleset that stopped targeting it. A rule that comes from
-  a repository ruleset is fixed in that repository ruleset
-  (`repos/O/R/rulesets/ID`), never by rewriting the organization one. When
-  a recorded organization ruleset's own baseline body disagrees with the
-  profile, the fix is to make the two agree in the baseline. Tag
-  rules
-  are checked for presence only, and a tag ruleset with ref excludes does
-  not count; if a tag ruleset's body cannot be read, the tag check is one
-  "could not verify" line;
+  the default branch, so they also catch a repository-level ruleset or an
+  organization ruleset that stopped targeting the repository. Every rule of
+  a type must match the profile's parameters, and a rule type the profile
+  does not name is a difference. So list every parameter of a rule in the
+  profile, as `baselines/atrinik.json` does for `pull_request`, or a
+  repository ruleset could tighten or loosen the unlisted ones unseen.
+  These lines name the ruleset a rule comes from and always print, even
+  when that ruleset has a line of its own. They carry a command only for a
+  repository ruleset (`repos/O/R/rulesets/ID`). For an organization ruleset
+  the command is on that ruleset's own line, which exists when the ruleset
+  is missing, unrecorded or different from the baseline. When there is no
+  such line, the baseline's rulesets and the profile disagree, and the fix
+  is in the baseline. Tag rules are checked for presence only, and a tag
+  ruleset with ref excludes does not count; if a tag ruleset's body cannot
+  be read, the tag check is one "could not verify" line;
 - security configurations, which one is the default for new repositories,
   and which one each repository has attached (`security_configurations`,
   `security_configuration`);
