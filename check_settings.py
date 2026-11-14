@@ -41,12 +41,13 @@ SHAPES = {"repository": ("an object of fields", mapping()),  # profile keys, as 
 RECORDED = {"teams": mapping(mapping(lambda v: isinstance(v, str))), "apps": mapping(lambda v: isinstance(v, str)),
             "environments": mapping(names_list), "webhooks": mapping(names_list), "organization_webhooks": names_list}
 RULESET = lambda v: (isinstance(v, dict) and {"target", "enforcement"} <= set(v) and isinstance(  # noqa: E731
-    v.get("rules"), list) and all(isinstance(r, dict) and isinstance(r.get("type"), str) for r in v["rules"]))
+    v.get("rules"), list) and all(isinstance(r, dict) and isinstance(r.get("type"), str)
+                                  and isinstance(r.get("parameters", {}), dict) for r in v["rules"]))
 SECTIONS = {"organization": ("the organization's login", lambda v: isinstance(v, str) and v != ""),
             "organization_settings": ("an object of fields", mapping()),  # top-level sections the check reads
-            "rulesets": ("ruleset name to target, enforcement and rules that each have a type", mapping(RULESET)),
-            "required_check_ruleset": ("target, enforcement and rules that each have a type, and a name with "
-                                       "{repository}", lambda v: RULESET(v) and "{repository}" in str(v.get("name"))),
+            "rulesets": ("name to target, enforcement and rules with a type and object parameters", mapping(RULESET)),
+            "required_check_ruleset": ("a rulesets entry with {repository} in its name",
+                                       lambda v: RULESET(v) and "{repository}" in str(v.get("name"))),
             "reminders": ('a list of objects with an "item" and a "note"', lambda v: isinstance(v, list) and all(
                 isinstance(i, dict) and isinstance(i.get("item"), str) and isinstance(i.get("note"), str) for i in v)),
             "actions": ("permissions, selected_actions or workflow, each an object of fields",
@@ -426,7 +427,7 @@ class Checker:
         for rule in (r for r in live if r["type"] not in want_rules and r["type"] != "required_status_checks"):
             rid, from_org = rule.get("ruleset_id"), rule.get("ruleset_source_type") == "Organization"
             fix, reported = self.org_rule_fix(name, rid, rule["type"]) if from_org else (None, False)
-            if not reported or rid not in (self.live_ruleset_ids or {}).values():  # else check_rulesets reports it
+            if not reported or not isinstance(self.gh.cache.get(f"orgs/{self.org}/rulesets/{rid}"), dict):
                 self.diff(where, f"unexpected {rule['type']} rule from {'organization ' if from_org else ''}ruleset "
                           f"{rid}", fix or self.repo_ruleset_fix(name, rid, "remove"))
 
@@ -492,8 +493,7 @@ class Checker:
             for repo in sorted((set(have) | set(want)) & checked):
                 if have.get(repo) != want.get(repo):
                     path = f"orgs/{org}/teams/{team}/repos/{org}/{repo}"
-                    undo = gh_command("PUT", path, {"permission": want[repo]}) if repo in want else gh_command(
-                        "DELETE", path)
+                    undo = gh_command(*("PUT", path, {"permission": want[repo]}) if repo in want else ("DELETE", path))
                     self.changed(f"{org}/{repo}", f"team {team!r} has {have.get(repo, 'no access')}, "
                                         f"recorded {want.get(repo, 'no access')}", undo)
 

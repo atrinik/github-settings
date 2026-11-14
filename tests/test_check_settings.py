@@ -150,6 +150,18 @@ class CheckTest(unittest.TestCase):
         self.assertLine(lines, f"{ORG}/engine main: no deletion rule", f"rulesets/ID --input -")
         self.assertLine(lines, "could not verify: teams")
 
+    def test_unexpected_rule_is_reported_when_its_organization_ruleset_cannot_be_read(self):
+        extra = {"type": "merge_queue", "ruleset_id": 102, "ruleset_source_type": "Organization", "parameters": {}}
+        self.api[f"orgs/{ORG}/rulesets/102"] = {"__error__": "timed out"}
+        for repo in ("docs", "engine"):
+            self.api[f"repos/{ORG}/{repo}/rules/branches/main?per_page=100"].append(dict(extra))
+        code, lines = self.run_check()
+        self.assertEqual(code, 1)
+        self.assertLine(lines, f"could not verify: orgs/{ORG}/rulesets/102")
+        for repo in ("docs", "engine"):
+            self.assertLine(lines, f"{ORG}/{repo} main: unexpected merge_queue rule from organization ruleset 102",
+                            f"gh api --method PUT orgs/{ORG}/rulesets/102 --input -")
+
     def test_organization_rule_changes_never_suggest_deleting_the_ruleset(self):
         extra = {"type": "merge_queue", "ruleset_id": 102, "ruleset_source_type": "Organization", "parameters": {}}
         self.api[f"orgs/{ORG}/rulesets/102"]["rules"].append({"type": "merge_queue", "parameters": {}})
@@ -339,7 +351,13 @@ class BaselineTest(unittest.TestCase):
                                 (lambda b: b["repositories"]["engine"].update(overrides={"repository": 1}, why="x"),
                                  "engine override: repository must be"),
                                 (lambda b: next(iter(b["rulesets"].values()))["rules"].append({}),
-                                 "rules that each have a type"),
+                                 "rules with a type"),
+                                (lambda b: b["required_check_ruleset"]["rules"][0].update(parameters=3),
+                                 "required_check_ruleset must"),
+                                (lambda b: b["required_check_ruleset"]["rules"][0].update(parameters=[]),
+                                 "required_check_ruleset must"),
+                                (lambda b: next(iter(b["rulesets"].values()))["rules"][0].update(parameters="x"),
+                                 "rulesets must be"),
                                 (lambda b: b["actions"].update({"selected-actions": {}}), "actions must be"),
                                 (lambda b: b["actions"].update(workflow=[]), "actions must be"),
                                 (lambda b: b["recorded"].update(teams=["x"]), "recorded must be"),
