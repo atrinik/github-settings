@@ -1,36 +1,55 @@
 # Atrinik GitHub settings repository guide
 
-- This repository is the home of Atrinik's GitHub organization settings
-  record. Read `README.md` first. Today it holds `config/planning.json` and a
-  small CI check; a read-only settings check and Atrinik's baseline file are
-  coming in a later pull request.
+- This repository holds Atrinik's settings baseline
+  (`baselines/atrinik.json`) and the read-only check that compares it with
+  the live organization (`check_settings.py`). Read `README.md` first.
+- Run the check before and after any settings change, and report any
+  difference you did not cause first:
+  `python3 check_settings.py baselines/atrinik.json`. Exit 0 is a match, 1
+  differences, 2 only "could not verify", 3 could not run. The organization
+  webhooks line is expected: the everyday login lacks `admin:org_hook`.
+- How a change is made: change the setting in GitHub under the owner's login,
+  only when the current task authorizes that change; run the check; update
+  the baseline until the check is clean; open a pull request here that quotes
+  the clean output. Live state wins and the record catches up in the same
+  task. Never record a change first and apply it later.
+- The check only reads. Never run its fix commands unless the current task
+  authorizes that exact change. Never add code to it that writes, stores a
+  token or runs on a schedule.
+- Keep within its limits: nothing that writes, no dates that fail it, at
+  most three repository profiles, about ten per-repository exceptions, about
+  500 lines, standard library only. If a change would cross one, simplify
+  instead.
+- Another organization's baseline can be checked by path. Keep a private
+  organization's baseline, its check output and its names out of this public
+  repository, its pull requests and its CI logs. Test fixtures are invented.
 - The settings automation that used to live here (publisher, Project
-  synchronizer, drift audit, Project health check, community-health generator,
-  semantic release) was retired on 2026-11-14 by owner decision: there is no
-  standing organization-owner credential any more, and the rules now live in
-  organization rulesets that target all repositories. Do not restore, run or
-  imitate those tools, including from an old checkout or release. They are in
-  the Git history and in release `v2.26.0` for reference only.
-- Settings are changed by hand under the owner's login, only when the current
-  task authorizes that change. Record each change in this repository in the
-  same task, through a pull request. Until the baseline file lands, record it
-  in the description of the pull request or task that made it; do not invent
-  a record file here.
+  synchronizer, drift audit, Project health check, community-health
+  generator, semantic release) was retired on 2026-11-14 by owner decision.
+  Do not restore, run or imitate it, including from an old checkout or
+  release. It is in the Git history and in release `v2.26.0` for reference
+  only.
 - The **Atrinik work** Project is no longer filled automatically. Keep
   `config/planning.json` and its Status names as they are: agent skills read
   them.
 - `atrinik/.github` is edited by hand, through pull requests in that
   repository. Nothing here generates it.
-- Settled rollouts: required full-SHA action pinning is on; CodeQL as a merge
-  requirement and the `playtester` merge queue are dropped.
 - Keep the two required check names exactly: the `Policy validation` job in
   `.github/workflows/check.yml` and `Conventional PR title` in
   `.github/workflows/pr-title.yml`. The ruleset `03 - Required CI -
   github-settings` requires both.
 - Pin every action to a full commit SHA with a version comment. The
   organization requires it.
-- Before you push, run `python3 .github/scripts/check_repository.py` and
-  `git diff --check`. Run actionlint when workflows change, if you have it.
+- Before you push, run:
+
+  ```sh
+  python3 .github/scripts/check_repository.py
+  python3 -m unittest discover -s tests
+  python3 check_settings.py --validate baselines/atrinik.json
+  git diff --check
+  ```
+
+  Run actionlint when workflows change, if you have it.
 - Commits and pull-request titles use Conventional Commits.
 - Never print or commit tokens, secrets or API responses that contain
-  credentials.
+  credentials. The baseline records names only.
