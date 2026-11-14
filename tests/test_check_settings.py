@@ -150,6 +150,58 @@ class CheckTest(unittest.TestCase):
         self.assertLine(lines, f"{ORG}/engine main: no deletion rule", f"rulesets/ID --input -")
         self.assertLine(lines, "could not verify: teams")
 
+    def test_organization_rule_changes_never_suggest_deleting_the_ruleset(self):
+        extra = {"type": "merge_queue", "ruleset_id": 102, "ruleset_source_type": "Organization", "parameters": {}}
+        self.api[f"orgs/{ORG}/rulesets/102"]["rules"].append({"type": "merge_queue", "parameters": {}})
+        for repo in ("docs", "engine"):
+            self.api[f"repos/{ORG}/{repo}/rules/branches/main?per_page=100"].append(dict(extra))
+        code, lines = self.run_check()
+        self.assertEqual(code, 1)
+        self.assertLine(lines, "'Changes through pull requests' differs in rules")
+        self.assertFalse(any("DELETE" in line or "unexpected" in line for line in lines), lines)
+        for path in list(self.api):
+            if path.startswith(f"orgs/{ORG}") and path != f"orgs/{ORG}/repos?per_page=100&type=all":
+                self.api[path] = {"__error__": "Forbidden (HTTP 403)"}
+        code, lines = self.run_check()
+        self.assertEqual(code, 1)
+        self.assertLine(lines, f"{ORG}/docs main: unexpected merge_queue rule from organization ruleset 102",
+                        "--ruleset NAME", f"gh api --method PUT orgs/{ORG}/rulesets/102 --input -")
+        self.assertFalse(any("DELETE" in line for line in lines), lines)
+
+    def test_tag_excludes_and_other_repository_rules_are_differences(self):
+        self.api[f"repos/{ORG}/docs/rulesets/103?includes_parents=true"]["conditions"]["ref_name"]["exclude"] = [
+            "refs/tags/v1*"]
+        rules = self.api[f"repos/{ORG}/engine/rules/branches/main?per_page=100"]
+        other = copy.deepcopy(next(r for r in rules if r["type"] == "pull_request"))
+        other.update(ruleset_id=777, ruleset_source_type="Repository")
+        other["parameters"]["allowed_merge_methods"] = ["merge", "squash"]
+        rules.append(other)
+        code, lines = self.run_check()
+        self.assertEqual(code, 1)
+        self.assertLine(lines, f"{ORG}/docs tags refs/tags/v[0-9]*: no deletion rule", "ruleset 103 has ref excludes")
+        self.assertLine(lines, f"{ORG}/engine main: pull_request rule from ruleset 777 is not")
+
+    def test_nothing_verified_exits_3(self):
+        def logged_out(path, paginate):
+            raise check_settings.CannotRun("To get started with GitHub CLI, please run:  gh auth login")
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = check_settings.main([str(FIXTURES / "example-org-baseline.json")], github=check_settings.GitHub(logged_out))
+        self.assertEqual((code, out.getvalue()), (3, ""))
+        self.assertIn("could not run: ", err.getvalue())
+        self.api[f"orgs/{ORG}/repos?per_page=100&type=all"] = {"__error__": "Forbidden (HTTP 403)"}
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(self.run_check()[0], 3)
+        self.assertIn("cannot list the repositories", err.getvalue())
+
+    def test_unexpected_response_exits_3(self):
+        rules = self.api[f"repos/{ORG}/engine/rules/branches/main?per_page=100"]
+        del next(r for r in rules if r["type"] == "required_status_checks")["parameters"]
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(self.run_check()[0], 3)
+        self.assertIn("could not run: unexpected API response (KeyError('parameters'))", err.getvalue())
+
     def test_hidden_organization_fields_are_unverifiable(self):
         del self.api[f"orgs/{ORG}"]["members_can_create_teams"]
         code, lines = self.run_check()
@@ -221,6 +273,14 @@ class ReadOnlyTest(unittest.TestCase):
         with mock.patch.object(check_settings.subprocess, "run", return_value=result):
             with self.assertRaisesRegex(check_settings.Unverifiable, "lacks the admin:org_hook scope"):
                 check_settings.gh_fetch("orgs/x/hooks", True)
+
+    def test_logged_out_or_offline_cannot_run(self):
+        for stderr in ("To get started with GitHub CLI, please run:  gh auth login\n",
+                       "error connecting to api.github.com\n", "gh: Bad credentials (HTTP 401)\n"):
+            result = subprocess.CompletedProcess([], 1, stdout="", stderr=stderr)
+            with self.subTest(stderr=stderr), mock.patch.object(check_settings.subprocess, "run", return_value=result):
+                with self.assertRaises(check_settings.CannotRun):
+                    check_settings.gh_fetch("orgs/x", False)
 
     def test_pages_are_joined(self):
         self.assertEqual(check_settings.parse_output('[1, 2]\n[3]\n'), [1, 2, 3])

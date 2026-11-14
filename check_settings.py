@@ -35,7 +35,12 @@ ATTACHED = {"attached", "enforced"}
 
 
 class Unverifiable(Exception):
-    """A read that failed: missing scope, missing access or a network error."""
+    """A read that failed: missing scope or missing access."""
+
+
+class CannotRun(Exception):
+    """gh is not logged in, the network failed, or the repository list could not be read."""
+
 
 
 def parse_output(text):
@@ -57,6 +62,9 @@ def gh_fetch(path, paginate):
         return parse_output(proc.stdout)
     message = (proc.stderr.strip().splitlines() or ["gh api failed"])[0].removeprefix("gh: ")[:160]
     scope = re.search(r'needs the "([^"]+)" scope', proc.stderr)
+    if not scope and re.search(r"gh auth login|HTTP 401|Bad credentials|error connecting|could not resolve|dial tcp|"
+                               r"timed? ?out|connection (refused|reset)", proc.stderr, re.IGNORECASE):
+        raise CannotRun(message)
     if scope:
         message += f" (the login lacks the {scope.group(1)} scope)"
     elif path.startswith("orgs/") and re.search(r"HTTP 40[34]", message):
@@ -251,9 +259,11 @@ class Checker:
         self.check_actions()
         self.check_rulesets()
         self.check_security_configurations()
-        repos = self.read("repositories", f"orgs/{org}/repos?per_page=100&type=all", True)
-        if repos is not None:
-            self.check_repositories({r["name"]: r for r in repos})
+        try:
+            repos = self.gh.get(f"orgs/{org}/repos?per_page=100&type=all", True)
+        except Unverifiable as error:
+            raise CannotRun(f"cannot list the repositories, so none was checked: {error}") from error
+        self.check_repositories({r["name"]: r for r in repos})
         self.check_apps()
 
     def check_organization(self):
@@ -354,14 +364,13 @@ class Checker:
             if "security_configuration" in profile:
                 self.check_attachment(name, repo, profile["security_configuration"])
             teams = self.read(f"{org}/{name} teams", f"repos/{org}/{name}/teams?per_page=100", True)
+            unread |= {name} if teams is None else set()
             for team in teams or []:
                 grants.setdefault(team["slug"], {})[name] = team["permission"]
             self.check_environments(name)
             self.check_webhooks(f"{org}/{name}", f"repos/{org}/{name}/hooks?per_page=100",
                                 self.base.get("recorded", {}).get("webhooks", {}).get(name, []),
                                 f"https://github.com/{org}/{name}/settings/hooks", f"repos/{org}/{name}/hooks")
-            if teams is None:
-                unread.add(name)
         self.check_teams(grants, set(names) - unread)
         self.check_webhooks(f"orgs/{org}", f"orgs/{org}/hooks?per_page=100",
                             self.base.get("recorded", {}).get("organization_webhooks", []),
@@ -380,11 +389,11 @@ class Checker:
         if live is None:
             return
         for rule_type, params in sorted(want_rules.items()):
-            found = [r for r in live if r["type"] == rule_type]
-            if not found:
-                self.diff(where, f"no {rule_type} rule", self.provider_fix("branch", rule_type))
-            elif not any(matches(params, r.get("parameters", {})) for r in found):
-                self.diff(where, f"{rule_type} rule is not {show(params)}", self.provider_fix("branch", rule_type))
+            found = [r for r in live if r["type"] == rule_type]  # every one must match, repository rulesets too
+            bad = sorted({str(r.get("ruleset_id")) for r in found if not matches(params, r.get("parameters", {}))})
+            if bad or not found:
+                self.diff(where, f"{rule_type} rule from ruleset {', '.join(bad)} is not {show(params)}" if bad
+                          else f"no {rule_type} rule", self.provider_fix("branch", rule_type))
         template = (self.base.get("required_check_ruleset") or {}).get("name", "").replace("{repository}", name)
         check_fix = self.ruleset_fix(template) if template else "change the ruleset that requires checks"
         app = self.base.get("check_integration_id")
@@ -396,30 +405,33 @@ class Checker:
             self.diff(where, f"required checks are {show([c for c, _ in have])}"
                              f"{' (or from another app)' if [c for c, _ in have] == [c for c, _ in want] else ''}, "
                              f"baseline {show(checks)}", check_fix)
-        for rule in live:
-            if rule["type"] not in want_rules and rule["type"] != "required_status_checks":
-                rid = rule.get("ruleset_id")
-                scope = f"orgs/{self.org}" if rule.get("ruleset_source_type") == "Organization" else \
-                    f"repos/{self.org}/{name}"
-                self.diff(where, f"unexpected {rule['type']} rule from ruleset {rid}",
-                                 f"remove it from that ruleset, or {gh_command('DELETE', f'{scope}/rulesets/{rid}')}")
+        known = self.live_ruleset_ids or {}
+        for rule in (r for r in live if r["type"] not in want_rules and r["type"] != "required_status_checks"):
+            rid, kind = rule.get("ruleset_id"), rule["type"]
+            if rule.get("ruleset_source_type") != "Organization":
+                self.diff(where, f"unexpected {kind} rule from ruleset {rid}", "remove it from that ruleset, or "
+                          + gh_command("DELETE", f"repos/{self.org}/{name}/rulesets/{rid}"))
+            elif rid not in known.values():  # a listed organization ruleset is reported by check_rulesets
+                rname = next((n for n, i in known.items() if i == rid), "NAME")
+                self.diff(where, f"unexpected {kind} rule from organization ruleset {rid}", f"{self.ruleset_cmd} "
+                          f"{shlex.quote(rname)} | gh api --method PUT orgs/{self.org}/rulesets/{rid} --input -")
 
     def check_tag_rules(self, name, want):
         where, base = f"{self.org}/{name} tags {want['ref']}", f"repos/{self.org}/{name}/rulesets"
         listing = self.read(where, f"{base}?includes_parents=true&per_page=100", True)
         if listing is None:
             return
-        found = set()
-        for item in listing:
-            if item.get("target") != "tag" or item.get("enforcement") != "active":
-                continue
-            body = self.read(where, f"{base}/{item['id']}?includes_parents=true")
-            include = ((body or {}).get("conditions") or {}).get("ref_name", {}).get("include", [])
-            if want["ref"] in include or "~ALL" in include:
-                found |= {r["type"] for r in body["rules"]}
+        found, excluded = set(), []
+        for item in (i for i in listing if i.get("target") == "tag" and i.get("enforcement") == "active"):
+            body = self.read(where, f"{base}/{item['id']}?includes_parents=true") or {}
+            ref_name = (body.get("conditions") or {}).get("ref_name", {})
+            if {want["ref"], "~ALL"} & set(ref_name.get("include", [])):  # a ruleset with ref excludes does not count
+                excluded += [str(item["id"])] if ref_name.get("exclude") else []
+                found |= set() if ref_name.get("exclude") else {r["type"] for r in body["rules"]}
+        note = f" (ruleset {', '.join(excluded)} has ref excludes, so it does not count)" if excluded else ""
         for rule_type in want["rules"]:
             if rule_type not in found:
-                self.diff(where, f"no {rule_type} rule", self.provider_fix("tag", rule_type))
+                self.diff(where, f"no {rule_type} rule{note}", self.provider_fix("tag", rule_type))
 
     def check_attachment(self, name, repo, want):
         where = f"{self.org}/{name}"
@@ -490,9 +502,7 @@ class Checker:
 
 class Parser(argparse.ArgumentParser):
     def error(self, message):
-        self.print_usage(sys.stderr)
-        print(f"check_settings.py: {message}", file=sys.stderr)
-        sys.exit(3)
+        self.exit(3, f"{self.format_usage()}check_settings.py: {message}\n")
 
 
 def main(argv=None, github=None):
@@ -524,6 +534,10 @@ def main(argv=None, github=None):
         checker.run()
     except FileNotFoundError:
         print("gh is not installed or not on PATH", file=sys.stderr)
+        return 3
+    except (CannotRun, KeyError, TypeError, AttributeError, IndexError) as error:
+        print(f"could not run: {error if isinstance(error, CannotRun) else f'unexpected API response ({error!r})'}",
+              file=sys.stderr)
         return 3
     lines = checker.diffs + ([""] if checker.diffs and checker.unverified else []) + checker.unverified
     if lines:
