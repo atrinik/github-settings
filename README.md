@@ -30,7 +30,9 @@ removed because:
 
 - The owner, or an agent session she authorizes, changes settings by hand
   under her own login, in GitHub's web pages or with `gh`.
-- The change is recorded here in the same task, through a pull request.
+- The change is recorded here in the same task, through a pull request. Until
+  the baseline file lands, it is recorded in the description of the pull
+  request or task that made it.
 - The **Atrinik work** Project board is no longer filled automatically. Add
   issues and pull requests to it by hand when they belong there.
 - [`atrinik/.github`](https://github.com/atrinik/.github) (issue forms,

@@ -13,7 +13,9 @@
   the Git history and in release `v2.26.0` for reference only.
 - Settings are changed by hand under the owner's login, only when the current
   task authorizes that change. Record each change in this repository in the
-  same task, through a pull request.
+  same task, through a pull request. Until the baseline file lands, record it
+  in the description of the pull request or task that made it; do not invent
+  a record file here.
 - The **Atrinik work** Project is no longer filled automatically. Keep
   `config/planning.json` and its Status names as they are: agent skills read
   them.
