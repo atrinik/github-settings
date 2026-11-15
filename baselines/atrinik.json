@@ -322,12 +322,19 @@
           "update"
         ]
       },
+      "ruleset_bypass": [
+        {
+          "actor_type": "OrganizationAdmin",
+          "bypass_mode": "pull_request"
+        }
+      ],
       "security_configuration": "Atrinik security baseline"
     },
     "archived": {
       "repository": {
         "archived": true
       },
+      "ruleset_bypass": [],
       "security_configuration": "Atrinik security baseline"
     }
   },

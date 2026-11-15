@@ -38,6 +38,8 @@ SHAPES = {"repository": ("an object of fields", mapping()),  # profile keys, as 
           "branch_rules": ("rule type to parameters", mapping(mapping())),
           "tag_rules": ('a "ref" and a list of rule types in "rules"',
                         lambda v: isinstance(v, dict) and isinstance(v.get("ref"), str) and names_list(v.get("rules"))),
+          "ruleset_bypass": ("a list of the bypass actors a repository-level ruleset may have",
+                             lambda v: isinstance(v, list) and all(isinstance(a, dict) for a in v)),
           "security_configuration": ("a name", lambda v: isinstance(v, str))}
 RECORDED = {"teams": mapping(mapping(lambda v: isinstance(v, str))), "apps": mapping(lambda v: isinstance(v, str)),
             "environments": mapping(names_list), "webhooks": mapping(names_list), "organization_webhooks": names_list}
@@ -370,6 +372,8 @@ class Checker:
                 self.check_branch_rules(name, repo, profile["branch_rules"], entry.get("checks", []))
             if "tag_rules" in profile:
                 self.check_tag_rules(name, profile["tag_rules"])
+            if "ruleset_bypass" in profile:
+                self.check_ruleset_bypass(name, profile["ruleset_bypass"])
             if "security_configuration" in profile:
                 self.check_attachment(name, repo, profile["security_configuration"])
             teams = self.read(f"{org}/{name} teams", f"repos/{org}/{name}/teams?per_page=100", True)
@@ -435,6 +439,20 @@ class Checker:
         for rule_type in want["rules"]:
             if rule_type not in found:
                 self.diff(where, f"no {rule_type} rule{note}", SEE_RULESETS)
+
+    def check_ruleset_bypass(self, name, allowed):
+        """Who may bypass each repository-level ruleset; the effective rules do not show that."""
+        base = f"repos/{self.org}/{name}/rulesets"
+        listing = self.read(f"{self.org}/{name} rulesets", f"{base}?includes_parents=true&per_page=100", True)
+        for item in (i for i in listing or [] if i.get("source_type") == "Repository"):
+            where, path = f"{self.org}/{name} ruleset {item['id']}", f"{base}/{item['id']}"
+            body = self.read(where, path)
+            if body is not None and "bypass_actors" not in body:
+                self.cannot(where, "its bypass list is not visible to this login (needs admin on the repository)")
+            extra = [a for a in (body or {}).get("bypass_actors", []) if not any(matches(w, a) for w in allowed)]
+            if extra:
+                self.diff(where, f"{show(extra)} may bypass it, baseline allows {show(allowed)}",
+                          f"change bypass_actors in {path} (read it, edit, PUT it back with --input -)")
 
     def check_attachment(self, name, repo, want):
         where = f"{self.org}/{name}"
