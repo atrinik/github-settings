@@ -169,8 +169,11 @@ def expected_rulesets(base):
 
 
 def profile_for(base, entry):
+    """The repository's profile with its overrides. An object override changes only the entries it names."""
     profile = copy.deepcopy(base["profiles"][entry["profile"]])
-    profile.update(copy.deepcopy(entry.get("overrides", {})))
+    for key, value in copy.deepcopy(entry.get("overrides", {})).items():
+        merge = isinstance(value, dict) and isinstance(profile.get(key), dict)
+        profile[key] = {**profile[key], **value} if merge else value
     return profile
 
 
@@ -357,7 +360,8 @@ class Checker:
         for name in names:
             profile, entry = profile_for(self.base, wanted[name]), wanted[name]
             repo = self.read(f"{org}/{name}", f"repos/{org}/{name}")
-            if repo is None:
+            if repo is None:  # nothing about it was read, its team grants included
+                unread.add(name)
                 continue
             self.compare_fields(f"{org}/{name}", profile.get("repository", {}), repo,
                                 lambda key, value, n=name: gh_command("PATCH", f"repos/{org}/{n}", {key: value}),

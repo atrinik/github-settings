@@ -43,8 +43,9 @@ could not verify: orgs/atrinik webhooks: Not Found (HTTP 404) (the login lacks t
 | 2 | No difference, but something could not be verified. |
 | 3 | The check could not run: bad arguments, an invalid baseline, no `gh`, `gh` not logged in or its token rejected, an unreadable repository list, or any unexpected error, such as an API response or a baseline shape it does not know (the traceback goes to standard error). Exit 1 always means differences, never a crash. The run stopped and printed nothing on standard output, so any difference it had found is not shown: fix the cause and rerun it. A single read that fails or times out (for example one network blip) is a "could not verify" line instead, and the run goes on. |
 
-The check never runs a fix itself. A fix command is a suggestion: when live
-state is right and the record is out of date, update the baseline instead.
+The check never runs a fix itself. A fix command is a suggestion: when the
+difference comes from a change the task authorized or the owner approved,
+update the baseline instead.
 
 Other uses:
 
@@ -142,7 +143,7 @@ One JSON file per organization:
 | `required_check_ruleset`, `check_integration_id` | The template for the one-per-repository required-check ruleset (`{repository}` is replaced) and the App that must report the checks (15368 is GitHub Actions). |
 | `security_configurations` | Configurations by name, with `default_for_new_repos`. |
 | `profiles` | At most three repository profiles: `repository` (merge settings), `branch_rules`, `tag_rules`, `security_configuration`. |
-| `repositories` | Every repository: its `profile`, its required `checks`, and rarely `overrides` of profile keys with a `why`. |
+| `repositories` | Every repository: its `profile`, its required `checks`, and rarely `overrides` of profile keys with a `why`. An override of an object key, such as `repository`, changes only the entries it names. The merge is one level deep: a `branch_rules` override replaces all the parameters of each rule type it names, so list them all; a `tag_rules` override needs both `ref` and `rules`; and an override cannot remove an entry. |
 | `recorded` | Names only: `teams`, `apps`, `environments`, `webhooks`, `organization_webhooks`. |
 | `reminders` | Plain notes about credentials and Apps, such as rotation dates. Never checked. |
 
@@ -158,8 +159,10 @@ Live state wins and the record catches up in the same task:
 2. Make the change in GitHub, under the owner's login, only when the current
    task authorizes it.
 3. Run the check again. It shows exactly what you changed.
-4. Update the baseline until the check is clean, and open a pull request
-   here that quotes the clean output (or explains each remaining line).
+4. Update the baseline for the change the task authorized, until the check
+   shows no difference the task caused, and open a pull request here that
+   quotes the output and explains each remaining line. A difference you did
+   not cause goes into the baseline only with the owner's explicit approval.
 
 Changes made by hand in GitHub's web pages show up at the next run. GitHub
 keeps its own history too: the organization audit log and each ruleset's

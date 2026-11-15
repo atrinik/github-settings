@@ -2,7 +2,7 @@
   "organization": "atrinik",
   "notes": [
     "Atrinik's settings baseline, read by check_settings.py. Written from the live organization on 2026-11-14, after the changes the owner approved that day.",
-    "Live state wins: change the setting first, run the check, then update this file in a pull request that quotes the clean output.",
+    "Live state wins: change the setting first, run the check, then update this file in a pull request that quotes the check's output and explains each remaining line.",
     "\"recorded\" holds names only. A difference there means something changed since it was last recorded, not that it is wrong.",
     "\"reminders\" are plain notes for the owner. The check never reads them and never fails on a date."
   ],
@@ -561,7 +561,7 @@
   "reminders": [
     {
       "item": "App atrinik-classic-dependency-updater (classic: variable DEPENDENCY_UPDATE_APP_ID, secret DEPENDENCY_UPDATE_APP_PRIVATE_KEY)",
-      "note": "Key rotation was due 2026-11-09. The key still works. Rotate it next time you are at Lyra, or decide it can wait."
+      "note": "Key rotation was due 2026-11-09. The key still works. Rotate it next time you are at your workstation, or decide it can wait."
     },
     {
       "item": "App atrinik-crate-dependency-update (client: variable CRATE_DEPENDENCY_UPDATE_APP_ID, secret CRATE_DEPENDENCY_UPDATE_APP_PRIVATE_KEY)",
