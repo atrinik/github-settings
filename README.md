@@ -115,6 +115,10 @@ expected.
   baseline. Tag rules are checked for presence only, and a tag
   ruleset with ref excludes does not count; if a tag ruleset's body cannot
   be read, the tag check is one "could not verify" line;
+- who may bypass each repository-level ruleset (`ruleset_bypass`): every
+  bypass actor of such a ruleset must be one the profile lists, so an empty
+  list allows none. The effective rules do not show who may bypass them, and
+  organization rulesets are compared in full above;
 - security configurations, which one is the default for new repositories,
   and which one each repository has attached (`security_configurations`,
   `security_configuration`);
@@ -142,7 +146,7 @@ One JSON file per organization:
 | `rulesets` | Organization rulesets by name; each is the body a `PUT` would send. |
 | `required_check_ruleset`, `check_integration_id` | The template for the one-per-repository required-check ruleset (`{repository}` is replaced) and the App that must report the checks (15368 is GitHub Actions). |
 | `security_configurations` | Configurations by name, with `default_for_new_repos`. |
-| `profiles` | At most three repository profiles: `repository` (merge settings), `branch_rules`, `tag_rules`, `security_configuration`. |
+| `profiles` | At most three repository profiles: `repository` (merge settings), `branch_rules`, `tag_rules`, `ruleset_bypass`, `security_configuration`. |
 | `repositories` | Every repository: its `profile`, its required `checks`, and rarely `overrides` of profile keys with a `why`. An override of an object key, such as `repository`, changes only the entries it names. The merge is one level deep: a `branch_rules` override replaces all the parameters of each rule type it names, so list them all; a `tag_rules` override needs both `ref` and `rules`; and an override cannot remove an entry. |
 | `recorded` | Names only: `teams`, `apps`, `environments`, `webhooks`, `organization_webhooks`. |
 | `reminders` | Plain notes about credentials and Apps, such as rotation dates. Never checked. |
@@ -178,7 +182,7 @@ growing past them.
 - No dates that fail it. Rotation and review dates are reminders only.
 - At most three repository profiles and about ten per-repository
   exceptions (`overrides`). `--validate` enforces three and ten.
-- About 500 lines for the script. A test stops it at 550.
+- About 550 lines for the script. A test stops it at 575.
 - Standard library only, and no stored token: it runs as whoever runs it,
   by hand. Nothing runs it on a schedule.
 

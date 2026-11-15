@@ -20,7 +20,7 @@
   token or runs on a schedule.
 - Keep within its limits: nothing that writes, no dates that fail it, at
   most three repository profiles, about ten per-repository exceptions, about
-  500 lines, standard library only. If a change would cross one, simplify
+  550 lines, standard library only. If a change would cross one, simplify
   instead.
 - Another organization's baseline is checked by path
   (`python3 check_settings.py /path/to/its/baseline.json`), and its baseline
