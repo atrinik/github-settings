@@ -568,10 +568,6 @@
   },
   "reminders": [
     {
-      "item": "App atrinik-dev-desktop (all repositories)",
-      "note": "Installed 2026-11-27 so agent pull requests are authored by the App and the owner can approve them. It reaches every repository, including new ones. Its private keys stay on the owner's agent desktops, one key per desktop; none is stored in a repository or an Actions secret."
-    },
-    {
       "item": "App atrinik-classic-dependency-updater (classic: variable DEPENDENCY_UPDATE_APP_ID, secret DEPENDENCY_UPDATE_APP_PRIVATE_KEY)",
       "note": "Key rotation was due 2026-11-09. The key still works. Rotate it next time you are at your workstation, or decide it can wait."
     },
@@ -598,6 +594,10 @@
     {
       "item": "App claude (all repositories)",
       "note": "The Claude GitHub App reaches every repository, including new ones."
+    },
+    {
+      "item": "App atrinik-dev-desktop (all repositories)",
+      "note": "Installed 2026-11-27 so agent pull requests can be authored by the App and the owner can approve them. It reaches every repository, including new ones. Its private keys are meant only for the owner's agent desktops, one key per desktop, never a repository or an Actions secret. First key created 2026-11-27; rotate it around 2027-02-25."
     },
     {
       "item": "crates.io trusted publishing",
